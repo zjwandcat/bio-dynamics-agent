@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+
+# Environment / secrets
+.env
+backend/.env
+*.pem
+
+# Test files containing hardcoded credentials (kept local-only)
+backend/test_api.py
+backend/test_bigmodel_keys.py
+
+# Debug / runtime artifacts
+*.log
+debug_*.txt
+e2e_response*.txt
+backend/server.log
+
+# Frontend
+node_modules/
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# Generated vector databases (rebuildable)
+backend/data/vector_db/
+backend/data/qdrant_local/

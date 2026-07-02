@@ -1,0 +1,68 @@
+[
+  {
+    "param_name": "initial_concentration_B",
+    "value": 0.0,
+    "unit": "nM",
+    "species": "",
+    "cell_line": "",
+    "context": "Species 'B' (id=B) from SBML model BIOMD0000000567. Initial concentration/amount used in the model.",
+    "confidence": "HIGH",
+    "source_model": "BIOMD0000000567",
+    "source_type": "species"
+  },
+  {
+    "param_name": "initial_concentration_A",
+    "value": 1.0,
+    "unit": "nM",
+    "species": "",
+    "cell_line": "",
+    "context": "Species 'A' (id=A) from SBML model BIOMD0000000567. Initial concentration/amount used in the model.",
+    "confidence": "HIGH",
+    "source_model": "BIOMD0000000567",
+    "source_type": "species"
+  },
+  {
+    "param_name": "k1",
+    "value": 4e-05,
+    "unit": "dimensionless",
+    "species": "",
+    "cell_line": "",
+    "context": "Global parameter 'k1' from SBML model BIOMD0000000567.",
+    "confidence": "HIGH",
+    "source_model": "BIOMD0000000567",
+    "source_type": "parameter"
+  },
+  {
+    "param_name": "k2",
+    "value": 1.57e-06,
+    "unit": "dimensionless",
+    "species": "",
+    "cell_line": "",
+    "context": "Global parameter 'k2' from SBML model BIOMD0000000567.",
+    "confidence": "HIGH",
+    "source_model": "BIOMD0000000567",
+    "source_type": "parameter"
+  },
+  {
+    "param_name": "A0",
+    "value": 184713.375796178,
+    "unit": "dimensionless",
+    "species": "",
+    "cell_line": "",
+    "context": "Global parameter 'A0' from SBML model BIOMD0000000567.",
+    "confidence": "HIGH",
+    "source_model": "BIOMD0000000567",
+    "source_type": "parameter"
+  },
+  {
+    "param_name": "k2A0",
+    "value": 0.29,
+    "unit": "dimensionless",
+    "species": "",
+    "cell_line": "",
+    "context": "Global parameter 'k2A0' from SBML model BIOMD0000000567.",
+    "confidence": "HIGH",
+    "source_model": "BIOMD0000000567",
+    "source_type": "parameter"
+  }
+]
