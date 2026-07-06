@@ -188,6 +188,19 @@ class Settings:
     # v3 工作流版本开关："v3" (默认，Supervisor-Worker 动态编排) | "v2" | "v1"
     WORKFLOW_VERSION: str = os.getenv("WORKFLOW_VERSION", "v3").lower()
 
+    # =============================================================================
+    # v4 迁移 Feature Flags（Phase 1）
+    # 详见 BioDynamics_v4_Migration_Plan.md
+    # 所有 flag 默认 false，保证 v3 行为完全不受影响
+    # =============================================================================
+    # Phase 1: Ontology Agent + Pathway Graph
+    V4_ONTOLOGY_AGENT_ENABLED: bool = os.getenv(
+        "V4_ONTOLOGY_AGENT_ENABLED", "false"
+    ).lower() == "true"
+    V4_PATHWAY_GRAPH_ENABLED: bool = os.getenv(
+        "V4_PATHWAY_GRAPH_ENABLED", "false"
+    ).lower() == "true"
+
 
 settings = Settings()
 

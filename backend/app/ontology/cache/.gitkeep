@@ -1,0 +1,2 @@
+# 缓存目录占位文件（HGNC/UniProt/ChEBI/GO JSON 缓存）
+# 实际缓存文件在运行时生成，*.json 被 .gitignore 忽略

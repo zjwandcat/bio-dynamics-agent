@@ -38,6 +38,9 @@ from app.nodes_v2 import (
     n8_scientific_features,
     n9_experiment_rag,
 )
+# v4 迁移 Phase 1：Ontology Agent hook（仅新增 import，不修改任何 v3 导入）
+# V4_ONTOLOGY_AGENT_ENABLED=false 时 hook 节点直接返回空 dict，行为同 v3
+from app.ontology.ontology_agent import ontology_hook_node
 from app.sandbox import ERR_NONE, execute_simulation_code_v2
 from app.state import BioDynamicsState
 from app.supervisor import orchestrator
@@ -1131,7 +1134,13 @@ def build_workflow_v3() -> StateGraph:
     workflow.add_node("worker_validator", _run_worker_validator)
     workflow.add_node("worker_report", _run_worker_report)
 
-    workflow.add_edge(START, "pre_router")
+    # v4 Phase 1：在 pre_router 前插入 Ontology Agent hook 节点
+    # 仅新增节点与边，不修改 pre_router 函数本身，不改变路由决策
+    # V4_ONTOLOGY_AGENT_ENABLED=false 时 hook 返回空 dict，行为与 v3 完全一致
+    workflow.add_node("ontology_hook", ontology_hook_node)
+
+    workflow.add_edge(START, "ontology_hook")
+    workflow.add_edge("ontology_hook", "pre_router")
     workflow.add_edge("pre_router", "supervisor")
 
     workflow.add_conditional_edges(

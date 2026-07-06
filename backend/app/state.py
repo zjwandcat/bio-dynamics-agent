@@ -170,3 +170,14 @@ class BioDynamicsState(TypedDict, total=False):
 
     # N11 — 报告（Python Markdown 模板 + LLM JSON 填充）
     report: dict                        # {markdown, llm_filled_json, forbidden_terms_violations}
+
+    # =============================================================================
+    # v4 迁移字段（Phase 1 新增）
+    # 详见 BioDynamics_v4_Migration_Plan.md
+    # 命名规则：v4_ 前缀，与 v3 字段共存，P7 阶段统一清理
+    # =============================================================================
+    # v4 Ontology Agent 输出（Phase 1）
+    # 结构：{entities: [{name, hgnc_id, uniprot_id, chebi_id, go_terms, sbo_term,
+    #                    species_type, verified, source}], pathway_class, warnings}
+    # V4_ONTOLOGY_AGENT_ENABLED=false 时保持 None，不影响 v3 流程
+    v4_ontology_entities: dict
