@@ -1,0 +1,59 @@
+# 仿真预测报告
+
+## 1. 机制分析
+{{ llm.mechanism_analysis }}
+
+## 2. 仿真结果解读
+{{ llm.simulation_interpretation }}
+
+### 物种指标
+
+> 所有时间单位为 **{{ time_unit | default("min") }}**；浓度单位为 nM。
+
+| 物种 | 峰值 (nM) | 达峰时间 ({{ time_unit | default("min") }}) | 倍数变化 | 激活持续 ({{ time_unit | default("min") }}) | AUC (nM·{{ time_unit | default("min") }}) | 最大水平 (nM) |
+|------|----------|---------------------------------------------|----------|---------------------------------------------|-------------------------------------------|---------------|
+{% for sp, m in metrics.species.items() %}
+| {{ sp }} | {{ "%.3f"|format(m.peak) }} | {{ "%.3f"|format(m.peak_time) }} | {{ "%.3f"|format(m.fold_change) }} | {{ "%.3f"|format(m.activation_duration) if m.activation_duration is not none else "N/A" }} | {{ "%.3f"|format(m.auc) }} | {{ "%.3f"|format(m.peak) }} |
+{% endfor %}
+
+{% if metrics.combo %}
+### 联合用药指标
+
+| 列名 | 峰值 (nM) | 倍数变化 | AUC (nM·{{ time_unit | default("min") }}) |
+|------|----------|----------|-------------------------------------------|
+{% for sp, m in metrics.combo.items() %}
+| {{ sp }} | {{ "%.3f"|format(m.peak) }} | {{ "%.3f"|format(m.fold_change) }} | {{ "%.3f"|format(m.auc) }} |
+{% endfor %}
+{% endif %}
+
+## 3. 实验验证建议
+{% if experiments %}
+{% for ex in experiments %}
+- **{{ ex.name }}**：靶点 {{ ex.target }}，细胞系 {{ ex.cell_line }}（来源：PMID {{ ex.pmid }}）
+{% endfor %}
+{% else %}
+暂无来自知识库的实验方案。
+{% endif %}
+
+## 4. 文献证据
+{% if evidence %}
+{% for ev in evidence %}
+- {{ ev.title }}（PMID: {{ ev.pmid }}，图 {{ ev.figure_ref | default('-') }}，细胞系 {{ ev.cell_line | default('-') }}）
+{% endfor %}
+{% else %}
+暂无来自知识库的文献证据。
+{% endif %}
+
+## 5. 讨论
+{{ llm.discussion }}
+
+## 6. 局限性
+{{ llm.limitations }}
+
+---
+
+{% if confidence is none %}
+*仿真失败：{{ sandbox_failure_reason | default("未知错误") }}；节点版本：v2；工作流：{{ knowledge_graph.get("node_count", 0) if knowledge_graph is mapping else 0 }} 节点 / {{ knowledge_graph.get("edge_count", 0) if knowledge_graph is mapping else 0 }} 边*
+{% else %}
+*置信度：{{ "%.2f"|format(confidence) }}；节点版本：v2；工作流：{{ knowledge_graph.get("node_count", 0) if knowledge_graph is mapping else 0 }} 节点 / {{ knowledge_graph.get("edge_count", 0) if knowledge_graph is mapping else 0 }} 边；时间单位：{{ time_unit | default("min") }}*
+{% endif %}

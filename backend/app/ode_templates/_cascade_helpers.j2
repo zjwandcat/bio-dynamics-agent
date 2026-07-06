@@ -1,0 +1,38 @@
+{# Tier 3 子模块：级联磷酸化共享辅助函数（模块级，0 缩进）
+   被 Signaling_Cascade_Phos.j2 通过 {% include %} 组合。
+   深度审核报告 §2.4 模板复杂度控制：Tier 3 系统拆分为子模块。
+   TASK 4 修复：移除 Michaelis-Menten 酶饱和函数，改为 mass-action ONLY。
+   保留 k_phos > k_dephos 约束（级联净增益）。
+#}
+# =============================================================================
+# TASK 4: mass-action ONLY — 移除 Michaelis-Menten 酶饱和函数
+# =============================================================================
+# 原 _mm_rate(vmax, substrate, km) 已删除，所有磷酸化使用 mass-action：
+#   v = k_phos * [enzyme] * [substrate]  (酶催化，双分子)
+#   v = k_phos * [substrate]             (自磷酸化，单分子)
+
+
+# 全局约束：k_phosphorylation > k_dephosphorylation
+# 在加载参数后校验，违反时自动调整 k_dephos = k_phos * 0.1 以保证净增益
+def _enforce_phos_dephos_ratio() -> list[str]:
+    """强制 k_phos > k_dephos，返回调整日志列表。"""
+    logs = []
+    for target_name in PARAMS:
+        eparams = PARAMS[target_name]
+        k_phos = eparams.get("k_phos", eparams.get("k1", 0.1))
+        k_dephos = eparams.get("k_dephos", eparams.get("k2", 0.001))
+        if k_phos <= k_dephos:
+            # 违反约束：调整为 k_dephos = k_phos * 0.1（保证 10:1 净增益比）
+            new_k_dephos = k_phos * 0.1
+            eparams["k_dephos"] = new_k_dephos
+            logs.append(
+                f"PARAM_ADJUST: MAPK约束：{target_name} k_phos={k_phos} ≤ k_dephos={k_dephos}，"
+                f"已调整 k_dephos={new_k_dephos} 以保证级联净增益"
+            )
+    return logs
+
+
+# 启动时执行约束校验
+_PHOS_LOGS = _enforce_phos_dephos_ratio()
+for _log in _PHOS_LOGS:
+    print(_log)

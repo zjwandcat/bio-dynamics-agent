@@ -1,0 +1,46 @@
+{# Tier 3 子模块：phosphorylation 机制块（12 空格缩进，body of "elif mechanism == 'phosphorylation':"）
+   被 Signaling_Cascade_Phos.j2 通过 {% include %} 组合。
+   TASK 4 修复：mass-action ONLY，移除 Michaelis-Menten 酶饱和项。
+   TASK 4 修复：移除 gene-expression-like 线性增长模型。
+   严格质量守恒：底物消耗 = 产物生成。
+
+   mass-action phosphorylation:
+     rate = k_phos * [enzyme] * [substrate]   (酶催化，双分子)
+     rate = k_phos * [substrate]              (自磷酸化，单分子)
+     逆反应: rate = k_dephos * [product]       (去磷酸化，一级)
+#}
+            # Xxx → pXxx (mass-action 磷酸化，严格质量守恒)
+            # TASK 4: 仅使用 mass-action kinetics，禁止 Michaelis-Menten
+            k_phos = _get_param(tgt_name, "k_phos", _get_param(tgt_name, "k1", 0.1))
+            k_dephos = _get_param(tgt_name, "k_dephos", _get_param(tgt_name, "k2", 0.001))
+            # 磷酸化速率计算（mass-action）
+            if _is_enzyme and reaction_eq and "→" in reaction_eq:
+                # source 是酶：找底物（反应式左侧除 source 外的物种）
+                _lhs = reaction_eq.split("→", 1)[0]
+                _lhs_tokens = [s.strip() for s in _lhs.replace("+", " ").split() if s.strip()]
+                _substrate_name = ""
+                for tok in _lhs_tokens:
+                    if tok != src_name and tok in SP_IDX:
+                        _substrate_name = tok
+                        break
+                if _substrate_name:
+                    _sub_idx = SP_IDX[_substrate_name]
+                    _sub_conc = y[_sub_idx]
+                    # mass-action: v = k_phos * [enzyme] * [substrate]
+                    _phos_rate = k_phos * src * _sub_conc
+                    # 消耗底物（Xxx → pXxx 的质量守恒）
+                    dy[_sub_idx] -= _phos_rate
+                else:
+                    _phos_rate = 0.0
+            else:
+                # source 是底物：消耗 source 以保证质量守恒
+                # mass-action: v = k_phos * [substrate]（自磷酸化或一级近似）
+                _phos_rate = k_phos * src
+                dy[s_idx] -= _phos_rate
+            # 产物生成（严格守恒：产物增加 = 底物消耗）
+            dy[t_idx] += _phos_rate
+            # 去磷酸化消耗（pXxx → Xxx 的逆反应，一级动力学 mass-action）
+            dy[t_idx] -= k_dephos * tgt
+            # 去磷酸化回收：pXxx → Xxx，补充 free form
+            if not _is_enzyme:
+                dy[s_idx] += k_dephos * tgt

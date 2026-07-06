@@ -1,0 +1,238 @@
+{
+  "audit_1_kg_ode_consistency": {
+    "missing_nodes": [
+      {
+        "name": "EGF-EGFR",
+        "id": "species_2",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "EGF-EGFR-2",
+        "id": "species_3",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "EGF-pEGFR-2",
+        "id": "species_4",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "EGF-pEGFR-2-SHP",
+        "id": "species_6",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "EGF-pEGFR-2-Shc",
+        "id": "species_8",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "EGF-pEGFR-2-pShc",
+        "id": "species_9",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "pShc",
+        "id": "species_10",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "pShc-SHP",
+        "id": "species_11",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "EGF-pEGFR-2-pShc-Grb2",
+        "id": "species_13",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "EGF-pEGFR-2-pShc-Grb2-SOS",
+        "id": "species_15",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "Grb2-SOS",
+        "id": "species_16",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "EGF-pEGFR-2-pShc-Grb2-SOS-RasGDP",
+        "id": "species_18",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "RasGTP",
+        "id": "species_19",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "EGF-pEGFR-2-Grb2",
+        "id": "species_20",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "EGF-pEGFR-2-Grb2-SOS",
+        "id": "species_21",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "EGF-pEGFR-2-Grb2-SOS-RasGDP",
+        "id": "species_22",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "Raf-RasGTP",
+        "id": "species_24",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "pRaf",
+        "id": "species_25",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "pRaf-MEK",
+        "id": "species_27",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      },
+      {
+        "name": "pMEK",
+        "id": "species_28",
+        "reason": "SBML 中存在但 KG 中缺失（初始浓度=0，为中间态）"
+      }
+    ],
+    "invalid_edges": [
+      {
+        "edge": "EGF→EGFR",
+        "reason": "EGF→EGFR 应为 binding（mass action）而非 activation"
+      },
+      {
+        "edge": "HRAS→MAPK1",
+        "reason": "Ras→MAPK 跳过了 MAPK 磷酸化（pMAPK）中间态"
+      }
+    ],
+    "collapsed_pathways": [
+      {
+        "current": "6 条 activation 边",
+        "sbml": "205 条 mass-action/phosphorylation 反应",
+        "reason": "通路被压缩为 6 步简单 activation，丢失 199 个反应节点"
+      }
+    ],
+    "sbml_species_count": 194,
+    "current_species_count": 7,
+    "sbml_reaction_count": 205,
+    "current_edge_count": 6
+  },
+  "audit_2_parameter_ontology": {
+    "param_type_distribution": {
+      "initial_concentration": 194,
+      "kinetic_rate": 315
+    },
+    "misused_parameters": [],
+    "invalid_bindings": []
+  },
+  "audit_3_rag_semantic": {
+    "type_conflicts": [
+      {
+        "doc_type": "initial_concentration",
+        "name": "EGFR",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_1 Species 'EGFR' (id=species_1) from SBML model BIOMD0000000205. Initial concentration/amo"
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "EGF-EGFR",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_2 Species 'EGF-EGFR' (id=species_2) from SBML model BIOMD0000000205. Initial concentration"
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "EGF-EGFR-2",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_3 Species 'EGF-EGFR-2' (id=species_3) from SBML model BIOMD0000000205. Initial concentrati"
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "EGF-pEGFR-2",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_4 Species 'EGF-pEGFR-2' (id=species_4) from SBML model BIOMD0000000205. Initial concentrat"
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "EGF-pEGFR-2-SHP",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_6 Species 'EGF-pEGFR-2-SHP' (id=species_6) from SBML model BIOMD0000000205. Initial concen"
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "EGF-pEGFR-2-Shc",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_8 Species 'EGF-pEGFR-2-Shc' (id=species_8) from SBML model BIOMD0000000205. Initial concen"
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "EGF-pEGFR-2-pShc",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_9 Species 'EGF-pEGFR-2-pShc' (id=species_9) from SBML model BIOMD0000000205. Initial conce"
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "EGF-pEGFR-2-pShc-Grb2",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_13 Species 'EGF-pEGFR-2-pShc-Grb2' (id=species_13) from SBML model BIOMD0000000205. Initia"
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "EGF-pEGFR-2-pShc-Grb2-SOS",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_15 Species 'EGF-pEGFR-2-pShc-Grb2-SOS' (id=species_15) from SBML model BIOMD0000000205. In"
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "EGF-pEGFR-2-pShc-Grb2-SOS-RasGDP",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_18 Species 'EGF-pEGFR-2-pShc-Grb2-SOS-RasGDP' (id=species_18) from SBML model BIOMD0000000"
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "EGF-pEGFR-2-Grb2",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_20 Species 'EGF-pEGFR-2-Grb2' (id=species_20) from SBML model BIOMD0000000205. Initial con"
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "EGF-pEGFR-2-Grb2-SOS",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_21 Species 'EGF-pEGFR-2-Grb2-SOS' (id=species_21) from SBML model BIOMD0000000205. Initial"
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "EGF-pEGFR-2-Grb2-SOS-RasGDP",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_22 Species 'EGF-pEGFR-2-Grb2-SOS-RasGDP' (id=species_22) from SBML model BIOMD0000000205. "
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "ppERK-EGF-pEGFR-2-pShc-Grb2-SOS",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_46 Species 'ppERK-EGF-pEGFR-2-pShc-Grb2-SOS' (id=species_46) from SBML model BIOMD00000002"
+      },
+      {
+        "doc_type": "initial_concentration",
+        "name": "ppERK-EGF-pEGFR-2-Grb2-SOS",
+        "issue": "initial_concentration 文档含 EGF/EGFR 关键词，embedding 会优先返回（语义近）",
+        "doc_snippet": "initial_concentration_species_48 Species 'ppERK-EGF-pEGFR-2-Grb2-SOS' (id=species_48) from SBML model BIOMD0000000205. I"
+      }
+    ],
+    "embedding_failures": [
+      {
+        "issue": "313/313 kinetic_rate 参数的 document 不含反应物/产物信息",
+        "impact": "embedding 模型无法将 k1/k2 与 EGF/EGFR 关联，导致语义检索失败"
+      }
+    ],
+    "total_documents": 507,
+    "kinetic_rate_total": 313,
+    "kinetic_rate_without_reactants": 313
+  }
+}

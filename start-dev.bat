@@ -1,5 +1,7 @@
-@echo off
+﻿﻿﻿﻿@echo off
 setlocal enabledelayedexpansion
+
+chcp 65001 >nul
 
 echo [BioDynamics Agent] One-click dev startup
 echo.
@@ -22,14 +24,24 @@ if not exist "frontend\package.json" (
     exit /b 1
 )
 
-echo [BioDynamics Agent] Starting backend at http://localhost:8000 ...
-start "Backend - BioDynamics Agent" cmd /k "cd /d backend && .\venv\Scripts\uvicorn.exe app.main:app --reload --port 8000"
+REM Step 1: detect model connectivity
+echo [BioDynamics Agent] Step 1/3: Detecting model connectivity...
+backend\venv\Scripts\python.exe backend\scripts\test_model_connectivity.py
+if %%errorlevel%% neq 0 (
+    echo [WARN] Some models failed connectivity check, continuing startup.
+)
+echo.
 
-echo [BioDynamics Agent] Starting frontend at http://localhost:3000 ...
-start "Frontend - BioDynamics Agent" cmd /k "cd /d frontend && npm run dev"
+REM Step 2: backend will clear LangGraph MemorySaver during lifespan
+echo [BioDynamics Agent] Step 2/3: Starting backend (context memory will be cleared automatically)...
+echo.
+start "BioDynamics-Backend" cmd /k "cd /d backend && .\venv\Scripts\uvicorn.exe app.main:app --reload --port 8000"
+
+echo [BioDynamics Agent] Step 3/3: Starting frontend http://localhost:3000 ...
+start "BioDynamics-Frontend" cmd /k "cd /d frontend && npm run dev"
 
 echo.
-echo [BioDynamics Agent] Waiting for services to start...
+echo [BioDynamics Agent] Waiting for services to be ready...
 ping -n 9 127.0.0.1 >nul
 
 echo [BioDynamics Agent] Opening browser...

@@ -1,0 +1,1092 @@
+[
+  {
+    "t": 2.1,
+    "event": "config",
+    "data": {
+      "model_name": "glm-5.1"
+    }
+  },
+  {
+    "t": 2.11,
+    "event": "node_start",
+    "data": "v3：正在分析运行模式并生成执行计划..."
+  },
+  {
+    "t": 2.11,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "pre_router",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 2.11,
+    "event": "agent_registry",
+    "data": [
+      {
+        "name": "pre_router",
+        "cn_label": "pre_router",
+        "description": "根据运行模式（Auto Fast / Auto Standard / Manual）生成 execution_plan",
+        "icon": "route",
+        "mapped_node": "pre_router"
+      },
+      {
+        "name": "v3 主管",
+        "cn_label": "v3 主管",
+        "description": "动态编排 Worker、触发人工干预、上下文压缩",
+        "icon": "git-merge",
+        "mapped_node": "supervisor"
+      },
+      {
+        "name": "MCP 术语标准化",
+        "cn_label": "MCP 术语标准化",
+        "description": "调用 MCP 工具标准化生物医学术语，注入定义上下文",
+        "icon": "book-open",
+        "mapped_node": "worker_mcp"
+      },
+      {
+        "name": "机制解析与图谱",
+        "cn_label": "机制解析与图谱",
+        "description": "解析自然语言，提取生物实体与相互作用，输出网络 JSON 与知识图谱",
+        "icon": "network",
+        "mapped_node": "worker_mechanism"
+      },
+      {
+        "name": "知识检索 (RAG)",
+        "cn_label": "知识检索 (RAG)",
+        "description": "高阶 RAG：查询重写 + 混合检索 + 重排序，提取动力学参数",
+        "icon": "search",
+        "mapped_node": "worker_rag"
+      },
+      {
+        "name": "ODE 方程生成",
+        "cn_label": "ODE 方程生成",
+        "description": "基于 RAG 真实参数生成 ODE 仿真代码",
+        "icon": "code",
+        "mapped_node": "worker_ode"
+      },
+      {
+        "name": "沙箱仿真执行",
+        "cn_label": "沙箱仿真执行",
+        "description": "在沙箱中执行仿真代码并捕获结果，导出 CSV 与图像",
+        "icon": "flask-conical",
+        "mapped_node": "worker_sandbox"
+      },
+      {
+        "name": "预测报告生成",
+        "cn_label": "预测报告生成",
+        "description": "汇总所有阶段输出，生成可读 Markdown 报告",
+        "icon": "file-text",
+        "mapped_node": "worker_report"
+      }
+    ]
+  },
+  {
+    "t": 2.11,
+    "event": "agent_dispatch",
+    "data": {
+      "target_agent": "pre_router",
+      "reasoning": "PreRouter: mode=auto_standard",
+      "status": "in_progress",
+      "timestamp": 1783141168.6607533,
+      "node_name": "pre_router",
+      "latency_ms": 0.0
+    }
+  },
+  {
+    "t": 2.11,
+    "event": "agent_dispatch",
+    "data": {
+      "target_agent": "pre_router",
+      "reasoning": "纯机制问题（无药物/剂量关键词，含信号通路/调控关键词）",
+      "status": "completed",
+      "timestamp": 1783141168.6610713,
+      "node_name": "pre_router",
+      "latency_ms": 0.0
+    }
+  },
+  {
+    "t": 2.11,
+    "event": "node_start",
+    "data": "v3 Supervisor：正在调度下一个智能体..."
+  },
+  {
+    "t": 2.11,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "supervisor",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 2.11,
+    "event": "node_start",
+    "data": "v3：正在进行 MCP 术语标准化..."
+  },
+  {
+    "t": 2.11,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "worker_mcp",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 110.9,
+    "event": "mcp_term_definitions",
+    "data": {
+      "definitions": [
+        {
+          "term": "表皮生长因子",
+          "canonical_name": "Epidermal Growth Factor",
+          "definition": "一种低分子量多肽，通过与表皮生长因子受体结合，刺激表皮及多种组织细胞增殖和分化。",
+          "synonyms": [
+            "EGF",
+            "Urogastrone",
+            "URG",
+            "HMGF"
+          ],
+          "category": "细胞因子",
+          "related_pathway": "EGFR signaling pathway"
+        },
+        {
+          "term": "EGF",
+          "canonical_name": "Epidermal Growth Factor",
+          "definition": "表皮生长因子的英文缩写，是一种促进细胞增殖和分化的多肽类生长因子。",
+          "synonyms": [
+            "表皮生长因子",
+            "Urogastrone",
+            "URG"
+          ],
+          "category": "细胞因子",
+          "related_pathway": "EGFR signaling pathway"
+        },
+        {
+          "term": "EGFR",
+          "canonical_name": "Epidermal Growth Factor Receptor",
+          "definition": "表皮生长因子受体，属于ErbB受体酪氨酸激酶家族，与配体结合后激活下游细胞增殖和存活信号通路。",
+          "synonyms": [
+            "ErbB1",
+            "HER1",
+            "ErbB-1"
+          ],
+          "category": "受体",
+          "related_pathway": "EGFR signaling pathway"
+        },
+        {
+          "term": "二聚化",
+          "canonical_name": "Dimerization",
+          "definition": "两个相同或不同的单体分子通过非共价键或共价键结合形成二聚体的过程，在受体激活中起关键作用。",
+          "synonyms": [
+            "Dimerisation",
+            "二聚作用",
+            "Dimer formation"
+          ],
+          "category": "生物过程",
+          "related_pathway": "EGFR signaling pathway"
+        },
+        {
+          "term": "自磷酸化",
+          "canonical_name": "Autophosphorylation",
+          "definition": "激酶（如受体酪氨酸激酶）催化自身氨基酸残基添加磷酸基团的过程，是受体激活及下游信号传导的关键步骤。",
+          "synonyms": [
+            "Autophosphorylation",
+            "自身磷酸化",
+            "自我磷酸化"
+          ],
+          "category": "生物过程",
+          "related_pathway": "EGFR signaling pathway"
+        },
+        {
+          "term": "Shc-Grb2-SOS-Ras-MAPK 信号级联",
+          "canonical_name": "Shc-Grb2-SOS-Ras-MAPK signaling cascade",
+          "definition": "从接头蛋白Shc开始，经Grb2和SOS，激活Ras并最终触发MAPK级联反应的信号传导途径，主要介导生长因子引起的细胞增殖与分化。",
+          "synonyms": [
+            "Ras-MAPK通路",
+            "MAPK/ERK通路",
+            "ERK信号级联"
+          ],
+          "category": "信号通路",
+          "related_pathway": "Shc-Grb2-SOS-Ras-MAPK signaling cascade"
+        },
+        {
+          "term": "Shc",
+          "canonical_name": "Src homology 2 domain containing",
+          "definition": "一种接头蛋白，含有SH2结构域，能够结合磷酸化的受体酪氨酸激酶，并招募Grb2以启动下游Ras-MAPK信号通路。",
+          "synonyms": [
+            "SHC1",
+            "ShcA",
+            "p66Shc"
+          ],
+          "category": "其他",
+          "related_pathway": "Shc-Grb2-SOS-Ras-MAPK signaling cascade"
+        },
+        {
+          "term": "Grb2",
+          "canonical_name": "Growth factor receptor-bound protein 2",
+          "definition": "一种衔接蛋白，包含一个SH2和两个SH3结构域，连接受体复合物与鸟苷酸交换因子SOS，传递促分裂信号。",
+          "synonyms": [
+            "Growth factor receptor-bound protein 2",
+            "ASH",
+            "Grb2 adaptor protein"
+          ],
+          "category": "其他",
+          "related_pathway": "Shc-Grb2-SOS-Ras-MAPK signaling cascade"
+        },
+        {
+          "term": "SOS",
+          "canonical_name": "Son of Sevenless",
+          "definition": "一种鸟苷酸交换因子（GEF），通过Grb2招募至细胞膜，催化Ras蛋白从GDP结合状态转换为GTP结合状态从而激活Ras。",
+          "synonyms": [
+            "SOS1",
+            "GEF",
+            "SOS2"
+          ],
+          "category": "其他",
+          "related_pathway": "Shc-Grb2-SOS-Ras-MAPK signaling cascade"
+        },
+        {
+          "term": "Ras",
+          "canonical_name": "Rat sarcoma virus protein",
+          "definition": "一种小GTP酶，在活跃（GTP结合）和非活跃（GDP结合）状态之间循环，作为分子开关控制细胞增殖、分化和存活等信号通路。",
+          "synonyms": [
+            "H-Ras",
+            "K-Ras",
+            "N-Ras",
+            "Rat sarcoma virus protein"
+          ],
+          "category": "其他",
+          "related_pathway": "Shc-Grb2-SOS-Ras-MAPK signaling cascade"
+        },
+        {
+          "term": "MAPK",
+          "canonical_name": "Mitogen-activated protein kinase",
+          "definition": "一类丝氨酸/苏氨酸特异性蛋白激酶，响应细胞外刺激（如丝裂原）而激活，调控基因表达、有丝分裂等细胞生理过程。",
+          "synonyms": [
+            "丝裂原活化蛋白激酶",
+            "ERK",
+            "MAP kinase"
+          ],
+          "category": "其他",
+          "related_pathway": "Shc-Grb2-SOS-Ras-MAPK signaling cascade"
+        },
+        {
+          "term": "磷酸化",
+          "canonical_name": "Phosphorylation",
+          "definition": "将磷酸基团转移至蛋白质特定氨基酸残基（如丝氨酸、苏氨酸或酪氨酸）上的过程，是调节蛋白质活性和细胞信号传导的最重要机制之一。",
+          "synonyms": [
+            "Phosphorylation",
+            "蛋白磷酸化",
+            "Phosphorylization"
+          ],
+          "category": "生物过程",
+          "related_pathway": "EGFR signaling pathway"
+        }
+      ],
+      "tokens_saved": 480,
+      "rewritten_query": "Epidermal Growth Factor（Epidermal Growth Factor）结合 Epidermal Growth FactorR 受体后诱导其Dimerization和Autophosphorylation，激活下游 Src homology 2 domain containing-Growth factor receptor-bound protein 2-Son of Sevenless-Rat sarcoma virus protein-Mitogen-activated protein kinase signaling cascade。请基于 BIOMD0000000205 模型的参数，仿真 Epidermal Growth Factor 刺激下 Epidermal Growth FactorR Phosphorylation的动力学过程。初始条件：Epidermal Growth Factor=0.008 nM，Epidermal Growth FactorR=0.3 nM。"
+    }
+  },
+  {
+    "t": 110.9,
+    "event": "mcp_tool_call",
+    "data": {
+      "tool_key": "openbiomed",
+      "tool_name": "OpenBioMed Skills",
+      "icon": "🔍",
+      "action": "解析输入文本，提取生物医学实体",
+      "status": "fallback",
+      "input_summary": "表皮生长因子（EGF）结合 EGFR 受体后诱导其二聚化和自磷酸化，激活下游 Shc-Grb2-SOS-Ras-MAPK 信号级联。请基于 BIOMD00000...",
+      "output_summary": "（LLM 降级）识别到 12 个术语",
+      "latency_ms": 23489.6,
+      "tokens_saved": 0,
+      "detail": {
+        "extracted_terms": [
+          "表皮生长因子",
+          "EGF",
+          "EGFR",
+          "二聚化",
+          "自磷酸化",
+          "Shc-Grb2-SOS-Ras-MAPK 信号级联",
+          "Shc",
+          "Grb2",
+          "SOS",
+          "Ras",
+          "MAPK",
+          "磷酸化"
+        ]
+      }
+    }
+  },
+  {
+    "t": 110.9,
+    "event": "mcp_tool_call",
+    "data": {
+      "tool_key": "umls",
+      "tool_name": "NIH UMLS MCP",
+      "icon": "🔬",
+      "action": "查询 12 个术语的同义词与层级关系",
+      "status": "fallback",
+      "input_summary": "表皮生长因子, EGF, EGFR, 二聚化, 自磷酸化...",
+      "output_summary": "（LLM 降级）将在定义步骤中合并标准化",
+      "latency_ms": 0.0,
+      "tokens_saved": 0,
+      "detail": {}
+    }
+  },
+  {
+    "t": 110.9,
+    "event": "mcp_tool_call",
+    "data": {
+      "tool_key": "medical_terminologies",
+      "tool_name": "medical-terminologies-mcp",
+      "icon": "📋",
+      "action": "标准化临床术语（ICD-10 / SNOMED CT）",
+      "status": "fallback",
+      "input_summary": "表皮生长因子, EGF, EGFR, 二聚化, 自磷酸化",
+      "output_summary": "（LLM 降级）跳过临床术语标准化",
+      "latency_ms": 0.0,
+      "tokens_saved": 0,
+      "detail": {}
+    }
+  },
+  {
+    "t": 110.9,
+    "event": "mcp_tool_call",
+    "data": {
+      "tool_key": "openbiomed",
+      "tool_name": "OpenBioMed Skills",
+      "icon": "🔍",
+      "action": "为 12 个术语生成标准化定义卡片",
+      "status": "success",
+      "input_summary": "表皮生长因子, EGF, EGFR, 二聚化, 自磷酸化",
+      "output_summary": "生成 12 个术语定义，估算节省 480 Token",
+      "latency_ms": 85292.3,
+      "tokens_saved": 480,
+      "detail": {
+        "definitions": [
+          {
+            "term": "表皮生长因子",
+            "canonical_name": "Epidermal Growth Factor",
+            "definition": "一种低分子量多肽，通过与表皮生长因子受体结合，刺激表皮及多种组织细胞增殖和分化。",
+            "synonyms": [
+              "EGF",
+              "Urogastrone",
+              "URG",
+              "HMGF"
+            ],
+            "category": "细胞因子",
+            "related_pathway": "EGFR signaling pathway"
+          },
+          {
+            "term": "EGF",
+            "canonical_name": "Epidermal Growth Factor",
+            "definition": "表皮生长因子的英文缩写，是一种促进细胞增殖和分化的多肽类生长因子。",
+            "synonyms": [
+              "表皮生长因子",
+              "Urogastrone",
+              "URG"
+            ],
+            "category": "细胞因子",
+            "related_pathway": "EGFR signaling pathway"
+          },
+          {
+            "term": "EGFR",
+            "canonical_name": "Epidermal Growth Factor Receptor",
+            "definition": "表皮生长因子受体，属于ErbB受体酪氨酸激酶家族，与配体结合后激活下游细胞增殖和存活信号通路。",
+            "synonyms": [
+              "ErbB1",
+              "HER1",
+              "ErbB-1"
+            ],
+            "category": "受体",
+            "related_pathway": "EGFR signaling pathway"
+          },
+          {
+            "term": "二聚化",
+            "canonical_name": "Dimerization",
+            "definition": "两个相同或不同的单体分子通过非共价键或共价键结合形成二聚体的过程，在受体激活中起关键作用。",
+            "synonyms": [
+              "Dimerisation",
+              "二聚作用",
+              "Dimer formation"
+            ],
+            "category": "生物过程",
+            "related_pathway": "EGFR signaling pathway"
+          },
+          {
+            "term": "自磷酸化",
+            "canonical_name": "Autophosphorylation",
+            "definition": "激酶（如受体酪氨酸激酶）催化自身氨基酸残基添加磷酸基团的过程，是受体激活及下游信号传导的关键步骤。",
+            "synonyms": [
+              "Autophosphorylation",
+              "自身磷酸化",
+              "自我磷酸化"
+            ],
+            "category": "生物过程",
+            "related_pathway": "EGFR signaling pathway"
+          },
+          {
+            "term": "Shc-Grb2-SOS-Ras-MAPK 信号级联",
+            "canonical_name": "Shc-Grb2-SOS-Ras-MAPK signaling cascade",
+            "definition": "从接头蛋白Shc开始，经Grb2和SOS，激活Ras并最终触发MAPK级联反应的信号传导途径，主要介导生长因子引起的细胞增殖与分化。",
+            "synonyms": [
+              "Ras-MAPK通路",
+              "MAPK/ERK通路",
+              "ERK信号级联"
+            ],
+            "category": "信号通路",
+            "related_pathway": "Shc-Grb2-SOS-Ras-MAPK signaling cascade"
+          },
+          {
+            "term": "Shc",
+            "canonical_name": "Src homology 2 domain containing",
+            "definition": "一种接头蛋白，含有SH2结构域，能够结合磷酸化的受体酪氨酸激酶，并招募Grb2以启动下游Ras-MAPK信号通路。",
+            "synonyms": [
+              "SHC1",
+              "ShcA",
+              "p66Shc"
+            ],
+            "category": "其他",
+            "related_pathway": "Shc-Grb2-SOS-Ras-MAPK signaling cascade"
+          },
+          {
+            "term": "Grb2",
+            "canonical_name": "Growth factor receptor-bound protein 2",
+            "definition": "一种衔接蛋白，包含一个SH2和两个SH3结构域，连接受体复合物与鸟苷酸交换因子SOS，传递促分裂信号。",
+            "synonyms": [
+              "Growth factor receptor-bound protein 2",
+              "ASH",
+              "Grb2 adaptor protein"
+            ],
+            "category": "其他",
+            "related_pathway": "Shc-Grb2-SOS-Ras-MAPK signaling cascade"
+          },
+          {
+            "term": "SOS",
+            "canonical_name": "Son of Sevenless",
+            "definition": "一种鸟苷酸交换因子（GEF），通过Grb2招募至细胞膜，催化Ras蛋白从GDP结合状态转换为GTP结合状态从而激活Ras。",
+            "synonyms": [
+              "SOS1",
+              "GEF",
+              "SOS2"
+            ],
+            "category": "其他",
+            "related_pathway": "Shc-Grb2-SOS-Ras-MAPK signaling cascade"
+          },
+          {
+            "term": "Ras",
+            "canonical_name": "Rat sarcoma virus protein",
+            "definition": "一种小GTP酶，在活跃（GTP结合）和非活跃（GDP结合）状态之间循环，作为分子开关控制细胞增殖、分化和存活等信号通路。",
+            "synonyms": [
+              "H-Ras",
+              "K-Ras",
+              "N-Ras",
+              "Rat sarcoma virus protein"
+            ],
+            "category": "其他",
+            "related_pathway": "Shc-Grb2-SOS-Ras-MAPK signaling cascade"
+          },
+          {
+            "term": "MAPK",
+            "canonical_name": "Mitogen-activated protein kinase",
+            "definition": "一类丝氨酸/苏氨酸特异性蛋白激酶，响应细胞外刺激（如丝裂原）而激活，调控基因表达、有丝分裂等细胞生理过程。",
+            "synonyms": [
+              "丝裂原活化蛋白激酶",
+              "ERK",
+              "MAP kinase"
+            ],
+            "category": "其他",
+            "related_pathway": "Shc-Grb2-SOS-Ras-MAPK signaling cascade"
+          },
+          {
+            "term": "磷酸化",
+            "canonical_name": "Phosphorylation",
+            "definition": "将磷酸基团转移至蛋白质特定氨基酸残基（如丝氨酸、苏氨酸或酪氨酸）上的过程，是调节蛋白质活性和细胞信号传导的最重要机制之一。",
+            "synonyms": [
+              "Phosphorylation",
+              "蛋白磷酸化",
+              "Phosphorylization"
+            ],
+            "category": "生物过程",
+            "related_pathway": "EGFR signaling pathway"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "t": 110.9,
+    "event": "mcp_tool_call",
+    "data": {
+      "tool_key": "medical_terminologies",
+      "tool_name": "medical-terminologies-mcp",
+      "icon": "📋",
+      "action": "基于术语标准化重写查询",
+      "status": "success",
+      "input_summary": "表皮生长因子（EGF）结合 EGFR 受体后诱导其二聚化和自磷酸化，激活下游 Shc-Grb2-SOS-Ras-MAPK 信号级联。请基于 BIOMD00000",
+      "output_summary": "重写后：Epidermal Growth Factor（Epidermal Growth Factor）结合 Epidermal Growth FactorR 受体后诱",
+      "latency_ms": 0.5,
+      "tokens_saved": 0,
+      "detail": {
+        "rewritten_query": "Epidermal Growth Factor（Epidermal Growth Factor）结合 Epidermal Growth FactorR 受体后诱导其Dimerization和Autophosphorylation，激活下游 Src homology 2 domain containing-Growth factor receptor-bound protein 2-Son of Sevenless-Rat sarcoma virus protein-Mitogen-activated protein kinase signaling cascade。请基于 BIOMD0000000205 模型的参数，仿真 Epidermal Growth Factor 刺激下 Epidermal Growth FactorR Phosphorylation的动力学过程。初始条件：Epidermal Growth Factor=0.008 nM，Epidermal Growth FactorR=0.3 nM。",
+        "replacements": [
+          "表皮生长因子 → Epidermal Growth Factor",
+          "EGF → Epidermal Growth Factor",
+          "二聚化 → Dimerization",
+          "自磷酸化 → Autophosphorylation",
+          "Shc-Grb2-SOS-Ras-MAPK 信号级联 → Shc-Grb2-SOS-Ras-MAPK signaling cascade",
+          "Shc → Src homology 2 domain containing",
+          "Grb2 → Growth factor receptor-bound protein 2",
+          "SOS → Son of Sevenless",
+          "Ras → Rat sarcoma virus protein",
+          "MAPK → Mitogen-activated protein kinase",
+          "磷酸化 → Phosphorylation"
+        ]
+      }
+    }
+  },
+  {
+    "t": 110.9,
+    "event": "node_start",
+    "data": "v3 Supervisor：正在调度下一个智能体..."
+  },
+  {
+    "t": 110.9,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "supervisor",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 110.9,
+    "event": "node_start",
+    "data": "v3：正在解析机制并构建知识图谱..."
+  },
+  {
+    "t": 110.9,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "worker_mechanism",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 162.55,
+    "event": "agent_dispatch",
+    "data": {
+      "target_agent": "机制解析与图谱",
+      "reasoning": "Supervisor dispatched: worker_mechanism",
+      "status": "in_progress",
+      "timestamp": 1783141277.4535356,
+      "node_name": "worker_mechanism",
+      "latency_ms": 0.0
+    }
+  },
+  {
+    "t": 162.55,
+    "event": "knowledge_graph",
+    "data": {
+      "node_count": 16,
+      "edge_count": 6,
+      "is_acyclic": true,
+      "topology_signature": "NODES[EGFR 受体,Grb2,MAPK,Ras,SOS,Shc,e1,e2,e3,e4,e5,e6,e7,e8,e9,表皮生长因子];EDGES[EGFR 受体|Shc|activation,Grb2|SOS|activation,Ras|MAPK|activation,SOS|Ras|activation,Shc|Grb2|activation,表皮生长因子|EGFR 受体|activation]"
+    }
+  },
+  {
+    "t": 162.55,
+    "event": "execution_log",
+    "data": "规划：cascade_activation / 模板 Cascade_Activation"
+  },
+  {
+    "t": 162.55,
+    "event": "node_start",
+    "data": "v3 Supervisor：正在调度下一个智能体..."
+  },
+  {
+    "t": 162.55,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "supervisor",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 162.55,
+    "event": "node_start",
+    "data": "v3：正在进行知识检索 (RAG)..."
+  },
+  {
+    "t": 162.55,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "worker_rag",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 211.43,
+    "event": "agent_dispatch",
+    "data": {
+      "target_agent": "知识检索 (RAG)",
+      "reasoning": "Supervisor dispatched: worker_rag",
+      "status": "in_progress",
+      "timestamp": 1783141329.1052034,
+      "node_name": "worker_rag",
+      "latency_ms": 0.0
+    }
+  },
+  {
+    "t": 211.43,
+    "event": "rag_insights",
+    "data": {
+      "rewritten_query": "表皮生长因子 activation EGFR 受体 kinetic parameter Kd Km Vmax half-life degradation species  Epidermal Growth Factor",
+      "rewrites": [],
+      "source_distribution": {
+        "Internal DB": 42
+      },
+      "total_candidates": 42,
+      "top_selections": [
+        {
+          "parameter": "initial_concentration_species_1",
+          "value": "0.3 nM",
+          "source": "Retrieved from RAG",
+          "pmid": "",
+          "confidence_score": 0.76,
+          "species": "",
+          "context": "Species 'EGFR' (id=species_1) from SBML model BIOMD0000000205. Initial concentration/amount used in the model.",
+          "edge": "表皮生长因子 → EGFR 受体"
+        },
+        {
+          "parameter": "initial_concentration_species_2",
+          "value": "0.0 nM",
+          "source": "Retrieved from RAG",
+          "pmid": "",
+          "confidence_score": 0.63,
+          "species": "",
+          "context": "Species 'EGF-EGFR' (id=species_2) from SBML model BIOMD0000000205. Initial concentration/amount used in the model.",
+          "edge": "表皮生长因子 → EGFR 受体"
+        },
+        {
+          "parameter": "initial_concentration_species_3",
+          "value": "0.0 nM",
+          "source": "Retrieved from RAG",
+          "pmid": "",
+          "confidence_score": 0.63,
+          "species": "",
+          "context": "Species 'EGF-EGFR-2' (id=species_3) from SBML model BIOMD0000000205. Initial concentration/amount used in the model.",
+          "edge": "表皮生长因子 → EGFR 受体"
+        },
+        {
+          "parameter": "initial_concentration_species_122",
+          "value": "3000.0 nM",
+          "source": "Retrieved from RAG",
+          "pmid": "",
+          "confidence_score": 0.63,
+          "species": "",
+          "context": "Species 'Pro-EGFR' (id=species_122) from SBML model BIOMD0000000205. Initial concentration/amount used in the model.",
+          "edge": "表皮生长因子 → EGFR 受体"
+        },
+        {
+          "parameter": "initial_concentration_species_120",
+          "value": "0.0 nM",
+          "source": "Retrieved from RAG",
+          "pmid": "",
+          "confidence_score": 0.63,
+          "species": "",
+          "context": "Species 'EGF-pEGFR-2-degrade' (id=species_120) from SBML model BIOMD0000000205. Initial concentration/amount used in the model.",
+          "edge": "表皮生长因子 → EGFR 受体"
+        },
+        {
+          "parameter": "initial_concentration_species_108",
+          "value": "0.0 nM",
+          "source": "Retrieved from RAG",
+          "pmid": "",
+          "confidence_score": 0.62,
+          "species": "",
+          "context": "Species 'EGF-pEGFR-2-Src' (id=species_108) from SBML model BIOMD0000000205. Initial concentration/amount used in the model.",
+          "edge": "EGFR 受体 → Shc"
+        }
+      ],
+      "hit_rate": 0.83,
+      "drug_candidates": [],
+      "online_fallback_enabled": true
+    }
+  },
+  {
+    "t": 211.43,
+    "event": "rag_online_fallback",
+    "data": {
+      "triggered": true,
+      "hit_rate": 0.83,
+      "message": "本地 RAG 命中不足，已自动查询 KEGG/Reactome/UniProt/ChEMBL 补充"
+    }
+  },
+  {
+    "t": 211.43,
+    "event": "rag_ready",
+    "data": {
+      "summary": "已为 5/6 条边检索到真实参数，其余边将使用估算值。",
+      "fallback": true,
+      "hit_rate": 0.83
+    }
+  },
+  {
+    "t": 211.43,
+    "event": "node_start",
+    "data": "v3 Supervisor：正在调度下一个智能体..."
+  },
+  {
+    "t": 211.43,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "supervisor",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 211.43,
+    "event": "node_start",
+    "data": "v3：正在生成 ODE 仿真代码..."
+  },
+  {
+    "t": 211.43,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "worker_ode",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 272.71,
+    "event": "agent_dispatch",
+    "data": {
+      "target_agent": "ODE 方程生成",
+      "reasoning": "Supervisor dispatched: worker_ode",
+      "status": "in_progress",
+      "timestamp": 1783141377.981674,
+      "node_name": "worker_ode",
+      "latency_ms": 0.0
+    }
+  },
+  {
+    "t": 272.71,
+    "event": "code_generated",
+    "data": "\"\"\"\nODE 仿真（Cascade Activation 模板）\n- 多步激活级联\n\"\"\"\nimport numpy as np\nimport matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\nplt.rcParams[\"font.family\"] = [\"Microsoft YaHei\", \"SimHei\", \"DejaVu Sans\"]\nplt.rcParams[\"axes.unicode_minus\"] = False\nfrom scipy.integrate import solve_ivp\n\nSPECIES_NAMES = ['EGF', 'EGFR', 'SHC1', 'GRB2', 'SOS1', 'HRAS', 'MAPK1']\nT_END = 48.0\nN_EVAL = 200\nY0 = [0.008, 0.3, 10.0, 10.0, 10.0, 10.0, 10.0]\nEDGES = [{'source': 'EGF', 'target': 'EGFR', 'interaction': 'activation', 'directed': True}, {'source': 'EGFR', 'target': 'SHC1', 'interaction': 'activation', 'directed': True}, {'source': 'SHC1', 'target': 'GRB2', 'interaction': 'activation', 'directed': True}, {'source': 'GRB2', 'target': 'SOS1', 'interaction': 'activation', 'directed': True}, {'source': 'SOS1', 'target': 'HRAS', 'interaction': 'activation', 'directed': True}, {'source': 'HRAS', 'target': 'MAPK1', 'interaction': 'activation', 'directed': True}]\nPARAMS = {'EGFR': {'kd': 0.3, 'n': 2.0, 'production': 1.0, 'degradation': 0.1}, 'SHC1': {'kd': 0.0, 'n': 2.0, 'production': 1.0, 'degradation': 0.1}, 'GRB2': {'kd': 0.0, 'n': 2.0, 'production': 1.0, 'degradation': 0.1}, 'SOS1': {'kd': 0.0, 'n': 2.0, 'production': 1.0, 'degradation': 0.1}, 'HRAS': {'kd': 0.3, 'n': 2.0, 'production': 1.0, 'degradation': 0.1}, 'MAPK1': {'kd': 10.0, 'n': 2.0, 'production': 1.0, 'degradation': 0.1}}\nN_SP = len(SPECIES_NAMES)\n\ndef _hill_act(x, kd, n):\n    if x <= 0:\n        return 0.0\n    return (x ** n) / (kd ** n + x ** n + 1e-12)\n\ndef _ode(t, y):\n    y = np.maximum(y, 0.0)\n    dy = np.zeros_like(y)\n    for i in range(N_SP):\n        deg = PARAMS.get(SPECIES_NAMES[i], {}).get(\"degradation\", 0.1)\n        dy[i] = -deg * y[i]\n    for e in EDGES:\n        s_idx = SPECIES_NAMES.index(e[\"source\"])\n        t_idx = SPECIES_NAMES.index(e[\"target\"])\n        eparams = PARAMS.get(SPECIES_NAMES[t_idx], {})\n        kd = eparams.get(\"kd\", eparams.get(\"Kd\", 1.0))\n        n = eparams.get(\"n\", eparams.get(\"hill\", 2.0))\n        prod = eparams.get(\"production\", 1.0)\n        if e[\"interaction\"] == \"activation\":\n            factor = _hill_act(y[s_idx], kd, n)\n        else:\n            factor = 0.0\n        dy[t_idx] += prod * factor\n    return dy.tolist()\n\nsol = solve_ivp(\n    _ode,\n    (0.0, T_END),\n    Y0,\n    method=\"LSODA\",\n    t_eval=np.linspace(0.0, T_END, N_EVAL),\n    vectorized=False,\n)\n\nheader = \"t,\" + \",\".join(SPECIES_NAMES)\ndata = np.column_stack([sol.t, *sol.y])\nnp.savetxt(\"simulation.csv\", data, delimiter=\",\", header=header, comments=\"\")\n\nfig, ax = plt.subplots(figsize=(9, 5))\nfor i, name in enumerate(SPECIES_NAMES):\n    ax.plot(sol.t, sol.y[i], label=name, linewidth=2)\nax.set_xlabel(\"Time (h)\")\nax.set_ylabel(\"Concentration (nM)\")\nax.set_title(\"Cascade Activation Simulation\")\nax.legend()\nax.grid(alpha=0.3)\nfig.tight_layout()\nfig.savefig(\"simulation.png\", dpi=120)\n\nfor i, sp in enumerate(SPECIES_NAMES):\n    val = sol.y[i, -1]\n    safe_val = max(val, 0.0) if np.isfinite(val) else 0.0\n    print(f\"BIO_CHECK: {sp} = {safe_val:.4f}\")"
+  },
+  {
+    "t": 272.71,
+    "event": "node_start",
+    "data": "v3 Supervisor：正在调度下一个智能体..."
+  },
+  {
+    "t": 272.71,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "supervisor",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 272.71,
+    "event": "node_start",
+    "data": "v3：正在执行沙箱仿真..."
+  },
+  {
+    "t": 272.71,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "worker_sandbox",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 276.46,
+    "event": "agent_dispatch",
+    "data": {
+      "target_agent": "沙箱仿真执行",
+      "reasoning": "Supervisor dispatched: worker_sandbox",
+      "status": "in_progress",
+      "timestamp": 1783141439.2645836,
+      "node_name": "worker_sandbox",
+      "latency_ms": 0.0
+    }
+  },
+  {
+    "t": 276.46,
+    "event": "agent_dispatch",
+    "data": {
+      "target_agent": "沙箱仿真执行",
+      "reasoning": "Supervisor dispatched: worker_sandbox",
+      "status": "completed",
+      "timestamp": 1783141443.0130205,
+      "node_name": "worker_sandbox",
+      "latency_ms": 0.0
+    }
+  },
+  {
+    "t": 276.46,
+    "event": "execution_log",
+    "data": "BIO_CHECK: EGF = 0.0001\nBIO_CHECK: EGFR = 0.0025\nBIO_CHECK: SHC1 = 10.0000\nBIO_CHECK: GRB2 = 10.0000\nBIO_CHECK: SOS1 = 10.0000\nBIO_CHECK: HRAS = 9.9911\nBIO_CHECK: MAPK1 = 5.0370\n"
+  },
+  {
+    "t": 276.47,
+    "event": "image_ready",
+    "data": "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Fvr61tS3KCsrMy02tOXE4YcfblpXaEsZPQc6KsZNN93U6DUtnYMhQ4aYLi/6nk2dOtWsc9BBB5nX6nGWl5f7bU9bilx22WXy2WefmW/gtbWBh36j/+6770pOTo7pPuOpw6KtHA4++GBzPjMzM+Xzzz83NT+0BY/+/toCQkfc0JoO1157rSmi+swzz5j5vu9TQ3ps+++/v/z666+mwKe+B9nZ2Waf+jsdffTR8tJLL8npp5/e6LXffPONOW/aCkZHidHf59NPP5WTTz7ZDHGqrQaao9fEvHnz5MorrzStffr37y/bSrsYLVmyxFwj+jvr7/7ll1/KRRddZIr06nt19913m/P7xBNPmPdJWw3ptRRMsfpeAQCiRLgTFgAAAjnyyCPNt6xTp05t0wl65plnGrX4mDJlitnWKaec4p137rnnmnkvvvhik9vSlhGpqanupKQk00IjGPtduHChaQWhLTaWL1/eqEWJfrve8Fv9JUuWuBMSEtwjR450l5eX+73mX//6l1n/qaeecrfGCy+8YNbXb8E9li1bZvbbp08f06JjW8+B59vyxx9/3G9+wxYcSlsU6LyXX37Zb923337bzP/nP//pnff333+7P//880b7Gz16tFl32rRpfvP79u1r5ldUVAQ8Pt9WAddee62Zd9RRR7kdDkejVit6XrKystxFRUWNtqMtIn755Re/1xx66KFm2X333eduyZYtW7ytOBITE91XX321OVfb0oJD3x+9TjzWrl1r5umyzp07+2135syZZn7Xrl2D3oIjVt8rAEB0YBQVAEBE0tYQqq01JnSElYYtPrQOhKfGgIenxsAPP/zQ5JCUWpdCvzXWb8X33XffoOxXRxjR/WkLBv0mueE3+qNHjw54HFqIUWtmzJ8/37Qy8UzaWkR999130hrPP/+8edQRO3zrPeg343qc2ipkW89BW2irEfXmm282ai2izj//fO88bbVy6KGH+q2n51CHuW14fttChybV86GtWLSFTMN6DPvtt59p5aO1IvTb/oaOP/54MwqKL0/rAa1x0hJtpaLX3z/+8Q/z/j700EPmmtCWCbrPttBWMTrMrIfWvNCWNkqvNa0r47H33nublg9aM6WiokKCKVbfKwBAdCDgAABEJB020zfoaK3Kykp58cUXzQ38yJEjTTcQT9DgOxTlxRdfbEKOp59+2hRV1KFmG+5L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UHHttdea+X369DHdT77//vtmX68ByJIlS2TEiBFt2j4AAAAAAGHpomKxWEwxyXimtS60O0gk1uBoi5KSEm8LDY9TTjlFrr/+evnzzz/Nc32vjzvuODOCyttvvy3HH398wG098sgj4nK55LTTTmvT9gEAAAAAaElIUwi9mdVv9efOnWuGEP33v/8tNlvrC1xGMy3k2ZZaF8E+7zqyiZ5rq3X7Gukcfvjh8tJLL5lWGh7aCmPNmjV+RUVvu+02MzqKdjHJzs42rXg83G63qalx7733yujRo/0CkNZuHwAAAACAsAQcepM6fvx4mTdvnnfeFVdcYQKPK6+8Uj799FPp2LFjqHaPINZT6d+/vxn+VYt+bty4UT766CMTntx5551+w7h+8MEHMm7cODn44INNOLHbbrtJZWWlzJw509TX2HPPPU0LD9/QpbXbBwAAAABgh9fgUCeccIJs2bJFnn32Wfnf//7nnb/ffvtJUVGRTJ48OVS7RhD9/vvvct1115kWFVOnTpWlS5fKOeecY4KrMWPG+K2rrTN0CNibb77ZtCD58MMPTcFQDS5eeOEFE27pEMLbun0PHXZYC5UmJibyXgMAAAAAQteCY8GCBTJ79mz58ssvzbf506ZN8y7Tb++HDx8u8+fPD8WuEWQaJNxxxx1mao28vLw2rd/W7asjjjhCNm/e3Or1AQAAAACxLyQtODw3n4MHDw64XL955wYVAAAAAABEdMChXRKU1lJoSLsu/Pjjj9K1a9dQ7BoAAAAAAMShkHRR6dKlixk29PLLL5eCggLzXC1btkweeOAB8/j000+HYtcAAAAAACAOhWwUlUmTJskxxxxjCkh6DBo0yDxqEUqtzQEAAAAAABDRAUd2drYZQUO7qXz77bdSWlpquqXoMKI6fCgAAAAAAEDEBxyeEVOOPfZYM4XTgw8+KC+//LLcd999cthhh4X1WAAAAAAAQJQUGVUffvih/PLLL43mFxYWytSpU2XDhg2yI2zatEluv/12M2zt1q1bd8g+AQAAAABADAQca9asMa02li5d2mhZRkaGXHXVVTusyOgdd9whNTU1O2RfAAAAAAAghgKOFStWmMc999yz0TKbzSajRo2SefPmSaj9+eef8uSTT5pABQAAAAAAxK6QBByJiYne7iiBlJeXS0VFhYSSy+WSiy++WA4//HA58sgjQ7ovAAAA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XOuIB1zniBdc64gXXOuIB3lhuidlFBUAAAAAABD1aMEBAAAAAACiHgEHAAAAAACIegQcAAAAAAAg6hFwAAAAAACAqJcQ7gNAcE2fPl0++OADKS4ulqFDh8q5554rqampnGZEva1bt8rtt98u//nPfwJe05WVlfLSSy/J77//LklJSXL00UfLIYccEpZjBdrK6XTKu+++a/6G68/9+/eXs88+W7Kyshqtu2zZMnOtr169Wrp37y7nnHOO9OzZk5OOqDBjxgz58ssvZf369dK5c2cZN26cDBs2LOC6n332mZkqKipkjz32kLPOOksSExN3+DED20v/vr/99tsyYcIE2Xvvvf2WlZSUyJQpU2T27NmSnp4uxx13nOy7776cdESFiRMnyg8//NBo/gUXXCD777+/37wFCxbIa6+9Zv7+9+nTx9yn6n8Hgs6NmHHddde59S3daaed3KNGjXJbLBb34MGD3YWFheE+NGCblZaWuh999FF3+/btzfW9devWRuts2bLFPWTIELfNZnPvvffe7l69epl1r7/+es48Il5ZWZl7zz33NNfvyJEj3SNGjHAnJCS48/Ly3L/88ovfup988ok7JSXF/HsYPXq0Oy0tzZ2RkeH+6aefwnb8QGu9//77bqvV6t5ll13c++67rzsrK8s8f/zxxxute+GFF5q/44MGDXIPHz7c/Kx/3ysqKjjhiCrl5eXurl27mmv4pZde8lu2du1ad9++fd2JiYnm34RnvQcffDBsxwu0xZFHHunOzMw0956+k/699/Xqq6+67Xa7u3PnzubzS1JSkjs3N9e9YMECd7ARcMSIadOmmT+IV1xxhXfe66+/buZdffXVYT02YFtNnjzZ3LzpH0EN65oKOM455xzzR3PmzJnmucPhcI8bN86s/8cff/AGIKItX77cfeihh7pXrlzpnTdr1ixz7WvY4VFUVGQ+DOi84uJiM2/ZsmXunJwc8+/D5XKF5fiB1po/f757zpw5fuH0wIEDzc2d7992z+eXO++80zvviSeeMPPuueceTjiiyn333We+dAwUcBx99NEmqJ47d655XllZ6R4zZowJufXvOxDpRo0a5T7mmGOaXWfdunXmy5kDDzzQXONKr3mdp9d7sFGDI0b873//k4yMDNN83+Pkk0+W4cOHy8svv6xBVliPD9gWBQUFcvrpp8tff/0lhx12WMB1ioqK5JVXXpFTTz3V2+zTZrPJPffcY37W6x+IZNo88+OPP5YePXp45+22224yduxY+e2338ThcJh5r7/+uvk3oX/n9e+96t27t2nyPG/ePJk1a1bYfgegNQYOHCi77rqr93lOTo75G19dXW3+zvt+ptF/F9dff713nl7nvXr1Mt2zgGixdu1aufPOO02Xw4ZWrlwpH330kfzjH/+QwYMHm3naxfauu+4yf/f1bz4Q6bZs2SK5ubnNrvPCCy+YroYPPvigucaVXvPa7VC75q5atSqox0TAESO++eYb2WeffRrVJjjwwANl48aN5o8oEG2uuuoqefLJJ82H2ub6c9fU1Mihhx7qN19rGOgH5J9//nkHHCmw7fQ/9gkJjUtiaS2OtLQ077Kvv/7arDtmzJhGf+cV1zqikdZPUp06dTKPVVVVpj/3QQcdZMJqD4vFIgcccIDpw601C4BocPnll0u/fv3kwgsvDPjZXTX8/LLXXntJSkoKf9MRFQoKCloMOPTzS15enuy+++4BP7/88ssvQT0miozGgE2bNklhYaHstNNOjZbpt3tKA47mbhKBaLV48WLz2NT1T7iHaLR582bTqsM3zNBrXVt5NCyy6Pt3HogmK1askOeff16OOuoo72cULaKr4V5zn2n0275Bgwbt8OMF2uKdd94xk35DbbVaW/35RYM9LSDN33REOu0hoPegeo1rwdDMzEwZNWqUHH/88d6WGp5rXYO+hkL1+YUWHDFALyylF1VDnnmlpaU7/LiASLj+ufYRjSMGHXPMMaZlkjZV9r3W+TuPaDd16lTTpVDDOx3tbfz48fLmm296l/OZBrFgw4YNpuvJeeedJ6NHjw64Dp9fEO1KSkpMi2kN5ebMmSOTJ0823Q51ZCwdKSVcn18IOGKAy+XyNt9sapndbt/hxwVEwvXPtY9o8ueff8qIESNMM3z95s+3Oadez/ydRyx0SdHaSdofW69pbbqsoYcHn2kQC99q67fZ2s3k4YcfbnI9Pr8g2mVmZsr8+fPlp59+kt9//92URbjxxhvNZ5grrrgibJ9fCDhiQFZWll8S3PCbQNVS3yggVq9/rn1Ei6eeesr0vdZr+tdff5XDDz/cb7nO5+88ot0ZZ5whn3zyielzrd/w6bfbWoDxvffeM8v5TINod/vtt8sXX3xhipx7rudA+PyCWJOcnGxanuqXM9rNNlyfXwg4YoAW5tIEbdGiRY2W6TwtUKfNh4BYtPPOO5vHhte/foOiff48lcmBSHbffffJJZdcYpo06zchnuval87Tfqqeoowenmufax3RRovo3n///aY+wdtvv23m9e3b1zxv6jONjiDkO+IQEEl0NCAdNaVDhw7yzDPPmEBPp9tuu80s18Lp+lyb8zf1+aW8vFxWr17N33RErV69epnPKp4WGnqt//33341G9QzV5xcCjhih1cZ1NAktTOehQ0xpeqZVx/VDBBCL9Ns/bdr27rvv+s3/9ttvTVqstQyASKZDvN5www1yzTXXyH//+99GRUQ9Dj74YFOXw/dbEaXffOsIWvrfASDaaHcV/RCs3/wpbdavo8J9/vnn5kbPQ3/+8ssv5eijjw7Y1BmIBHptHnHEETJ8+HDzGcQzeWoM6HWsz/UzuudvdsPPL/o3Xpfz+QXRqKyszIwANGDAAG9xXf38osPJfvfdd40+v+joKlqYNKjciAnff/+922KxuI888kj3+vXr3UVFRe5LLrnEbbVa3d999124Dw/YbldffbXGvu6tW7c2WjZhwgSz7IknnnBXVVW5FyxY4O7fv7975513dldXV3P2EdFuuOEGc/3+8ssv7k2bNjWaKioqzHqlpaXuzp07u3v06OH+/fffzbX90ksvuW02m/umm24K968BtOiKK65wf/rpp+a6rqysdP/000/uUaNGmWv4xx9/9K73wQcfmH8Tp556qnvz5s3ugoIC83NiYqJ7zpw5nGlEHb2+9ZrWv9m+TjrpJHP963z9m65/27t37+4eOXKk2+Vyhe14gdaYOXOm+/bbb3cvXrzYXVZW5v7111/dBxxwgLnWX375Ze96+fn57qysLPPZXD+j62d1/cyu6z366KPuYCPgiCETJ040//HXi0WnlJQU96RJk8J9WEDIA47y8nIT7nmufZ30j+iiRYs4+4h4Z5xxht+123B65JFHvOv+/PPP7i5duvgtP/fcc90OhyOsvwPQGvvvv3+j63uXXXZxf/TRR43Wvfvuu82Nn2e9jIwM99SpUznRiKmAQz/T7Lfffn7/JoYNG+ZevXp12I4VaC0NrBv+Tdcg43//+1+jdadNm+bOzc31rqdfzF955ZXuULDo/wW3TQjCKT8/X3744QdTd0ObeObk5PCGICb88ccfpirzySef3GS15VmzZpm6G507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"
+  },
+  {
+    "t": 276.47,
+    "event": "simulation_csv",
+    "data": "C:\\Users\\27553\\AppData\\Local\\Temp\\bio_dynamics_csv_almkjekj\\simulation.csv"
+  },
+  {
+    "t": 276.47,
+    "event": "node_start",
+    "data": "v3 Supervisor：正在调度下一个智能体..."
+  },
+  {
+    "t": 276.47,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "supervisor",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 276.47,
+    "event": "node_start",
+    "data": "v3：正在生成预测报告..."
+  },
+  {
+    "t": 276.47,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "worker_report",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 305.67,
+    "event": "agent_dispatch",
+    "data": {
+      "target_agent": "预测报告生成",
+      "reasoning": "Supervisor dispatched: worker_report",
+      "status": "in_progress",
+      "timestamp": 1783141443.0186625,
+      "node_name": "worker_report",
+      "latency_ms": 0.0
+    }
+  },
+  {
+    "t": 305.67,
+    "event": "metrics",
+    "data": {
+      "species": {
+        "EGF": {
+          "peak": 0.008,
+          "peak_time": 0.0,
+          "half_life": 6.9347196975730885,
+          "steady_state": 8.379635806615872e-05,
+          "fold_change": 1.0,
+          "auc": 0.07941233159490795,
+          "rise_time": null,
+          "decay_time": 6.994974874371859,
+          "max_slope": 0.0007753856239141472
+        },
+        "EGFR": {
+          "peak": 0.3,
+          "peak_time": 0.0,
+          "half_life": 6.960003189352497,
+          "steady_state": 0.003215914332634397,
+          "fold_change": 1.0,
+          "auc": 3.012855249805122,
+          "rise_time": null,
+          "decay_time": 7.236180904522612,
+          "max_slope": 0.028429833912557087
+        },
+        "SHC1": {
+          "peak": 10.0,
+          "peak_time": 0.0,
+          "half_life": 1276115132.4244714,
+          "steady_state": 9.999999659150992,
+          "fold_change": 1.0,
+          "auc": 479.99999740475744,
+          "rise_time": null,
+          "decay_time": null,
+          "max_slope": 1.006957640233459e-07
+        },
+        "GRB2": {
+          "peak": 10.0,
+          "peak_time": 0.0,
+          "half_life": null,
+          "steady_state": 9.9999999999999,
+          "fold_change": 1.0,
+          "auc": 479.9999999999971,
+          "rise_time": null,
+          "decay_time": null,
+          "max_slope": 1.4728958793360415e-14
+        },
+        "SOS1": {
+          "peak": 10.0,
+          "peak_time": 0.0,
+          "half_life": null,
+          "steady_state": 9.9999999999999,
+          "fold_change": 1.0,
+          "auc": 479.9999999999971,
+          "rise_time": null,
+          "decay_time": null,
+          "max_slope": 1.4728958793360415e-14
+        },
+        "HRAS": {
+          "peak": 10.0,
+          "peak_time": 0.0,
+          "half_life": 49446.54877908792,
+          "steady_state": 9.99110227885176,
+          "fold_change": 1.0,
+          "auc": 479.6576469907486,
+          "rise_time": null,
+          "decay_time": null,
+          "max_slope": 0.0008715244549064953
+        },
+        "MAPK1": {
+          "peak": 9.999999999999998,
+          "peak_time": 0.0,
+          "half_life": 57.766068366174046,
+          "steady_state": 5.048136566106512,
+          "fold_change": 1.0,
+          "auc": 289.5042879876268,
+          "rise_time": null,
+          "decay_time": null,
+          "max_slope": 0.48462939425372964
+        }
+      },
+      "overall": {
+        "max_species": "EGF",
+        "max_fold_change": 1.0,
+        "simulation_duration_h": 48.0,
+        "n_species": 7,
+        "n_combo_columns": 0
+      },
+      "combo": {}
+    }
+  },
+  {
+    "t": 305.67,
+    "event": "paper_evidence",
+    "data": [
+      {
+        "cell_line": "",
+        "pmid": "",
+        "journal": "UniProt",
+        "title": "MAP kinase-activated protein kinase 3 (MAPKAPK3)",
+        "species": "Homo sapiens",
+        "year": "",
+        "figure_ref": "",
+        "doi": "UniProt:Q16644"
+      },
+      {
+        "journal": "UniProt",
+        "title": "MAP kinase-activated protein kinase 2 (MAPKAPK2)",
+        "figure_ref": "",
+        "species": "Homo sapiens",
+        "year": "",
+        "doi": "UniProt:P49137",
+        "cell_line": "",
+        "pmid": ""
+      },
+      {
+        "pmid": "",
+        "figure_ref": "",
+        "cell_line": "",
+        "title": "Mitogen-activated protein kinase 1 (MAPK1)",
+        "doi": "UniProt:P28482",
+        "species": "Homo sapiens",
+        "journal": "UniProt",
+        "year": ""
+      },
+      {
+        "pmid": "",
+        "cell_line": "",
+        "journal": "UniProt",
+        "title": "Mitogen-activated protein kinase 3 (MAPK3)",
+        "year": "",
+        "doi": "UniProt:P27361",
+        "figure_ref": "",
+        "species": "Homo sapiens"
+      },
+      {
+        "figure_ref": "",
+        "cell_line": "",
+        "doi": "UniProt:Q13233",
+        "species": "Homo sapiens",
+        "year": "",
+        "pmid": "",
+        "title": "Mitogen-activated protein kinase kinase kinase 1 (MAP3K1)",
+        "journal": "UniProt"
+      }
+    ]
+  },
+  {
+    "t": 305.67,
+    "event": "report",
+    "data": {
+      "markdown": "# 仿真预测报告\n\n## 1. 机制分析\nEGF刺激EGFR后激活下游SHC1-GRB2-SOS1-HRAS-MAPK1信号级联，其中EGF与EGFR快速衰减（半衰期约7小时），而MAPK1半衰期较长（57.8小时）并维持在5.05的稳态水平。\n\n## 2. 仿真结果解读\n仿真显示EGF与EGFR在初始时刻达到峰值（0.008与0.3）后迅速衰减，衰减时间分别约为7.0与7.2小时。下游SHC1、GRB2、SOS1与HRAS浓度保持稳定（峰值与稳态均接近10.0），而MAPK1在48小时仿真期内缓慢衰减至5.05的稳态水平，提示上游短暂刺激可转化为MAPK1的长期信号维持。\n\n### 物种指标\n\n| 物种 | 峰值 (nM) | 达峰时间 (h) | 倍数变化 | 稳态 (nM) | 半衰期 (h) | AUC |\n|------|----------|--------------|----------|-----------|------------|-----|\n| EGF | 0.008 | 0.000 | 1.000 | 0.000 | 6.935 | 0.079 |\n| EGFR | 0.300 | 0.000 | 1.000 | 0.003 | 6.960 | 3.013 |\n| SHC1 | 10.000 | 0.000 | 1.000 | 10.000 | 1276115132.424 | 480.000 |\n| GRB2 | 10.000 | 0.000 | 1.000 | 10.000 | 0.000 | 480.000 |\n| SOS1 | 10.000 | 0.000 | 1.000 | 10.000 | 0.000 | 480.000 |\n| HRAS | 10.000 | 0.000 | 1.000 | 9.991 | 49446.549 | 479.658 |\n| MAPK1 | 10.000 | 0.000 | 1.000 | 5.048 | 57.766 | 289.504 |\n\n\n## 3. 实验验证建议\n暂无来自知识库的实验方案。\n\n## 4. 文献证据\n- MAP kinase-activated protein kinase 3 (MAPKAPK3)（PMID: ，图 ，细胞系 ）\n- MAP kinase-activated protein kinase 2 (MAPKAPK2)（PMID: ，图 ，细胞系 ）\n- Mitogen-activated protein kinase 1 (MAPK1)（PMID: ，图 ，细胞系 ）\n- Mitogen-activated protein kinase 3 (MAPK3)（PMID: ，图 ，细胞系 ）\n- Mitogen-activated protein kinase kinase kinase 1 (MAP3K1)（PMID: ，图 ，细胞系 ）\n\n## 5. 讨论\n结合UniProt中MAPK1(P28482)及相关激酶的注释证据，MAPK1的持续稳态可能对细胞长期响应至关重要。然而，当前缺乏实验方案验证该稳态维持的具体生物学效应，且模型置信度为0.829，信号通路的反馈调节仍存在不确定性。\n\n## 6. 局限性\n当前仿真仅包含基线状态（所有分子fold_change均为1.0），缺乏扰动条件下的动态响应数据，且未提供相关实验方案以验证模型预测。\n\n---\n\n*置信度：0.83；节点版本：v2；工作流：16 节点 / 6 边*\n",
+      "llm_filled_json": {
+        "mechanism_analysis": "EGF刺激EGFR后激活下游SHC1-GRB2-SOS1-HRAS-MAPK1信号级联，其中EGF与EGFR快速衰减（半衰期约7小时），而MAPK1半衰期较长（57.8小时）并维持在5.05的稳态水平。",
+        "simulation_interpretation": "仿真显示EGF与EGFR在初始时刻达到峰值（0.008与0.3）后迅速衰减，衰减时间分别约为7.0与7.2小时。下游SHC1、GRB2、SOS1与HRAS浓度保持稳定（峰值与稳态均接近10.0），而MAPK1在48小时仿真期内缓慢衰减至5.05的稳态水平，提示上游短暂刺激可转化为MAPK1的长期信号维持。",
+        "discussion": "结合UniProt中MAPK1(P28482)及相关激酶的注释证据，MAPK1的持续稳态可能对细胞长期响应至关重要。然而，当前缺乏实验方案验证该稳态维持的具体生物学效应，且模型置信度为0.829，信号通路的反馈调节仍存在不确定性。",
+        "limitations": "当前仿真仅包含基线状态（所有分子fold_change均为1.0），缺乏扰动条件下的动态响应数据，且未提供相关实验方案以验证模型预测。"
+      },
+      "forbidden_terms_violations": []
+    }
+  },
+  {
+    "t": 305.67,
+    "event": "report_ready",
+    "data": "# 仿真预测报告\n\n## 1. 机制分析\nEGF刺激EGFR后激活下游SHC1-GRB2-SOS1-HRAS-MAPK1信号级联，其中EGF与EGFR快速衰减（半衰期约7小时），而MAPK1半衰期较长（57.8小时）并维持在5.05的稳态水平。\n\n## 2. 仿真结果解读\n仿真显示EGF与EGFR在初始时刻达到峰值（0.008与0.3）后迅速衰减，衰减时间分别约为7.0与7.2小时。下游SHC1、GRB2、SOS1与HRAS浓度保持稳定（峰值与稳态均接近10.0），而MAPK1在48小时仿真期内缓慢衰减至5.05的稳态水平，提示上游短暂刺激可转化为MAPK1的长期信号维持。\n\n### 物种指标\n\n| 物种 | 峰值 (nM) | 达峰时间 (h) | 倍数变化 | 稳态 (nM) | 半衰期 (h) | AUC |\n|------|----------|--------------|----------|-----------|------------|-----|\n| EGF | 0.008 | 0.000 | 1.000 | 0.000 | 6.935 | 0.079 |\n| EGFR | 0.300 | 0.000 | 1.000 | 0.003 | 6.960 | 3.013 |\n| SHC1 | 10.000 | 0.000 | 1.000 | 10.000 | 1276115132.424 | 480.000 |\n| GRB2 | 10.000 | 0.000 | 1.000 | 10.000 | 0.000 | 480.000 |\n| SOS1 | 10.000 | 0.000 | 1.000 | 10.000 | 0.000 | 480.000 |\n| HRAS | 10.000 | 0.000 | 1.000 | 9.991 | 49446.549 | 479.658 |\n| MAPK1 | 10.000 | 0.000 | 1.000 | 5.048 | 57.766 | 289.504 |\n\n\n## 3. 实验验证建议\n暂无来自知识库的实验方案。\n\n## 4. 文献证据\n- MAP kinase-activated protein kinase 3 (MAPKAPK3)（PMID: ，图 ，细胞系 ）\n- MAP kinase-activated protein kinase 2 (MAPKAPK2)（PMID: ，图 ，细胞系 ）\n- Mitogen-activated protein kinase 1 (MAPK1)（PMID: ，图 ，细胞系 ）\n- Mitogen-activated protein kinase 3 (MAPK3)（PMID: ，图 ，细胞系 ）\n- Mitogen-activated protein kinase kinase kinase 1 (MAP3K1)（PMID: ，图 ，细胞系 ）\n\n## 5. 讨论\n结合UniProt中MAPK1(P28482)及相关激酶的注释证据，MAPK1的持续稳态可能对细胞长期响应至关重要。然而，当前缺乏实验方案验证该稳态维持的具体生物学效应，且模型置信度为0.829，信号通路的反馈调节仍存在不确定性。\n\n## 6. 局限性\n当前仿真仅包含基线状态（所有分子fold_change均为1.0），缺乏扰动条件下的动态响应数据，且未提供相关实验方案以验证模型预测。\n\n---\n\n*置信度：0.83；节点版本：v2；工作流：16 节点 / 6 边*\n"
+  },
+  {
+    "t": 305.67,
+    "event": "node_start",
+    "data": "v3 Supervisor：正在调度下一个智能体..."
+  },
+  {
+    "t": 305.67,
+    "event": "workflow_v3_state",
+    "data": {
+      "current_node": "supervisor",
+      "status": "running",
+      "mode": "auto_standard"
+    }
+  },
+  {
+    "t": 305.67,
+    "event": "token_usage",
+    "data": {
+      "prompt_tokens": 8459,
+      "completion_tokens": 7754,
+      "total_tokens": 16213,
+      "mcp_tokens_saved": 480,
+      "model_name": "glm-5.1"
+    }
+  },
+  {
+    "t": 305.67,
+    "event": "end",
+    "data": ""
+  }
+]

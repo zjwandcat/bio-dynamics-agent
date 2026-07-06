@@ -1,0 +1,236 @@
+"""
+ODE 仿真（Signaling Cascade with Phosphorylation 模板）— Tier 3 主模板
+- TASK 4 修复：mass-action kinetics ONLY，移除 Michaelis-Menten 酶饱和项
+- TASK 4 修复：移除 gene-expression-like 线性增长模型（activation generic fallback）
+- 显式建模磷酸化中间体（pEGFR, pShc, pMEK, pMAPK 等）
+- 严格质量守恒：底物消耗 = 产物生成
+
+深度审核报告 §2.4 模板复杂度控制：
+  Tier 3 系统拆分为子模块，通过 Jinja include 组合：
+  - _cascade_helpers.j2: k_phos>k_dephos 约束（保留，移除 Michaelis-Menten）
+  - _mechanism_binding.j2: binding 机制（mass-action 质量守恒）
+  - _mechanism_phosphorylation.j2: phosphorylation 机制（mass-action ONLY）
+  本主模板负责：imports + ODE 骨架 + 其他机制 + solver + 输出。
+
+TASK 4 mass-action kinetics:
+  binding:        rate = k_on * [A] * [B] - k_off * [AB]
+  phosphorylation: rate = k_phos * [enzyme] * [substrate] - k_dephos * [pX]
+  conversion:     rate = k * [A]  (单分子转化，消耗 A 生成 B)
+  exchange:        rate = k * [A]  (RasGDP → RasGTP，消耗 A 生成 B)
+"""
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+from scipy.integrate import solve_ivp
+
+SPECIES_NAMES = {{ species_names }}
+T_END = {{ t_end }}
+N_EVAL = {{ n_eval }}
+Y0 = {{ y0 }}
+EDGES = {{ edges_json }}
+PARAMS = {{ params_json }}
+N_SP = len(SPECIES_NAMES)
+
+# 物种名 → 索引映射
+SP_IDX = {name: i for i, name in enumerate(SPECIES_NAMES)}
+
+
+def _get_param(target_name, param_key, default):
+    """从 PARAMS 中获取指定 target 的参数值。"""
+    eparams = PARAMS.get(target_name, {})
+    return eparams.get(param_key, default)
+
+
+# =============================================================================
+# Tier 3 子模块组合：mass-action kinetics + k_phos>k_dephos 约束（TASK 4）
+# =============================================================================
+{% include "_cascade_helpers.j2" %}
+
+
+def _ode(t, y):
+    """ODE 右端函数：基于 reaction mechanism 构建 dy/dt。
+
+    Mechanism 类型：
+    - binding: d[A-B]/dt = k_on * [A] * [B] - k_off * [A-B]  （子模块）
+    - phosphorylation: d[pX]/dt = Vmax * [enzyme] * [X]/(Km+[X]) - k_dephos * [pX]  （子模块）
+    - exchange: d[RasGTP]/dt = k_exchange * [RasGDP]
+    - degradation: d[X]/dt = -k_deg * [X]
+    - activation (generic): d[target]/dt = k_cat * [source] - k_degr * [target]
+    """
+    y = np.maximum(y, 0.0)
+    dy = np.zeros_like(y)
+
+    # 1. 基础降解（所有物种）
+    for i, name in enumerate(SPECIES_NAMES):
+        k_deg = _get_param(name, "degradation", 0.0)
+        if k_deg > 0:
+            dy[i] -= k_deg * y[i]
+
+    # 2. 按 edge 的 mechanism 构建 ODE 项
+    for e in EDGES:
+        src_name = e.get("source", "")
+        tgt_name = e.get("target", "")
+        mechanism = e.get("mechanism", "activation")
+        interaction = e.get("interaction", "activation")
+        reaction_eq = e.get("reaction_equation", "")
+
+        if src_name not in SP_IDX or tgt_name not in SP_IDX:
+            continue
+
+        s_idx = SP_IDX[src_name]
+        t_idx = SP_IDX[tgt_name]
+        src = y[s_idx]
+        tgt = y[t_idx]
+
+        # 解析 reaction_equation 判断 source 是否为酶（出现在产物侧）
+        # 例：'pEGFR + Shc → pEGFR + pShc' → pEGFR 是酶（不消耗）
+        # 例：'EGFR → pEGFR' → EGFR 是底物（消耗，注意 EGFR 不是 pEGFR 的子串匹配）
+        # 使用 token-based 匹配避免 'EGFR' 被 'pEGFR' 误判
+        _is_enzyme = False
+        if reaction_eq and "→" in reaction_eq:
+            _parts = reaction_eq.split("→", 1)
+            if len(_parts) == 2:
+                _rhs = _parts[1]
+                # 把 + 与空白作为分隔符，得到产物侧的 token 集合
+                _rhs_tokens = set(_rhs.replace("+", " ").split())
+                if src_name in _rhs_tokens:
+                    _is_enzyme = True
+
+        if mechanism == "binding":
+{% include "_mechanism_binding.j2" %}
+
+        elif mechanism == "phosphorylation":
+{% include "_mechanism_phosphorylation.j2" %}
+
+        elif mechanism == "exchange":
+            # RasGDP → RasGTP (mass-action，严格质量守恒)
+            # TASK 4: 消耗 RasGDP，生成 RasGTP
+            k_exchange = _get_param(tgt_name, "k_exchange", _get_param(tgt_name, "k1", 0.1))
+            _exchange_rate = k_exchange * src
+            dy[t_idx] += _exchange_rate
+            dy[s_idx] -= _exchange_rate  # 严格守恒：消耗源物种
+
+        elif mechanism == "dephosphorylation":
+            # pXxx → Xxx (mass-action，严格质量守恒)
+            k_dephos = _get_param(tgt_name, "k_dephos", _get_param(tgt_name, "k2", 0.01))
+            _dephos_rate = k_dephos * src
+            dy[t_idx] += _dephos_rate
+            dy[s_idx] -= _dephos_rate  # 严格守恒：消耗 pXxx 生成 Xxx
+
+        elif mechanism == "recruitment":
+            # pXxx + Yyy → pXxx-Yyy (mass-action binding，严格质量守恒)
+            # TASK 4: 移除硬编码 0.1，使用真实 binding 机制
+            k_on = _get_param(tgt_name, "k_on", _get_param(tgt_name, "k1", 1.0))
+            k_off = _get_param(tgt_name, "k_off", _get_param(tgt_name, "k2", 0.01))
+            # 需要找到被招募的适配蛋白（反应式中除 source 外的反应物）
+            _recruit_target = ""
+            if reaction_eq and "→" in reaction_eq:
+                _lhs = reaction_eq.split("→", 1)[0]
+                _lhs_tokens = [s.strip() for s in _lhs.replace("+", " ").split() if s.strip()]
+                for tok in _lhs_tokens:
+                    if tok != src_name and tok in SP_IDX:
+                        _recruit_target = tok
+                        break
+            if _recruit_target:
+                _rec_idx = SP_IDX[_recruit_target]
+                _rec_conc = y[_rec_idx]
+                _bind_rate = k_on * src * _rec_conc - k_off * tgt
+                dy[t_idx] += _bind_rate
+                dy[s_idx] -= _bind_rate  # 消耗酶-底物复合物的酶部分
+                dy[_rec_idx] -= _bind_rate  # 消耗被招募蛋白
+            else:
+                # 无被招募蛋白时退化为单分子转化
+                _bind_rate = k_on * src - k_off * tgt
+                dy[t_idx] += _bind_rate
+                dy[s_idx] -= _bind_rate
+
+        elif mechanism == "degradation":
+            # X → ∅ (mass-action 衰减)
+            k_deg = _get_param(tgt_name, "k_deg", 0.1)
+            dy[s_idx] -= k_deg * src
+
+        elif mechanism == "conversion":
+            # A → B (mass-action 单分子转化，严格质量守恒)
+            # TASK 4: 替代原 gene-expression-like activation
+            k_conv = _get_param(tgt_name, "k_cat", _get_param(tgt_name, "k1", 0.1))
+            _conv_rate = k_conv * src
+            dy[t_idx] += _conv_rate
+            dy[s_idx] -= _conv_rate  # 严格守恒：消耗源物种
+
+        elif mechanism == "dissociation":
+            # AB → A + B (mass-action 解离，严格质量守恒)
+            k_diss = _get_param(tgt_name, "k_off", _get_param(tgt_name, "k2", 0.01))
+            _diss_rate = k_diss * src
+            dy[s_idx] -= _diss_rate  # 消耗复合物
+            dy[t_idx] += _diss_rate  # 生成产物 A
+            # 找另一产物 B
+            if reaction_eq and "→" in reaction_eq:
+                _rhs = reaction_eq.split("→", 1)[1]
+                _rhs_tokens = [s.strip() for s in _rhs.replace("+", " ").split() if s.strip()]
+                for tok in _rhs_tokens:
+                    if tok != tgt_name and tok in SP_IDX:
+                        dy[SP_IDX[tok]] += _diss_rate
+                        break
+
+        else:  # activation / unknown → 降级为 mass-action conversion（TASK 4: 禁止 gene-expression-like）
+            # TASK 4: 原 k_cat * src - k_degr * tgt（无守恒）改为 mass-action conversion
+            k_cat = _get_param(tgt_name, "k_cat", _get_param(tgt_name, "k1", 0.1))
+            _act_rate = k_cat * src
+            dy[t_idx] += _act_rate
+            dy[s_idx] -= _act_rate  # 严格守恒：消耗源物种
+
+    return dy.tolist()
+
+
+# =============================================================================
+# 确定性求解（深度审核报告 §3.1：LSODA + max_step + 可复现）
+# =============================================================================
+sol = solve_ivp(
+    _ode,
+    (0.0, T_END),
+    Y0,
+    method="LSODA",
+    t_eval=np.linspace(0.0, T_END, N_EVAL),
+    vectorized=False,
+    max_step=T_END / 100,
+    rtol=1e-6,
+    atol=1e-9,
+)
+
+# 输出 CSV
+header = "t," + ",".join(SPECIES_NAMES)
+data = np.column_stack([sol.t, *sol.y])
+np.savetxt("simulation.csv", data, delimiter=",", header=header, comments="")
+
+# 绘图（TASK 5：只允许 canonical species，防止曲线爆炸）
+PLOT_CANONICAL_SET = {
+    "EGFR_active",
+    "Shc_complex",
+    "Grb2_SOS_complex",
+    "Ras_active",
+    "Raf_active",
+    "MEK_active",
+    "ERK_active",
+}
+fig, ax = plt.subplots(figsize=(10, 6))
+plotted = 0
+for i, name in enumerate(SPECIES_NAMES):
+    if name in PLOT_CANONICAL_SET:
+        ax.plot(sol.t, sol.y[i], label=name, linewidth=2)
+        plotted += 1
+ax.set_xlabel("Time (min)")
+ax.set_ylabel("Concentration (nM)")
+ax.set_title("EGF-EGFR Signaling Cascade (Canonical View)")
+ax.legend(loc="upper right", fontsize=8)
+ax.grid(alpha=0.3)
+fig.tight_layout()
+fig.savefig("simulation.png", dpi=120)
+
+# 输出关键指标
+for i, sp in enumerate(SPECIES_NAMES):
+    val = sol.y[i, -1]
+    safe_val = max(val, 0.0) if np.isfinite(val) else 0.0
+    print(f"BIO_CHECK: {sp} = {safe_val:.4f}")

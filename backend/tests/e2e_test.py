@@ -36,7 +36,7 @@ from app.nodes import (
     node4_audit_and_correct,
     node5_generate_report,
 )
-from app.prompts import NODE2_GENERATOR_PROMPT, NODE6_REPORT_PROMPT
+from app.prompts import NODE6_REPORT_PROMPT
 from app.sandbox import execute_simulation_code
 from app.state import BioDynamicsState
 

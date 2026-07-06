@@ -1,0 +1,43 @@
+{# Tier 3 子模块：binding 机制块（12 空格缩进，body of "if mechanism == 'binding':"）
+   被 Signaling_Cascade_Phos.j2 通过 {% include %} 组合。
+   深度审核报告 §2.4：Tier 3 拆分。
+   mass-action binding with 严格质量守恒。
+#}
+            # A + B → A-B (mass action, 严格质量守恒)
+            k_on = _get_param(tgt_name, "k_on", _get_param(tgt_name, "k1", 1.0))
+            k_off = _get_param(tgt_name, "k_off", _get_param(tgt_name, "k2", 0.01))
+            _binding_reactants = [src_name]
+            _binding_products = [tgt_name]
+            if reaction_eq and "→" in reaction_eq:
+                _lhs, _rhs = reaction_eq.split("→", 1)
+                _binding_reactants = [s.strip() for s in _lhs.replace("+", " ").split() if s.strip()]
+                _binding_products = [s.strip() for s in _rhs.replace("+", " ").split() if s.strip()]
+            _reactant_concs = []
+            _missing_reactant = False
+            for r in _binding_reactants:
+                if r in SP_IDX:
+                    _reactant_concs.append(y[SP_IDX[r]])
+                else:
+                    _missing_reactant = True
+                    break
+            if _missing_reactant:
+                continue
+            _v_forward = k_on
+            for c in _reactant_concs:
+                _v_forward *= c
+            _product_concs = []
+            for p in _binding_products:
+                if p in SP_IDX:
+                    _product_concs.append(y[SP_IDX[p]])
+                else:
+                    _product_concs.append(0.0)
+            _v_reverse = k_off
+            for c in _product_concs:
+                _v_reverse *= c
+            _net_rate = _v_forward - _v_reverse
+            for p in _binding_products:
+                if p in SP_IDX:
+                    dy[SP_IDX[p]] += _net_rate
+            for r in _binding_reactants:
+                if r in SP_IDX and r not in _binding_products:
+                    dy[SP_IDX[r]] -= _net_rate

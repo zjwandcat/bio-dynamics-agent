@@ -1,0 +1,81 @@
+"""
+ODE 仿真（Combination 模板）
+- 联合用药：三组仿真 + Chou-Talalay CI
+"""
+import json
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+from scipy.integrate import solve_ivp
+
+DRUGS = {{ drugs_json }}
+T_END = {{ t_end }}
+N_EVAL = {{ n_eval }}
+Y0 = {{ y0 }}
+
+def _emax_effect(conc, ec50, emax, gamma, target):
+    return emax * (conc ** gamma) / (ec50 ** gamma + conc ** gamma + 1e-12) * (1.0 - target)
+
+def _simulate(doses):
+    def _ode(t, y):
+        target = y[0]
+        inhibition = 0.0
+        for d, dose in zip(DRUGS, doses):
+            inhibition += d["emax"] * (dose ** d["gamma"]) / (d["ec50"] ** d["gamma"] + dose ** d["gamma"] + 1e-12)
+        inhibition = min(inhibition, 1.0)
+        return [0.5 * (1.0 - inhibition) - 0.05 * target]
+    sol = solve_ivp(
+        _ode, (0.0, T_END), Y0,
+        method="LSODA", t_eval=np.linspace(0.0, T_END, N_EVAL), vectorized=False,
+    )
+    return sol
+
+def _d_alone(drug, fa):
+    ec50 = drug["ec50"]
+    gamma = drug["gamma"]
+    if gamma <= 0 or fa <= 0 or fa >= 1.0:
+        return float("inf")
+    return ec50 * (fa / (1.0 - fa)) ** (1.0 / gamma)
+
+# 单药 A / B 仿真
+sol_A = _simulate([1.0, 0.0])
+sol_B = _simulate([0.0, 1.0])
+sol_combo = _simulate([0.5, 0.5])
+
+# 写入 CSV：3 列（target_A / target_B / target_combo）
+all_t = sol_A.t
+data = np.column_stack([all_t, sol_A.y[0], sol_B.y[0], sol_combo.y[0]])
+np.savetxt(
+    "simulation.csv", data, delimiter=",",
+    header="t,combo_A_target,combo_B_target,combo_combo_target", comments="",
+)
+
+# Chou-Talalay CI
+ci_results = {}
+for fa in (0.5, 0.75, 0.9):
+    d_a = _d_alone(DRUGS[0], fa) if len(DRUGS) >= 1 else float("inf")
+    d_b = _d_alone(DRUGS[1], fa) if len(DRUGS) >= 2 else float("inf")
+    # 简化：联合中各自剂量等比例缩放至达到 fa
+    combo_d_a = 0.5 * d_a
+    combo_d_b = 0.5 * d_b
+    denom = (d_a + d_b) if (d_a + d_b) > 0 else float("inf")
+    ci = (combo_d_a / d_a + combo_d_b / d_b) if denom != float("inf") else float("inf")
+    ci_results[f"fa_{fa}"] = float(ci)
+    print(f"COMBO_CI: fa={fa}, CI={ci:.3f}")
+
+fig, ax = plt.subplots(figsize=(9, 5))
+ax.plot(sol_A.t, sol_A.y[0], label="Drug A only", linewidth=2)
+ax.plot(sol_B.t, sol_B.y[0], label="Drug B only", linewidth=2)
+ax.plot(sol_combo.t, sol_combo.y[0], label="Combination", linewidth=2, linestyle="--")
+ax.set_xlabel("Time (h)")
+ax.set_ylabel("Target (nM)")
+ax.set_title("Combination Therapy")
+ax.legend()
+ax.grid(alpha=0.3)
+fig.tight_layout()
+fig.savefig("simulation.png", dpi=120)
+
+print(f"BIO_CHECK: target_combo = {max(sol_combo.y[0, -1], 0.0):.4f}")

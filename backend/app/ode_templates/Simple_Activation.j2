@@ -1,0 +1,58 @@
+"""
+ODE 仿真（Simple Activation 模板）
+- 单条激活边
+"""
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+from scipy.integrate import solve_ivp
+
+SPECIES_NAMES = {{ species_names }}
+T_END = {{ t_end }}
+N_EVAL = {{ n_eval }}
+Y0 = {{ y0 }}
+ACTIVATOR = "{{ activator }}"
+TARGET = "{{ target }}"
+KD = {{ kd }}
+N_HILL = {{ n_hill }}
+DEGRADATION = {{ degradation }}
+PROD_RATE = {{ production }}
+
+def _ode(t, y):
+    activator, target = y
+    activation = activator ** N_HILL / (KD ** N_HILL + activator ** N_HILL + 1e-12)
+    d_activator = -0.1 * activator
+    d_target = PROD_RATE * activation - DEGRADATION * target
+    return [d_activator, d_target]
+
+sol = solve_ivp(
+    _ode,
+    (0.0, T_END),
+    Y0,
+    method="LSODA",
+    t_eval=np.linspace(0.0, T_END, N_EVAL),
+    vectorized=False,
+)
+
+header = "t," + ",".join(SPECIES_NAMES)
+data = np.column_stack([sol.t, *sol.y])
+np.savetxt("simulation.csv", data, delimiter=",", header=header, comments="")
+
+fig, ax = plt.subplots(figsize=(8, 5))
+for i, name in enumerate(SPECIES_NAMES):
+    ax.plot(sol.t, sol.y[i], label=name, linewidth=2)
+ax.set_xlabel("Time (h)")
+ax.set_ylabel("Concentration (nM)")
+ax.set_title("Simple Activation Simulation")
+ax.legend()
+ax.grid(alpha=0.3)
+fig.tight_layout()
+fig.savefig("simulation.png", dpi=120)
+
+for i, sp in enumerate(SPECIES_NAMES):
+    val = sol.y[i, -1]
+    safe_val = max(val, 0.0) if np.isfinite(val) else 0.0
+    print(f"BIO_CHECK: {sp} = {safe_val:.4f}")

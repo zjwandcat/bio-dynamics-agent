@@ -1,0 +1,235 @@
+{
+  "total_events": 59,
+  "events_by_type": {
+    "config": 1,
+    "node_start": 14,
+    "workflow_v3_state": 14,
+    "agent_registry": 1,
+    "agent_dispatch": 8,
+    "mcp_term_definitions": 1,
+    "mcp_tool_call": 5,
+    "knowledge_graph": 1,
+    "execution_log": 2,
+    "rag_insights": 1,
+    "rag_online_fallback": 1,
+    "rag_ready": 1,
+    "code_generated": 1,
+    "image_ready": 1,
+    "simulation_csv": 1,
+    "metrics": 1,
+    "paper_evidence": 1,
+    "report": 1,
+    "report_ready": 1,
+    "token_usage": 1,
+    "end": 1
+  },
+  "node_order": [
+    "pre_router",
+    "supervisor",
+    "worker_mcp",
+    "supervisor",
+    "worker_mechanism",
+    "supervisor",
+    "worker_rag",
+    "supervisor",
+    "worker_ode",
+    "supervisor",
+    "worker_sandbox",
+    "supervisor",
+    "worker_report",
+    "supervisor"
+  ],
+  "agent_dispatches": [
+    {
+      "t": 2.11,
+      "target_agent": "pre_router",
+      "status": "in_progress",
+      "node_name": "pre_router"
+    },
+    {
+      "t": 2.11,
+      "target_agent": "pre_router",
+      "status": "completed",
+      "node_name": "pre_router"
+    },
+    {
+      "t": 162.55,
+      "target_agent": "机制解析与图谱",
+      "status": "in_progress",
+      "node_name": "worker_mechanism"
+    },
+    {
+      "t": 211.43,
+      "target_agent": "知识检索 (RAG)",
+      "status": "in_progress",
+      "node_name": "worker_rag"
+    },
+    {
+      "t": 272.71,
+      "target_agent": "ODE 方程生成",
+      "status": "in_progress",
+      "node_name": "worker_ode"
+    },
+    {
+      "t": 276.46,
+      "target_agent": "沙箱仿真执行",
+      "status": "in_progress",
+      "node_name": "worker_sandbox"
+    },
+    {
+      "t": 276.46,
+      "target_agent": "沙箱仿真执行",
+      "status": "completed",
+      "node_name": "worker_sandbox"
+    },
+    {
+      "t": 305.67,
+      "target_agent": "预测报告生成",
+      "status": "in_progress",
+      "node_name": "worker_report"
+    }
+  ],
+  "mcp_tool_calls": [
+    {
+      "tool_name": "OpenBioMed Skills",
+      "status": "fallback"
+    },
+    {
+      "tool_name": "NIH UMLS MCP",
+      "status": "fallback"
+    },
+    {
+      "tool_name": "medical-terminologies-mcp",
+      "status": "fallback"
+    },
+    {
+      "tool_name": "OpenBioMed Skills",
+      "status": "success"
+    },
+    {
+      "tool_name": "medical-terminologies-mcp",
+      "status": "success"
+    }
+  ],
+  "mcp_term_definitions_count": 12,
+  "mcp_tokens_saved": 480,
+  "rag_hit_rate": 0.83,
+  "rag_online_fallback_triggered": true,
+  "rag_top_selections_count": 6,
+  "rag_drug_candidates_count": 0,
+  "pkpd_profile_present": false,
+  "drug_regimen_count": 0,
+  "ode_code_chars": 3042,
+  "image_ready": true,
+  "simulation_csv": "C:\\Users\\27553\\AppData\\Local\\Temp\\bio_dynamics_csv_almkjekj\\simulation.csv",
+  "dose_response_present": false,
+  "ic50": null,
+  "ic90": null,
+  "hed": null,
+  "metrics": {
+    "species": {
+      "EGF": {
+        "peak": 0.008,
+        "peak_time": 0.0,
+        "half_life": 6.9347196975730885,
+        "steady_state": 8.379635806615872e-05,
+        "fold_change": 1.0,
+        "auc": 0.07941233159490795,
+        "rise_time": null,
+        "decay_time": 6.994974874371859,
+        "max_slope": 0.0007753856239141472
+      },
+      "EGFR": {
+        "peak": 0.3,
+        "peak_time": 0.0,
+        "half_life": 6.960003189352497,
+        "steady_state": 0.003215914332634397,
+        "fold_change": 1.0,
+        "auc": 3.012855249805122,
+        "rise_time": null,
+        "decay_time": 7.236180904522612,
+        "max_slope": 0.028429833912557087
+      },
+      "SHC1": {
+        "peak": 10.0,
+        "peak_time": 0.0,
+        "half_life": 1276115132.4244714,
+        "steady_state": 9.999999659150992,
+        "fold_change": 1.0,
+        "auc": 479.99999740475744,
+        "rise_time": null,
+        "decay_time": null,
+        "max_slope": 1.006957640233459e-07
+      },
+      "GRB2": {
+        "peak": 10.0,
+        "peak_time": 0.0,
+        "half_life": null,
+        "steady_state": 9.9999999999999,
+        "fold_change": 1.0,
+        "auc": 479.9999999999971,
+        "rise_time": null,
+        "decay_time": null,
+        "max_slope": 1.4728958793360415e-14
+      },
+      "SOS1": {
+        "peak": 10.0,
+        "peak_time": 0.0,
+        "half_life": null,
+        "steady_state": 9.9999999999999,
+        "fold_change": 1.0,
+        "auc": 479.9999999999971,
+        "rise_time": null,
+        "decay_time": null,
+        "max_slope": 1.4728958793360415e-14
+      },
+      "HRAS": {
+        "peak": 10.0,
+        "peak_time": 0.0,
+        "half_life": 49446.54877908792,
+        "steady_state": 9.99110227885176,
+        "fold_change": 1.0,
+        "auc": 479.6576469907486,
+        "rise_time": null,
+        "decay_time": null,
+        "max_slope": 0.0008715244549064953
+      },
+      "MAPK1": {
+        "peak": 9.999999999999998,
+        "peak_time": 0.0,
+        "half_life": 57.766068366174046,
+        "steady_state": 5.048136566106512,
+        "fold_change": 1.0,
+        "auc": 289.5042879876268,
+        "rise_time": null,
+        "decay_time": null,
+        "max_slope": 0.48462939425372964
+      }
+    },
+    "overall": {
+      "max_species": "EGF",
+      "max_fold_change": 1.0,
+      "simulation_duration_h": 48.0,
+      "n_species": 7,
+      "n_combo_columns": 0
+    },
+    "combo": {}
+  },
+  "experiment_protocols_count": 0,
+  "paper_evidence_count": 5,
+  "report_chars": 1490,
+  "clarification_needed": false,
+  "clarification_questions": [],
+  "token_usage": {
+    "prompt_tokens": 8459,
+    "completion_tokens": 7754,
+    "total_tokens": 16213,
+    "mcp_tokens_saved": 480,
+    "model_name": "glm-5.1"
+  },
+  "errors": [],
+  "rule_violations": null,
+  "kg_node_count": 16,
+  "kg_edge_count": 6,
+  "kg_acyclic": true
+}

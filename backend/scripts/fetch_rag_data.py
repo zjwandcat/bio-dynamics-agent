@@ -58,7 +58,14 @@ def _parse_value(text: str | None) -> float | None:
 
 
 def parse_sbml_to_records(xml_path: Path) -> list[dict]:
-    """解析 SBML XML，提取物种与全局参数为结构化参数记录。"""
+    """解析 SBML XML，提取物种与全局参数为结构化参数记录。
+
+    关键改进（Step 2.1 RAG type system）：
+    1. 每条记录强制带 `type` 字段：kinetic_rate / binding_affinity / degradation_rate / initial_concentration
+    2. kinetic_rate 参数的 context/document 必须包含反应物→产物信息（reaction_context），
+       否则 embedding 无法将 k1/k2 与生物学实体关联（审计发现 313/313 缺失）
+    3. initial_concentration 明确标注为 initial_concentration 类型，禁止被选为 Kd
+    """
     tree = ET.parse(xml_path)
     root = tree.getroot()
 
@@ -71,10 +78,18 @@ def parse_sbml_to_records(xml_path: Path) -> list[dict]:
         logger.warning("%s 中未找到 model 节点", xml_path.name)
         return []
 
+    # --- 先构建 species_id → name 映射，供反应方程构建使用 ---
+    species_id_to_name: dict[str, str] = {}
+    species_list = model.find(".//sbml:listOfSpecies", ns) or model.find(".//listOfSpecies")
+    if species_list is not None:
+        for species in species_list:
+            sid = species.get("id", "")
+            sname = species.get("name", sid)
+            species_id_to_name[sid] = sname
+
     records: list[dict] = []
 
-    # 1. 提取物种（视为初始浓度参数）
-    species_list = model.find(".//sbml:listOfSpecies", ns) or model.find(".//listOfSpecies")
+    # 1. 提取物种（视为初始浓度参数）—— type=initial_concentration
     if species_list is not None:
         for species in species_list:
             sid = species.get("id", "")
@@ -90,11 +105,13 @@ def parse_sbml_to_records(xml_path: Path) -> list[dict]:
                     "param_name": f"initial_concentration_{sid}",
                     "value": value,
                     "unit": unit if unit else "nM",
-                    "species": "",
+                    "species": name,
                     "cell_line": "",
+                    "type": "initial_concentration",  # 强制 type system
                     "context": (
-                        f"Species '{name}' (id={sid}) from SBML model {xml_path.stem}. "
-                        f"Initial concentration/amount used in the model."
+                        f"Initial concentration of species '{name}' (id={sid}) "
+                        f"in SBML model {xml_path.stem}. "
+                        f"This is an INITIAL CONCENTRATION, NOT a kinetic rate constant."
                     ),
                     "confidence": "HIGH",
                     "source_model": xml_path.stem,
@@ -102,7 +119,7 @@ def parse_sbml_to_records(xml_path: Path) -> list[dict]:
                 }
             )
 
-    # 2. 提取全局参数
+    # 2. 提取全局参数 —— 按 param_name 分类 type
     param_list = model.find(".//sbml:listOfParameters", ns) or model.find(".//listOfParameters")
     if param_list is not None:
         for param in param_list:
@@ -111,6 +128,8 @@ def parse_sbml_to_records(xml_path: Path) -> list[dict]:
             unit = param.get("units", "")
             if value is None:
                 continue
+            # 分类参数 type
+            ptype = _classify_param_type(pid)
             records.append(
                 {
                     "param_name": pid,
@@ -118,18 +137,55 @@ def parse_sbml_to_records(xml_path: Path) -> list[dict]:
                     "unit": unit if unit else "dimensionless",
                     "species": "",
                     "cell_line": "",
-                    "context": f"Global parameter '{pid}' from SBML model {xml_path.stem}.",
+                    "type": ptype,
+                    "context": (
+                        f"Global parameter '{pid}' (type={ptype}) "
+                        f"from SBML model {xml_path.stem}."
+                    ),
                     "confidence": "HIGH",
                     "source_model": xml_path.stem,
                     "source_type": "parameter",
                 }
             )
 
-    # 3. 提取反应中的局部参数（常见于 BioModels）
+    # 3. 提取反应中的局部参数 —— 关键改进：enrich document with reaction equation
     reaction_list = model.find(".//sbml:listOfReactions", ns) or model.find(".//listOfReactions")
     if reaction_list is not None:
         for reaction in reaction_list:
             rid = reaction.get("id", "")
+            rname = reaction.get("name", rid)
+
+            # 提取反应物和产物名称，构建反应方程字符串
+            reactant_names: list[str] = []
+            reactant_list = reaction.find(".//sbml:listOfReactants", ns) or reaction.find(".//listOfReactants")
+            if reactant_list is not None:
+                for ref in reactant_list:
+                    sp_ref = ref.get("species", "")
+                    stoich = ref.get("stoichiometry", "1")
+                    sp_name = species_id_to_name.get(sp_ref, sp_ref)
+                    if stoich and stoich != "1":
+                        reactant_names.append(f"{stoich} {sp_name}")
+                    else:
+                        reactant_names.append(sp_name)
+
+            product_names: list[str] = []
+            product_list = reaction.find(".//sbml:listOfProducts", ns) or reaction.find(".//listOfProducts")
+            if product_list is not None:
+                for ref in product_list:
+                    sp_ref = ref.get("species", "")
+                    stoich = ref.get("stoichiometry", "1")
+                    sp_name = species_id_to_name.get(sp_ref, sp_ref)
+                    if stoich and stoich != "1":
+                        product_names.append(f"{stoich} {sp_name}")
+                    else:
+                        product_names.append(sp_name)
+
+            # 构建反应方程：reactants → products
+            reactants_str = " + ".join(reactant_names) if reactant_names else "∅"
+            products_str = " + ".join(product_names) if product_names else "∅"
+            reaction_equation = f"{reactants_str} → {products_str}"
+
+            # 提取局部参数
             kl = reaction.find(".//sbml:kineticLaw", ns) or reaction.find(".//kineticLaw")
             if kl is None:
                 continue
@@ -149,17 +205,29 @@ def parse_sbml_to_records(xml_path: Path) -> list[dict]:
                 unit = param.get("units", "")
                 if value is None:
                     continue
+                # 分类参数 type
+                ptype = _classify_param_type(pid)
+                # 关键改进：context 包含反应方程和反应物/产物名
+                # 这样 embedding 能将 k1/k2 与 EGF/EGFR 等生物学实体关联
+                context = (
+                    f"Local parameter '{pid}' (type={ptype}, value={value} {unit or ''}) "
+                    f"in reaction '{rname}' (id={rid}): {reaction_equation}. "
+                    f"From SBML model {xml_path.stem}."
+                )
                 records.append(
                     {
                         "param_name": pid,
                         "value": value,
                         "unit": unit if unit else "dimensionless",
-                        "species": "",
+                        "species": ", ".join(reactant_names + product_names),
                         "cell_line": "",
-                        "context": (
-                            f"Local parameter '{pid}' in reaction '{rid}' "
-                            f"from SBML model {xml_path.stem}."
-                        ),
+                        "type": ptype,
+                        "reaction_id": rid,
+                        "reaction_name": rname,
+                        "reaction_equation": reaction_equation,
+                        "reactants": reactant_names,
+                        "products": product_names,
+                        "context": context,
                         "confidence": "HIGH",
                         "source_model": xml_path.stem,
                         "source_type": "local_parameter",
@@ -168,6 +236,35 @@ def parse_sbml_to_records(xml_path: Path) -> list[dict]:
 
     logger.info("%s 解析完成，共提取 %d 条记录", xml_path.name, len(records))
     return records
+
+
+def _classify_param_type(param_name: str) -> str:
+    """根据参数名分类参数类型（RAG type system）。
+
+    分类规则：
+    - kinetic_rate: k1, k2, k_1, k_2, k_on, k_off, kcat, V1, V2, V3 等动力学速率常数
+    - binding_affinity: Kd, Ki, Km, EC50, IC50 等结合亲和力
+    - degradation_rate: k_deg, kdegr, k_degr 等降解速率
+    - other: 其他
+    """
+    pid_lower = param_name.lower().strip()
+    # binding affinity
+    if pid_lower in ("kd", "ki", "km") or pid_lower.startswith(("ec50", "ic50", "kec50")):
+        return "binding_affinity"
+    # degradation rate
+    if pid_lower.startswith(("k_deg", "kdegr", "k_degr", "k_deg")):
+        return "degradation_rate"
+    # kinetic rate: k1, k2, k3, k_1, k_2, k_on, k_off, kcat, V1-V9
+    import re
+    if re.match(r"^k\d+$", pid_lower) or re.match(r"^k_\d+$", pid_lower):
+        return "kinetic_rate"
+    if pid_lower in ("k_on", "k_off", "kcat", "k_cat"):
+        return "kinetic_rate"
+    if re.match(r"^v\d+$", pid_lower):
+        return "kinetic_rate"
+    if pid_lower in ("n", "hill"):
+        return "other"
+    return "other"
 
 
 def main() -> None:

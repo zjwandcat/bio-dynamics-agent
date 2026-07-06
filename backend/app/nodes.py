@@ -1,17 +1,30 @@
 # BioDynamics Agent - LangGraph 节点实现
 # 包含机制解析、RAG 检索、方程生成、代码执行、审计纠错与报告生成六个节点。
+# 升级：集成多智能体编排器（Supervisor）调度事件与高阶 RAG 混合检索。
 
 import json
+import logging
+import math
 import re
+import time
+from collections import Counter
 from typing import Optional
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from app.config import llm
+from app.bio_db_client import get_bio_db_client
+from app.config import llm, settings, strip_markdown_json
+from app.mcp_client import get_mcp_client
 from app.prompts import (
+    COMBINATION_REPORT_SECTION,
+    DOSE_REPORT_SECTION,
+    NODE1_6_PKPD_PROMPT,
     NODE1_PARSER_PROMPT,
-    NODE2_GENERATOR_PROMPT,
+    NODE2_BASE_PROMPT,
+    NODE2_COMBINATION_SECTION,
+    NODE2_DOSE_SWEEP_SECTION,
+    NODE2_PKPD_SECTION,
     NODE4_AUDITOR_PROMPT,
     NODE6_REPORT_PROMPT,
     RAG_DECISION_PROMPT,
@@ -20,11 +33,14 @@ from app.rag_client import RagClient
 from app.sandbox import execute_simulation_code
 from app.sbml_parser import parse_sbml_model
 from app.state import BioDynamicsState
+from app.supervisor import orchestrator
 from app.token_usage import (
     UsageAccumulator,
     merge_usage,
     usage_from_accumulator,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------------------
@@ -95,6 +111,18 @@ class RAGDecisionOutput(BaseModel):
     )
 
 
+class PKPDOutput(BaseModel):
+    """PK/PD 推断的结构化输出。"""
+
+    pkpd_profile: dict = Field(
+        default_factory=dict, description="PK/PD 模型参数概要"
+    )
+    drug_regimen: list[dict] = Field(
+        default_factory=list, description="药物方案列表"
+    )
+    reasoning: str = Field(default="", description="推断理由")
+
+
 # -----------------------------------------------------------------------------
 # 通用工具函数
 # -----------------------------------------------------------------------------
@@ -134,7 +162,13 @@ def _build_rag_params_context(rag_selected_params: dict[str, dict]) -> str:
 
     lines = []
     for edge_key, decision in rag_selected_params.items():
-        source, target = edge_key.split("|", 1)
+        # TODO: P1-4 — v1 使用 "source|target"，v3 使用 "source->target"，统一兼容两种分隔符
+        if "|" in edge_key:
+            source, target = edge_key.split("|", 1)
+        elif "->" in edge_key:
+            source, target = edge_key.split("->", 1)
+        else:
+            source, target = edge_key, ""
         if decision.get("param_found"):
             params = decision.get("selected_params", [])
             param_desc = ", ".join(
@@ -166,21 +200,164 @@ def _build_sbml_context(sbml_parsed_network: dict | None) -> str:
     return f"可复用 SBML 模型：{reason}\n节点：{node_names}\n关系：{edge_desc}"
 
 
+def _build_pkpd_context(pkpd_profile: dict) -> str:
+    """将 PK/PD 推断结果拼接为 Node 2 可读的上下文文本。"""
+    if not pkpd_profile:
+        return "无 PK/PD 参数，使用纯 Hill 方程。"
+    pk = pkpd_profile.get("pk_params", {})
+    pd = pkpd_profile.get("pd_params", {})
+    return (
+        f"药物: {pkpd_profile.get('drug_name', '未知')}\n"
+        f"靶点: {pkpd_profile.get('drug_target', '未知')}\n"
+        f"给药途径: {pkpd_profile.get('route', 'IV')}\n"
+        f"房室模型: {pkpd_profile.get('compartment', '1-compartment')}\n"
+        f"PK 参数: k10={pk.get('k10', '估算')}, k12={pk.get('k12', 0)}, "
+        f"k21={pk.get('k21', 0)}, ka={pk.get('ka', 0)}\n"
+        f"PD 参数: Emax={pd.get('Emax', '估算')}, EC50={pd.get('EC50', '估算')}, "
+        f"gamma={pd.get('gamma', '估算')}"
+    )
+
+
+def _build_drug_regimen_context(drug_regimen: list[dict]) -> str:
+    """将药物方案拼接为 Node 2 可读的上下文文本。"""
+    if not drug_regimen:
+        return "无药物方案。"
+    lines = []
+    for i, drug in enumerate(drug_regimen, start=1):
+        lines.append(
+            f"药物{i}: {drug.get('drug_name', '未知')}, "
+            f"剂量={drug.get('dose', '估算')}, "
+            f"EC50={drug.get('ec50', '估算')}, "
+            f"Emax={drug.get('emax', '估算')}, "
+            f"gamma={drug.get('gamma', '估算')}, "
+            f"靶点={drug.get('target', '未知')}"
+        )
+    return "\n".join(lines)
+
+
+def _compute_chou_talalay_ci(
+    drug_regimen: list[dict],
+    fa_levels: tuple[float, ...] = (0.5, 0.75, 0.9),
+) -> dict[str, dict[str, float]]:
+    """解析计算 Chou-Talalay 中效方程：D_alone(fa) = EC50 * (fa/(1-fa))^(1/gamma)。
+
+    返回 {fa_0.5: {'d_alone_A': ..., 'd_alone_B': ...}, ...}，供与仿真 D_combo 组合计算 CI。
+    """
+    result: dict[str, dict[str, float]] = {}
+    for fa in fa_levels:
+        key = f"fa_{fa}"
+        d_alones: dict[str, float] = {}
+        for drug in drug_regimen:
+            name = drug.get("drug_name", "unknown")
+            ec50 = float(drug.get("ec50", 1.0) or 1.0)
+            gamma = float(drug.get("gamma", 1.0) or 1.0)
+            if gamma <= 0 or fa <= 0.0 or fa >= 1.0:
+                d_alones[name] = float("inf")
+                continue
+            d_alone = ec50 * (fa / (1.0 - fa)) ** (1.0 / gamma)
+            d_alones[name] = d_alone
+        result[key] = d_alones
+    return result
+
+
+# -----------------------------------------------------------------------------
+# Node 0: MCP 术语查询节点（在机制解析前注入术语标准化上下文）
+# -----------------------------------------------------------------------------
+async def node0_mcp_term_lookup(state: BioDynamicsState) -> dict:
+    """MCP 术语查询节点：在机制解析前调用生物医学 MCP 工具。
+
+    工作流程：
+    1. 从用户输入中提取生物医学术语（OpenBioMed Skills）
+    2. 获取术语同义词与层级关系（NIH UMLS MCP）
+    3. 标准化临床术语（medical-terminologies-mcp）
+    4. 生成术语定义卡片供前端展示
+    5. 基于标准化结果重写查询，提升后续 RAG 检索精准度
+
+    当 MCP 服务端点未配置时，自动降级为 LLM 内部知识完成上述流程。
+    """
+    node_name = "node0_mcp_term_lookup"
+    dispatches: list[dict] = []
+    if (d := orchestrator.dispatch_for_node(node_name, "in_progress")) :
+        dispatches.append(d)
+
+    user_input = state.get("user_input", "")
+    if not user_input or not settings.MCP_ENABLED:
+        # MCP 未启用或无输入时直接跳过，不阻塞主流程
+        return {
+            "mcp_term_definitions": [],
+            "mcp_tool_calls": [],
+            "mcp_tokens_saved": 0,
+            "mcp_rewritten_query": user_input,
+            "agent_dispatches": dispatches,
+        }
+
+    start_ts = time.time()
+    mcp_client = get_mcp_client()
+
+    try:
+        # 调用 MCP 工具链：术语提取 → 标准化 → 定义生成
+        definitions, tool_call_records, mcp_usage = await mcp_client.lookup_terms(
+            user_input
+        )
+
+        # 基于术语标准化结果重写查询，提升 RAG 检索精准度
+        rewritten_query, rewrite_record = mcp_client.rewrite_query(
+            user_input, definitions
+        )
+        tool_call_records.append(rewrite_record.to_dict())
+
+        # 计算总 Token 节省量
+        tokens_saved = sum(tc.get("tokens_saved", 0) for tc in tool_call_records)
+
+        # 构建术语定义上下文（注入到 Node 1 的提示词中）
+        if definitions:
+            def_lines = []
+            for d in definitions:
+                syn = f"，同义词：{'、'.join(d.synonyms[:3])}" if d.synonyms else ""
+                pathway = f"，通路：{d.related_pathway}" if d.related_pathway else ""
+                def_lines.append(
+                    f"- {d.term}（{d.canonical_name}）：{d.definition}{syn}{pathway}"
+                )
+            term_context = "\n".join(def_lines)
+            summary = f"MCP 已标准化 {len(definitions)} 个术语，估算节省 {tokens_saved} Token"
+        else:
+            term_context = ""
+            summary = "MCP 未识别到专业术语，直接进入机制解析"
+
+    except Exception as exc:
+        # 任何异常都不阻塞主流程，降级为空上下文
+        latency_ms = (time.time() - start_ts) * 1000
+        if (d := orchestrator.fail_dispatch(node_name, str(exc), latency_ms)) :
+            dispatches.append(d)
+        return {
+            "mcp_term_definitions": [],
+            "mcp_tool_calls": [],
+            "mcp_tokens_saved": 0,
+            "mcp_rewritten_query": user_input,
+            "agent_dispatches": dispatches,
+        }
+
+    latency_ms = (time.time() - start_ts) * 1000
+    if (d := orchestrator.complete_dispatch(node_name, latency_ms)) :
+        dispatches.append(d)
+
+    return {
+        "mcp_term_definitions": [d.model_dump() for d in definitions],
+        "mcp_tool_calls": tool_call_records,
+        "mcp_tokens_saved": tokens_saved,
+        "mcp_rewritten_query": rewritten_query,
+        "messages": [summary],
+        "agent_dispatches": dispatches,
+        "token_usage": merge_usage(state.get("token_usage"), mcp_usage),
+    }
+
+
 # -----------------------------------------------------------------------------
 # Node 1: 机制解析器
 # -----------------------------------------------------------------------------
 def _strip_markdown_code_blocks(text: str) -> str:
-    """去除 LLM 输出的 markdown 代码块标记，保留内部 JSON/Python 内容。"""
-    text = text.strip()
-    if text.startswith("```"):
-        # 去掉第一行的 ```json / ```python 等
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    return text
+    """去除 LLM 输出的 markdown 代码块标记（委托统一实现，消除重复逻辑）。"""
+    return strip_markdown_json(text)
 
 
 def _parse_network_json(raw_text: str) -> NetworkOutput:
@@ -193,44 +370,142 @@ def _parse_network_json(raw_text: str) -> NetworkOutput:
     return NetworkOutput(**data)
 
 
+# TODO: P1-4 — 统一 v1/v3 network_json schema 的公共规范化函数
+def _normalize_network_json(network_json: dict) -> dict:
+    """统一 network_json schema：node.id 优先取 name，同步更新 edge 引用。
+
+    起因：v1 路径 node1_parse_network 直接用 LLM 输出的 _NodeItem.id，
+    可能是占位符（如 "e1"/"entity_1"）；v3 路径 worker_mechanism 已在 P0-4 修复中
+    优先取 name。此函数让 v1 出口与 v3 出口 schema 一致，避免下游 ODE 变量名泄漏占位符。
+
+    规范化规则：
+    1. 对每个 node，若 name 非空则 id = name；否则保留原 id。
+    2. 构建 old_id -> new_id 映射，同步更新 edge.source / edge.target。
+    3. 保留 node/edge 的其他字段（type/aliases/interaction/directed 等）。
+
+    Args:
+        network_json: 原始 network_json，含 nodes 和 edges 两个列表。
+
+    Returns:
+        规范化后的 network_json，schema 与 v3 worker_mechanism 出口一致。
+    """
+    nodes = network_json.get("nodes", []) or []
+    edges = network_json.get("edges", []) or []
+
+    # 构建 id 映射：old_id -> new_id（优先 name）
+    id_map: dict[str, str] = {}
+    new_nodes: list[dict] = []
+    for n in nodes:
+        old_id = str(n.get("id", "")).strip()
+        name = str(n.get("name", "")).strip()
+        new_id = name if name else old_id
+        if old_id and old_id != new_id:
+            id_map[old_id] = new_id
+        new_node = dict(n)
+        new_node["id"] = new_id
+        new_nodes.append(new_node)
+
+    # 同步更新 edge 的 source/target
+    new_edges: list[dict] = []
+    for e in edges:
+        new_edge = dict(e)
+        old_src = str(e.get("source", "")).strip()
+        old_tgt = str(e.get("target", "")).strip()
+        new_edge["source"] = id_map.get(old_src, old_src)
+        new_edge["target"] = id_map.get(old_tgt, old_tgt)
+        new_edges.append(new_edge)
+
+    return {"nodes": new_nodes, "edges": new_edges}
+
+
 def node1_parse_network(state: BioDynamicsState) -> dict:
     """解析用户自然语言输入，输出结构化生物网络 JSON。"""
+    node_name = "node1_parse_network"
+    dispatches: list[dict] = []
+    if (d := orchestrator.dispatch_for_node(node_name, "in_progress")) :
+        dispatches.append(d)
+
     user_input = state.get("user_input", "")
+    rewritten = state.get("mcp_rewritten_query") or user_input
     if not user_input:
         return {
             "need_human_review": True,
             "review_question": "请输入您想建模的生物学假说或机制描述。",
             "network_json": {"nodes": [], "edges": []},
+            "agent_dispatches": dispatches,
         }
 
+    start_ts = time.time()
+    # 注入 MCP 术语标准化上下文（若 node0 产出了定义）
+    mcp_definitions = state.get("mcp_term_definitions") or []
+    mcp_term_context = ""
+    if mcp_definitions:
+        def_lines = []
+        for d in mcp_definitions:
+            syn = f"，同义词：{'、'.join(d.get('synonyms', [])[:3])}" if d.get("synonyms") else ""
+            pathway = f"，通路：{d.get('related_pathway')}" if d.get("related_pathway") else ""
+            def_lines.append(
+                f"- {d.get('term', '')}（{d.get('canonical_name', '')}）：{d.get('definition', '')}{syn}{pathway}"
+            )
+        mcp_term_context = "\n【MCP 术语标准化上下文】\n" + "\n".join(def_lines)
+
+    system_prompt = NODE1_PARSER_PROMPT + mcp_term_context + (
+        "\n\n【中英双标签要求】\n"
+        "在生成 network_json 时，每个节点对象必须同时包含：\n"
+        '- name: 英文标识符（用于代码变量和图表标签，如 EGFR_phosphorylation）\n'
+        '- label: 中文可读名（用于报告文本，如 EGFR磷酸化）\n'
+        "边对象同理：source/target 使用英文 name，但需附加 label_source/label_target 字段。\n"
+        "这确保 Matplotlib 图表使用英文避免乱码，报告保持中文可读性。"
+    )
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", NODE1_PARSER_PROMPT),
-            ("human", "{user_input}"),
+            ("system", system_prompt),
+            ("human", "{rewritten}"),
         ]
     )
     chain = prompt | llm
     usage_handler = UsageAccumulator()
     response = chain.invoke(
-        {"user_input": user_input},
+        {"rewritten": rewritten},
         config={"callbacks": [usage_handler]},
     )
-    result = _parse_network_json(str(response.content))
+    latency_ms = (time.time() - start_ts) * 1000
+
+    try:
+        result = _parse_network_json(str(response.content))
+    except Exception as exc:
+        if (d := orchestrator.fail_dispatch(node_name, str(exc), latency_ms)) :
+            dispatches.append(d)
+        return {
+            "need_human_review": True,
+            "review_question": f"机制解析失败：{exc}",
+            "network_json": {"nodes": [], "edges": []},
+            "agent_dispatches": dispatches,
+            "token_usage": merge_usage(
+                state.get("token_usage"), usage_from_accumulator(usage_handler)
+            ),
+        }
 
     network_json = {
         "nodes": [node.model_dump() for node in result.nodes],
         "edges": [edge.model_dump() for edge in result.edges],
     }
+    # TODO: P1-4 — 统一 v1/v3 network_json schema：id 优先取 name，同步更新 edge 引用
+    network_json = _normalize_network_json(network_json)
     summary = (
         f"已解析出 {len(network_json['nodes'])} 个节点、"
         f"{len(network_json['edges'])} 条相互作用边。"
     )
+
+    if (d := orchestrator.complete_dispatch(node_name, latency_ms)) :
+        dispatches.append(d)
 
     return {
         "network_json": network_json,
         "need_human_review": result.need_human_review,
         "review_question": result.review_question,
         "messages": [summary],
+        "agent_dispatches": dispatches,
         "token_usage": merge_usage(
             state.get("token_usage"), usage_from_accumulator(usage_handler)
         ),
@@ -240,17 +515,33 @@ def node1_parse_network(state: BioDynamicsState) -> dict:
 # -----------------------------------------------------------------------------
 # Node 1.5: RAG 参数检索与决策器
 # -----------------------------------------------------------------------------
-def node1_5_rag_search(state: BioDynamicsState) -> dict:
-    """在 Node 1 和 Node 2 之间插入的 RAG 节点：检索文献参数并决策是否使用。"""
+async def node1_5_rag_search(state: BioDynamicsState) -> dict:
+    """在 Node 1 和 Node 2 之间插入的高阶 RAG 节点。
+
+    升级：查询重写 → 混合检索（语义 + BM25）→ 重排序 → LLM 决策。
+    对 inhibition 边额外检索靶点相关药物候选（PubMed + ChromaDB + ClinicalTrials.gov）。
+    同时产出 rag_insights 供前端 RAG 洞察面板渲染。
+    """
+    node_name = "node1_5_rag_search"
+    dispatches: list[dict] = []
+    if (d := orchestrator.dispatch_for_node(node_name, "in_progress")) :
+        dispatches.append(d)
+
+    start_ts = time.time()
     user_input = state.get("user_input", "")
+    # 使用 MCP 重写后的查询（术语已标准化），提升 RAG 检索精准度
+    mcp_rewritten_query = state.get("mcp_rewritten_query") or user_input
     network_json = state.get("network_json") or {"nodes": [], "edges": []}
     edges = network_json.get("edges", [])
 
     # Token 累加器，覆盖 SBML 解析与每条边的 RAG 决策
     usage_handler = UsageAccumulator()
 
-    # 1. 物种上下文准备
-    species_context = _extract_species_context(user_input)
+    # MCP 客户端，用于 PubMed 药物文献预检索
+    mcp_client = get_mcp_client()
+
+    # 1. 物种上下文准备（使用 MCP 重写后的查询，可能含更标准的物种名）
+    species_context = _extract_species_context(mcp_rewritten_query)
 
     # 2. SBML 解析子步骤
     sbml_model_text = state.get("sbml_model_text", "")
@@ -268,11 +559,28 @@ def node1_5_rag_search(state: BioDynamicsState) -> dict:
                 "edges": [],
             }
 
-    # 3. RAG 检索与决策
+    # 3. 高阶 RAG 检索与决策
     rag_client = RagClient()
     node_name_map = {n["id"]: n.get("name", n["id"]) for n in network_json.get("nodes", [])}
+    # 构建 MCP 术语到标准名的映射，用于增强 RAG 查询的术语精准度
+    mcp_term_map: dict[str, str] = {}
+    for d in state.get("mcp_term_definitions") or []:
+        term = d.get("term", "")
+        canonical = d.get("canonical_name", "")
+        if term and canonical and term.lower() != canonical.lower():
+            mcp_term_map[term] = canonical
     rag_selected_params: dict[str, dict] = {}
     retrieved_all: list[dict] = []
+
+    # 聚合 RAG 洞察数据
+    aggregated_rewrites: list[dict] = []
+    aggregated_source_dist: Counter[str] = Counter()
+    aggregated_top_selections: list[dict] = []
+    aggregated_rewritten_queries: list[str] = []
+    total_candidates = 0
+
+    # 聚合药物候选（知识图谱）
+    all_drug_candidates: list[dict] = []
 
     if not rag_client.available:
         # ChromaDB 不可用时，所有边直接回退到估算，避免不必要的 LLM 调用
@@ -306,12 +614,75 @@ def node1_5_rag_search(state: BioDynamicsState) -> dict:
                 f"kinetic parameter Kd Km Vmax half-life degradation secretion "
                 f"species {species_context}"
             )
+            # 注入 MCP 标准化术语名，提升 RAG 检索相关性
+            if mcp_term_map:
+                canonical_terms = []
+                for orig in [source_name, target_name]:
+                    if orig in mcp_term_map:
+                        canonical_terms.append(mcp_term_map[orig])
+                if canonical_terms:
+                    query += " " + " ".join(canonical_terms)
 
             try:
-                retrieved = rag_client.search_params(query, top_k=5)
+                # 高阶 RAG：查询重写 + 混合检索 + 重排序
+                retrieved, edge_insights = rag_client.search_params_hybrid(
+                    query, species_context=species_context, top_k=5
+                )
                 retrieved_all.extend(retrieved)
+
+                # 聚合洞察数据
+                if edge_insights.get("rewritten_query"):
+                    aggregated_rewritten_queries.append(edge_insights["rewritten_query"])
+                aggregated_rewrites.extend(edge_insights.get("rewrites", []))
+                for src, cnt in edge_insights.get("source_distribution", {}).items():
+                    aggregated_source_dist[src] += cnt
+                total_candidates += edge_insights.get("total_candidates", 0)
+                # 为每条边的 top_selections 标注所属边
+                for sel in edge_insights.get("top_selections", []):
+                    sel["edge"] = f"{source_name} → {target_name}"
+                    aggregated_top_selections.append(sel)
             except Exception:
                 retrieved = []
+
+            # 自动在线补充：本地 ChromaDB 命中不足时，查询 KEGG/Reactome/UniProt/ChEMBL
+            if settings.RAG_ONLINE_FALLBACK and (not retrieved or not rag_client.available):
+                best_score = max(
+                    (r.get("_rerank_score", r.get("_combined_score", 0)) for r in retrieved), default=0
+                )
+                if best_score < settings.RAG_ONLINE_FALLBACK_THRESHOLD or not retrieved:
+                    try:
+                        bio_db_client = get_bio_db_client()
+                        online_results = await bio_db_client.search_all(
+                            query, species_context
+                        )
+                        if online_results:
+                            # 标记在线来源，供 RAG 决策链区分
+                            for r in online_results:
+                                r["_retrieval_method"] = "online_fallback"
+                            retrieved.extend(online_results)
+                            retrieved_all.extend(online_results)
+                            logger.info(
+                                "在线补充 %s→%s：获取 %d 条结果",
+                                source_name, target_name, len(online_results),
+                            )
+                    except Exception as exc:
+                        logger.warning("在线数据库补充失败：%s", exc)
+
+            # 对抑制边额外检索靶点相关药物候选（知识图谱注入）
+            if interaction == "inhibition":
+                try:
+                    pubmed_query = f"{target_name} inhibitor IC50 clinical trial"
+                    articles, _, _ = await mcp_client.search_pubmed(
+                        pubmed_query, max_results=3
+                    )
+                    drug_cands = rag_client.drug_specific_retriever(
+                        target_name=target_name,
+                        species_context=species_context,
+                        pubmed_articles=articles,
+                    )
+                    all_drug_candidates.extend(drug_cands)
+                except Exception as exc:
+                    logger.warning("检索 %s 的药物候选失败：%s", target_name, exc)
 
             try:
                 chain = prompt.partial(
@@ -323,7 +694,7 @@ def node1_5_rag_search(state: BioDynamicsState) -> dict:
                         retrieved, ensure_ascii=False, indent=2
                     ),
                 ) | structured_llm
-                decision: RAGDecisionOutput = chain.invoke(
+                decision: RAGDecisionOutput = await chain.ainvoke(
                     {}, config={"callbacks": [usage_handler]}
                 )
                 rag_selected_params[edge_key] = decision.model_dump()
@@ -339,11 +710,39 @@ def node1_5_rag_search(state: BioDynamicsState) -> dict:
     found_count = sum(1 for d in rag_selected_params.values() if d.get("param_found"))
     fallback = any(d.get("fallback_to_estimation") for d in rag_selected_params.values())
     total = len(edges)
+    rag_hit_rate = round(found_count / total, 2) if total > 0 else 0.0
     rag_summary = f"已为 {found_count}/{total} 条边检索到真实参数"
     if fallback:
         rag_summary += "，其余边将使用估算值。"
     else:
         rag_summary += "。"
+
+    # 对药物候选按 drug_name 去重，优先保留有 IC50/EC50 的条目
+    seen_drugs: dict[str, dict] = {}
+    for cand in all_drug_candidates:
+        name = cand.get("drug_name", "")
+        if not name:
+            continue
+        existing = seen_drugs.get(name)
+        if existing is None or (cand.get("ic50") or cand.get("ec50")):
+            seen_drugs[name] = cand
+    drug_candidates = list(seen_drugs.values())
+
+    # 构建 RAG 洞察数据（供前端面板渲染）
+    rag_insights = {
+        "rewritten_query": aggregated_rewritten_queries[0] if aggregated_rewritten_queries else "",
+        "rewrites": aggregated_rewrites,
+        "source_distribution": dict(aggregated_source_dist),
+        "total_candidates": total_candidates,
+        "top_selections": aggregated_top_selections[:6],  # 限制为 top 6 供前端展示
+        "hit_rate": rag_hit_rate,
+        "drug_candidates": drug_candidates,
+        "online_fallback_enabled": settings.RAG_ONLINE_FALLBACK,
+    }
+
+    latency_ms = (time.time() - start_ts) * 1000
+    if (d := orchestrator.complete_dispatch(node_name, latency_ms)) :
+        dispatches.append(d)
 
     update: dict = {
         "species_context": species_context,
@@ -351,6 +750,10 @@ def node1_5_rag_search(state: BioDynamicsState) -> dict:
         "rag_selected_params": rag_selected_params,
         "rag_fallback": fallback,
         "rag_summary": rag_summary,
+        "rag_insights": rag_insights,
+        "rag_hit_rate": rag_hit_rate,
+        "drug_candidates": drug_candidates,
+        "agent_dispatches": dispatches,
         "messages": [rag_summary],
         "token_usage": merge_usage(
             state.get("token_usage"), usage_from_accumulator(usage_handler)
@@ -362,11 +765,245 @@ def node1_5_rag_search(state: BioDynamicsState) -> dict:
     return update
 
 
+def _extract_drug_candidates_fallback(
+    network_json: dict, user_input: str, parameters: dict | None = None
+) -> list[dict]:
+    """从 network_json 的 Drug 节点和 user_input 的 IC50/EC50 正则提取药物候选。
+
+    v3 路径 n5_parameter_rag 不调用 drug_specific_retriever，导致 drug_candidates
+    始终为空。此函数作为兜底，从三个来源提取：
+    1. network_json 中 type="Drug" 的节点 → 提取药物名与抑制靶点
+    2. user_input 中的 IC50/EC50 数值 → 正则匹配（如 "IC50 = 12 nM"）
+    3. TODO: P0-3 — state["parameters"] 中的 IC50/EC50/Kd 条目（RAG 提取值）
+
+    返回结构与 drug_specific_retriever 一致：
+    [{drug_name, ic50, ec50, source, is_clinical_candidate, target_name}]
+    """
+    candidates: list[dict] = []
+    nodes = network_json.get("nodes", []) or []
+    edges = network_json.get("edges", []) or []
+    parameters = parameters or {}
+
+    # 收集 Drug 节点及其抑制靶点
+    drug_nodes: list[dict] = [n for n in nodes if n.get("type") == "Drug"]
+    if not drug_nodes:
+        return candidates
+
+    # 构建 药物→抑制靶点 映射
+    drug_targets: dict[str, str] = {}
+    for edge in edges:
+        if edge.get("interaction") == "inhibition":
+            source = edge.get("source", "")
+            target = edge.get("target", "")
+            # source 是药物节点 id
+            if any(n.get("id") == source for n in drug_nodes):
+                drug_targets[source] = target
+
+    # 从 user_input 提取 IC50/EC50 数值
+    ic50_value: float | None = None
+    ec50_value: float | None = None
+    ic50_unit: str = "nM"
+    ec50_unit: str = "nM"
+
+    _IC50_PATTERNS = [
+        r"IC50\s*[=：:]\s*(\d+(?:\.\d+)?)\s*(nM|µM|uM|µmol/L|μM)?",
+        r"半数抑制浓度\s*[=：:]?\s*(\d+(?:\.\d+)?)\s*(nM|µM|uM|μM)?",
+    ]
+    _EC50_PATTERNS = [
+        r"EC50\s*[=：:]\s*(\d+(?:\.\d+)?)\s*(nM|µM|uM|μM)?",
+        r"半数有效浓度\s*[=：:]?\s*(\d+(?:\.\d+)?)\s*(nM|µM|uM|μM)?",
+    ]
+
+    for pattern in _IC50_PATTERNS:
+        match = re.search(pattern, user_input, re.IGNORECASE)
+        if match:
+            ic50_value = float(match.group(1))
+            if match.group(2):
+                unit = match.group(2).lower()
+                # µM → nM 转换
+                if unit in ("µm", "um", "μm"):
+                    ic50_value *= 1000
+                    ic50_unit = "nM"
+                else:
+                    ic50_unit = "nM"
+            break
+
+    for pattern in _EC50_PATTERNS:
+        match = re.search(pattern, user_input, re.IGNORECASE)
+        if match:
+            ec50_value = float(match.group(1))
+            if match.group(2):
+                unit = match.group(2).lower()
+                if unit in ("µm", "um", "μm"):
+                    ec50_value *= 1000
+                    ec50_unit = "nM"
+                else:
+                    ec50_unit = "nM"
+            break
+
+    # TODO: P0-3 — 从 state["parameters"] 提取 RAG 已检索到的 IC50/EC50/Kd
+    # parameters 格式：{edge_key: {param_name, value, unit, source, is_fallback}}
+    # 优先使用 RAG 提取值（非 fallback），补全 user_input 正则未命中的情况
+    rag_ic50: float | None = None
+    rag_ec50: float | None = None
+    rag_source: str = ""
+    for edge_key, ep in parameters.items():
+        if not isinstance(ep, dict) or ep.get("is_fallback", True):
+            continue
+        param_name = str(ep.get("param_name", "")).lower()
+        try:
+            value = float(ep.get("value", 0))
+        except (TypeError, ValueError):
+            continue
+        if "ic50" in param_name and rag_ic50 is None:
+            rag_ic50 = value
+            rag_source = ep.get("source", "RAG")
+        elif "ec50" in param_name and rag_ec50 is None:
+            rag_ec50 = value
+            rag_source = ep.get("source", "RAG")
+        elif "kd" in param_name and rag_ic50 is None and rag_ec50 is None:
+            # Kd 近似为 IC50（单结合位点假设）
+            rag_ic50 = value
+            rag_source = ep.get("source", "RAG")
+
+    # 优先级：user_input 正则 > RAG 提取 > 默认 0
+    final_ic50 = ic50_value if ic50_value is not None else (rag_ic50 if rag_ic50 is not None else 0.0)
+    final_ec50 = ec50_value if ec50_value is not None else (rag_ec50 if rag_ec50 is not None else final_ic50)
+
+    # 为每个 Drug 节点创建候选
+    for drug_node in drug_nodes:
+        drug_id = drug_node.get("id", "")
+        drug_name = drug_node.get("name", drug_id)
+        target = drug_targets.get(drug_id, "")
+        # 判断来源标签
+        if ic50_value is not None:
+            source_label = "extracted_from_input"
+        elif rag_ic50 is not None or rag_ec50 is not None:
+            source_label = f"RAG:{rag_source}"
+        else:
+            source_label = "network_only"
+        cand = {
+            "drug_name": drug_name,
+            "ic50": final_ic50,
+            "ec50": final_ec50,
+            "clinical_dose": "",
+            "source": source_label,
+            "is_clinical_candidate": False,
+            "target_name": target,
+        }
+        candidates.append(cand)
+
+    return candidates
+
+
+# -----------------------------------------------------------------------------
+# Node 1.6: PK/PD 推断器
+# -----------------------------------------------------------------------------
+def node1_6_pkpd_inference(state: BioDynamicsState) -> dict:
+    """PK/PD 模型推断节点。
+
+    在 Node 1.5（RAG 检索）之后、Node 2（代码生成）之前执行。
+    消费 drug_candidates（真实药物 IC50/EC50）与 rag_selected_params，
+    推断给药途径、房室模型、PK/PD 参数，并生成 drug_regimen。
+    若用户未提及药物，则返回空 pkpd_profile，Node 2 回退到纯 Hill 方程。
+    """
+    node_name = "node1_6_pkpd_inference"
+    dispatches: list[dict] = []
+    if (d := orchestrator.dispatch_for_node(node_name, "in_progress")) :
+        dispatches.append(d)
+
+    drug_candidates = state.get("drug_candidates") or []
+    network_json = state.get("network_json") or {"nodes": [], "edges": []}
+    rag_selected_params = state.get("rag_selected_params") or {}
+    species_context = state.get("species_context", "Human")
+    user_input = state.get("user_input", "")
+    # TODO: P0-3 — 同时读取 parameters 字段（v3 路径 RAG 提取值）
+    parameters = state.get("parameters") or {}
+
+    # === Task F: drug_candidates 为空时的兜底提取 ===
+    # v3 路径 n5_parameter_rag 不填充 drug_candidates，导致此处总是跳过 PK/PD。
+    # 兜底策略：从 network_json 的 Drug 节点 + user_input 的 IC50/EC50 正则 + parameters 提取。
+    if not drug_candidates:
+        drug_candidates = _extract_drug_candidates_fallback(
+            network_json, user_input, parameters=parameters
+        )
+        if drug_candidates:
+            logger.info(
+                "PK/PD 兜底提取到 %d 个药物候选（从 network + user_input + parameters）",
+                len(drug_candidates),
+            )
+
+    # 无药物候选时直接跳过，不阻塞后续纯生物学仿真
+    if not drug_candidates:
+        latency_ms = 0.0
+        if (d := orchestrator.complete_dispatch(node_name, latency_ms)) :
+            dispatches.append(d)
+        return {
+            "pkpd_profile": {},
+            "drug_regimen": [],
+            "messages": ["未识别到药物，跳过 PK/PD 推断，使用纯 Hill 方程。"],
+            "agent_dispatches": dispatches,
+        }
+
+    start_ts = time.time()
+    system_prompt = NODE1_6_PKPD_PROMPT
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            ("human", "请根据网络与检索结果推断 PK/PD 参数。"),
+        ]
+    )
+    chain = prompt.partial(
+        network_json=json.dumps(network_json, ensure_ascii=False, indent=2),
+        drug_candidates_json=json.dumps(drug_candidates, ensure_ascii=False, indent=2),
+        rag_selected_params_json=json.dumps(rag_selected_params, ensure_ascii=False, indent=2),
+        species_context=species_context,
+    ) | llm.with_structured_output(PKPDOutput)
+    usage_handler = UsageAccumulator()
+    result: PKPDOutput = chain.invoke({}, config={"callbacks": [usage_handler]})
+    latency_ms = (time.time() - start_ts) * 1000
+
+    pkpd_profile = result.pkpd_profile or {}
+    drug_regimen = result.drug_regimen or []
+
+    summary = "PK/PD 推断完成"
+    if pkpd_profile:
+        summary += (
+            f"：药物 {pkpd_profile.get('drug_name', '未知')}，"
+            f"房室 {pkpd_profile.get('compartment', '未知')}，"
+            f"靶点 {pkpd_profile.get('drug_target', '未知')}。"
+        )
+    else:
+        summary += "：未生成 PK/PD 模型，回退到纯 Hill 方程。"
+
+    if (d := orchestrator.complete_dispatch(node_name, latency_ms)) :
+        dispatches.append(d)
+
+    return {
+        "pkpd_profile": pkpd_profile,
+        "drug_regimen": drug_regimen,
+        "messages": [summary, result.reasoning or ""],
+        "agent_dispatches": dispatches,
+        "token_usage": merge_usage(
+            state.get("token_usage"), usage_from_accumulator(usage_handler)
+        ),
+    }
+
+
 # -----------------------------------------------------------------------------
 # Node 2: 参数与方程生成器
 # -----------------------------------------------------------------------------
 def node2_generate_code(state: BioDynamicsState) -> dict:
-    """根据结构化网络生成可执行的 SciPy ODE 仿真代码。"""
+    """根据结构化网络生成可执行的 SciPy ODE 仿真代码。
+
+    升级：根据 pkpd_profile 与 drug_regimen 动态组装 prompt，
+    条件化引入 PK/PD 房室模型、剂量扫描与联合用药仿真要求。
+    """
+    node_name = "node2_generate_code"
+    dispatches: list[dict] = []
+    if (d := orchestrator.dispatch_for_node(node_name, "in_progress")) :
+        dispatches.append(d)
+
     network_json = state.get("network_json")
     if not network_json:
         raise ValueError("Node 2 缺少 network_json 状态，无法生成方程。")
@@ -381,27 +1018,47 @@ def node2_generate_code(state: BioDynamicsState) -> dict:
         state.get("rag_selected_params") or {}
     )
     sbml_context = _build_sbml_context(state.get("sbml_parsed_network"))
+    pkpd_profile = state.get("pkpd_profile") or {}
+    drug_regimen = state.get("drug_regimen") or []
 
+    # 动态组装 Node 2 的 system prompt
+    system_prompt = NODE2_BASE_PROMPT
+    prompt_vars: dict[str, str] = {
+        "network_json": json.dumps(network_json, ensure_ascii=False, indent=2),
+        "error_feedback": error_feedback,
+        "rag_params_context": rag_params_context,
+        "sbml_context": sbml_context,
+    }
+    if pkpd_profile:
+        system_prompt += NODE2_PKPD_SECTION
+        prompt_vars["pkpd_context"] = _build_pkpd_context(pkpd_profile)
+    if drug_regimen:
+        system_prompt += NODE2_DOSE_SWEEP_SECTION
+        prompt_vars["drug_regimen_context"] = _build_drug_regimen_context(drug_regimen)
+    if len(drug_regimen) >= 2:
+        system_prompt += NODE2_COMBINATION_SECTION
+
+    start_ts = time.time()
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", NODE2_GENERATOR_PROMPT),
+            ("system", system_prompt),
             ("human", "请根据上述网络拓扑生成 ODE 仿真代码。"),
         ]
     )
-    chain = prompt.partial(
-        network_json=json.dumps(network_json, ensure_ascii=False, indent=2),
-        error_feedback=error_feedback,
-        rag_params_context=rag_params_context,
-        sbml_context=sbml_context,
-    ) | llm
+    chain = prompt.partial(**prompt_vars) | llm
     usage_handler = UsageAccumulator()
     response = chain.invoke({}, config={"callbacks": [usage_handler]})
     content = str(response.content)
     python_code = _extract_python_code(content)
+    latency_ms = (time.time() - start_ts) * 1000
+
+    if (d := orchestrator.complete_dispatch(node_name, latency_ms)) :
+        dispatches.append(d)
 
     return {
         "python_code": python_code,
         "messages": [python_code],
+        "agent_dispatches": dispatches,
         "token_usage": merge_usage(
             state.get("token_usage"), usage_from_accumulator(usage_handler)
         ),
@@ -413,20 +1070,50 @@ def node2_generate_code(state: BioDynamicsState) -> dict:
 # -----------------------------------------------------------------------------
 def node3_execute_sandbox(state: BioDynamicsState) -> dict:
     """在隔离沙箱中执行生成的 Python 代码。"""
+    node_name = "node3_execute_sandbox"
+    dispatches: list[dict] = []
+    if (d := orchestrator.dispatch_for_node(node_name, "in_progress")) :
+        dispatches.append(d)
+
     python_code = state.get("python_code", "")
     if not python_code:
         return {
             "execution_status": "pending",
             "stdout_stderr": "未收到可执行代码。",
             "image_base64": "",
+            "agent_dispatches": dispatches,
         }
 
+    start_ts = time.time()
     result = execute_simulation_code(python_code)
-    return {
-        "execution_status": result["status"],
+    latency_ms = (time.time() - start_ts) * 1000
+
+    status = result["status"]
+    if status == "success":
+        if (d := orchestrator.complete_dispatch(node_name, latency_ms)) :
+            dispatches.append(d)
+    else:
+        if (d := orchestrator.fail_dispatch(node_name, result.get("stdout_stderr", "")[:120], latency_ms)) :
+            dispatches.append(d)
+
+    update: dict = {
+        "execution_status": status,
         "stdout_stderr": result["stdout_stderr"],
         "image_base64": result["image_base64"] or "",
+        "agent_dispatches": dispatches,
     }
+    # 透传 PK/PD 剂量扫描与联合用药仿真输出（即使失败也尝试解析部分数据）
+    if result.get("dose_response_data"):
+        update["dose_response_data"] = result["dose_response_data"]
+    if result.get("ic50") is not None:
+        update["ic50"] = result["ic50"]
+    if result.get("ic90") is not None:
+        update["ic90"] = result["ic90"]
+    if result.get("hed") is not None:
+        update["hed"] = result["hed"]
+    if result.get("combo_ci_data"):
+        update["simulation_ci"] = result["combo_ci_data"]
+    return update
 
 
 # -----------------------------------------------------------------------------
@@ -437,14 +1124,53 @@ _MAX_RETRY = 3
 
 def node4_audit_and_correct(state: BioDynamicsState) -> dict:
     """审计代码执行结果，决定重试、失败或成功。"""
+    node_name = "node4_audit_and_correct"
+    dispatches: list[dict] = []
+    if (d := orchestrator.dispatch_for_node(node_name, "in_progress")) :
+        dispatches.append(d)
+
+    start_ts = time.time()
     execution_status = state.get("execution_status", "error")
     retry_count = state.get("retry_count", 0)
 
     if execution_status == "success":
+        latency_ms = (time.time() - start_ts) * 1000
+        if (d := orchestrator.complete_dispatch(node_name, latency_ms)) :
+            dispatches.append(d)
+
+        # 联合用药协同评估（Chou-Talalay）
+        drug_regimen = state.get("drug_regimen") or []
+        update_extra: dict = {"drug_regimen": drug_regimen}
+        if len(drug_regimen) >= 2:
+            sim_ci = state.get("simulation_ci") or {}
+            ci_values = [
+                float(v)
+                for v in sim_ci.values()
+                if isinstance(v, (int, float)) and math.isfinite(float(v))
+            ]
+            if ci_values:
+                avg_ci = sum(ci_values) / len(ci_values)
+                if avg_ci < 0.8:
+                    synergy = "潜在协同"
+                elif avg_ci > 1.2:
+                    synergy = "拮抗风险"
+                else:
+                    synergy = "叠加效应"
+            else:
+                synergy = "CI 数据缺失，无法评估"
+                avg_ci = None
+
+            update_extra["combination_index"] = sim_ci
+            update_extra["synergy_assessment"] = synergy
+            if avg_ci is not None:
+                update_extra["combination_index_avg"] = avg_ci
+
         return {
             "auditor_status": "success",
             "correction_suggestion": "",
             "failure_report": "",
+            "agent_dispatches": dispatches,
+            **update_extra,
         }
 
     stdout_stderr = state.get("stdout_stderr", "")
@@ -475,7 +1201,10 @@ def node4_audit_and_correct(state: BioDynamicsState) -> dict:
             suggestion = f"审计器调用异常，将自动重试：{exc}"
             token_usage = state.get("token_usage")
 
+        latency_ms = (time.time() - start_ts) * 1000
         if next_retry_count >= _MAX_RETRY:
+            if (d := orchestrator.fail_dispatch(node_name, "retry limit reached", latency_ms)) :
+                dispatches.append(d)
             return {
                 "auditor_status": "failed",
                 "correction_suggestion": "",
@@ -484,25 +1213,34 @@ def node4_audit_and_correct(state: BioDynamicsState) -> dict:
                     f"错误日志：{stdout_stderr}"
                 ),
                 "retry_count": next_retry_count,
+                "agent_dispatches": dispatches,
                 "token_usage": token_usage,
             }
 
+        # 审计判定需要重试：记录为 failed（本次执行失败），前端会看到回到 Simulation Engineer
+        if (d := orchestrator.fail_dispatch(node_name, f"retry {next_retry_count}/{_MAX_RETRY}", latency_ms)) :
+            dispatches.append(d)
         return {
             "auditor_status": "retry",
             "correction_suggestion": suggestion,
             "failure_report": "",
             "retry_count": next_retry_count,
+            "agent_dispatches": dispatches,
             "token_usage": token_usage,
         }
 
+    latency_ms = (time.time() - start_ts) * 1000
     failure_report = (
         f"仿真代码经过 {retry_count} 次重试后仍无法成功执行。"
         f"错误日志：{stdout_stderr}"
     )
+    if (d := orchestrator.fail_dispatch(node_name, "max retries exceeded", latency_ms)) :
+        dispatches.append(d)
     return {
         "auditor_status": "failed",
         "correction_suggestion": "",
         "failure_report": failure_report,
+        "agent_dispatches": dispatches,
         "token_usage": state.get("token_usage"),
     }
 
@@ -512,9 +1250,41 @@ def node4_audit_and_correct(state: BioDynamicsState) -> dict:
 # -----------------------------------------------------------------------------
 def node5_generate_report(state: BioDynamicsState) -> dict:
     """根据成功仿真的结果撰写生物医学分析报告。"""
+    node_name = "node5_generate_report"
+    # 报告生成是隐式最终步骤，不在 4 个专业智能体内，直接生成 dispatch 事件
+    dispatches: list[dict] = []
+    if (d := orchestrator.emit_dispatch(
+        target_agent="Report Generator",
+        reasoning="Validation passed: 仿真通过审计，生成最终预测报告",
+        status="in_progress",
+        node_name=node_name,
+    )) :
+        dispatches.append(d)
+
     network_json = state.get("network_json") or {"nodes": [], "edges": []}
     python_code = state.get("python_code", "")
 
+    # 动态填充报告中的联合用药与剂量递增 section
+    drug_regimen = state.get("drug_regimen") or []
+    combination_section = ""
+    if len(drug_regimen) >= 2:
+        combination_section = COMBINATION_REPORT_SECTION.format(
+            combination_index=json.dumps(
+                state.get("combination_index") or {}, ensure_ascii=False
+            ),
+            synergy_assessment=state.get("synergy_assessment", "")
+            or "未评估",
+        )
+
+    dose_section = ""
+    if state.get("dose_response_data"):
+        dose_section = DOSE_REPORT_SECTION.format(
+            ic50=state.get("ic50", "N/A"),
+            ic90=state.get("ic90", "N/A"),
+            hed=state.get("hed", "N/A"),
+        )
+
+    start_ts = time.time()
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", NODE6_REPORT_PROMPT),
@@ -524,12 +1294,25 @@ def node5_generate_report(state: BioDynamicsState) -> dict:
     chain = prompt.partial(
         network_json=json.dumps(network_json, ensure_ascii=False, indent=2),
         python_code=python_code,
+        combination_section=combination_section,
+        dose_section=dose_section,
     ) | llm
     usage_handler = UsageAccumulator()
     response = chain.invoke({}, config={"callbacks": [usage_handler]})
+    latency_ms = (time.time() - start_ts) * 1000
+
+    if (d := orchestrator.emit_dispatch(
+        target_agent="Report Generator",
+        reasoning=f"Report Generator completed in {latency_ms:.0f}ms",
+        status="completed",
+        node_name=node_name,
+        latency_ms=latency_ms,
+    )) :
+        dispatches.append(d)
 
     return {
         "final_report": str(response.content).strip(),
+        "agent_dispatches": dispatches,
         "token_usage": merge_usage(
             state.get("token_usage"), usage_from_accumulator(usage_handler)
         ),

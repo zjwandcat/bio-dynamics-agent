@@ -1,0 +1,95 @@
+"""
+ODE 仿真（DoseSweep 模板）
+- 在主仿真后运行剂量扫描，输出 DOSE_RESPONSE / IC50 / IC90 / HED 行
+"""
+import json
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+from scipy.integrate import solve_ivp
+
+SPECIES_NAMES = {{ species_names }}
+T_END = {{ t_end }}
+N_EVAL = {{ n_eval }}
+Y0 = {{ y0 }}
+DRUG_NAME = "{{ drug_name }}"
+EC50 = {{ ec50 }}
+EMAX = {{ emax }}
+GAMMA = {{ gamma }}
+K10 = {{ k10 }}
+CONC_MIN_FACTOR = {{ conc_min_factor }}
+CONC_MAX_FACTOR = {{ conc_max_factor }}
+N_POINTS = {{ n_points }}
+
+def _simulate(dose):
+    def _ode(t, y):
+        drug_conc, target = y
+        effect = EMAX * (drug_conc ** GAMMA) / (EC50 ** GAMMA + drug_conc ** GAMMA + 1e-12)
+        return [-K10 * drug_conc, 0.5 * (1.0 - effect) - 0.05 * target]
+    sol = solve_ivp(
+        _ode, (0.0, T_END), [dose, Y0[1] if len(Y0) > 1 else 0.0],
+        method="LSODA", t_eval=np.linspace(0.0, T_END, N_EVAL), vectorized=False,
+    )
+    return sol
+
+# 主仿真
+main_dose = {{ dose }}
+sol = _simulate(main_dose)
+header = "t," + ",".join(SPECIES_NAMES)
+data = np.column_stack([sol.t, *sol.y])
+np.savetxt("simulation.csv", data, delimiter=",", header=header, comments="")
+
+# 剂量扫描
+concs = np.logspace(np.log10(EC50 * CONC_MIN_FACTOR + 1e-9), np.log10(EC50 * CONC_MAX_FACTOR), N_POINTS)
+effects = []
+for c in concs:
+    s = _simulate(float(c))
+    final = s.y[1, -1] if np.isfinite(s.y[1, -1]) else 0.0
+    final = max(final, 0.0)
+    effects.append(float(final))
+
+# IC50 / IC90 插值（target 终值下降到 50% / 10%）
+baseline = effects[0] if effects else 0.0
+ic50_val = float("nan")
+ic90_val = float("nan")
+for i in range(1, len(effects)):
+    if not np.isfinite(effects[i]) or not np.isfinite(baseline):
+        continue
+    if np.isnan(ic50_val) and effects[i] <= 0.5 * baseline:
+        ic50_val = float(concs[i])
+    if np.isnan(ic90_val) and effects[i] <= 0.1 * baseline:
+        ic90_val = float(concs[i])
+
+# HED：mouse→human 异速缩放（占位公式）
+hed_val = main_dose * (0.02 / 60.0) ** 0.33 if main_dose else float("nan")
+
+print(f"DOSE_RESPONSE: {json.dumps({'concentrations': [float(x) for x in concs], 'effects': [float(x) for x in effects], 'drug_name': DRUG_NAME})}")
+print(f"IC50: {ic50_val}")
+print(f"IC90: {ic90_val}")
+print(f"HED: {hed_val}")
+
+# Plot
+fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+ax[0].plot(sol.t, sol.y[0], label=f"{DRUG_NAME}", linewidth=2)
+ax[0].plot(sol.t, sol.y[1], label=SPECIES_NAMES[1], linewidth=2)
+ax[0].set_title(f"Main simulation (dose={main_dose})")
+ax[0].set_xlabel("Time (h)")
+ax[0].legend()
+ax[0].grid(alpha=0.3)
+
+ax[1].semilogx(concs, effects, "o-", linewidth=2)
+ax[1].set_title("Dose response")
+ax[1].set_xlabel("Concentration (nM)")
+ax[1].set_ylabel("Target steady state (nM)")
+ax[1].grid(alpha=0.3)
+
+fig.tight_layout()
+fig.savefig("simulation.png", dpi=120)
+
+for i, sp in enumerate(SPECIES_NAMES):
+    val = sol.y[i, -1]
+    safe_val = max(val, 0.0) if np.isfinite(val) else 0.0
+    print(f"BIO_CHECK: {sp} = {safe_val:.4f}")

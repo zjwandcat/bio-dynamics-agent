@@ -1,0 +1,329 @@
+{
+  "model_id": "BIOMD0000000205",
+  "allowed_pathway": [
+    "EGF_EGFR_MAPK"
+  ],
+  "consistency": {
+    "passed": true,
+    "pathway_integrity": {
+      "check": "pathway_integrity",
+      "passed": true,
+      "start": "EGF",
+      "end": "ERK_active",
+      "path": [
+        "EGF",
+        "EGFR_active",
+        "Grb2_SOS_complex",
+        "Ras_active",
+        "Raf_active",
+        "MEK_active",
+        "ERK_active"
+      ],
+      "message": "EGF → ERK 可达"
+    },
+    "conservation_sanity": {
+      "check": "conservation_sanity",
+      "passed": true,
+      "pool_totals": {
+        "EGFR": 0.3,
+        "Ras": 0.15,
+        "Raf": 0.5,
+        "MEK": 0.68,
+        "ERK": 0.4
+      },
+      "warnings": [],
+      "message": "守恒检查通过"
+    },
+    "no_phantom_pathway": {
+      "check": "no_phantom_pathway",
+      "passed": true,
+      "forbidden_hits": [],
+      "message": "未发现非模型通路术语"
+    }
+  },
+  "canonical_graph": {
+    "before": {
+      "species_count": 11,
+      "species": [
+        "EGF",
+        "EGFR",
+        "EGFR_active",
+        "Shc_complex",
+        "SHP",
+        "Grb2_SOS_complex",
+        "Ras_inactive",
+        "Ras_active",
+        "Raf_active",
+        "MEK_active",
+        "ERK_active"
+      ],
+      "reaction_count": 30,
+      "reactions": [
+        {
+          "id": "reaction_0",
+          "equation": "EGF + EGFR → EGF-EGFR"
+        },
+        {
+          "id": "reaction_1",
+          "equation": "2 EGF-EGFR → EGF-EGFR-2"
+        },
+        {
+          "id": "reaction_2",
+          "equation": "EGF-EGFR-2 → EGF-pEGFR-2"
+        },
+        {
+          "id": "reaction_5",
+          "equation": "EGF-pEGFR-2 + Shc → EGF-pEGFR-2-Shc"
+        },
+        {
+          "id": "reaction_6",
+          "equation": "EGF-pEGFR-2-Shc → EGF-pEGFR-2-pShc"
+        },
+        {
+          "id": "reaction_7",
+          "equation": "EGF-pEGFR-2-pShc → EGF-pEGFR-2 + pShc"
+        },
+        {
+          "id": "reaction_8",
+          "equation": "pShc + SHP → pShc-SHP"
+        },
+        {
+          "id": "reaction_9",
+          "equation": "pShc-SHP → Shc + SHP"
+        },
+        {
+          "id": "reaction_10",
+          "equation": "EGF-pEGFR-2-pShc + Grb2 → EGF-pEGFR-2-pShc-Grb2"
+        },
+        {
+          "id": "reaction_11",
+          "equation": "EGF-pEGFR-2-pShc-Grb2 + SOS → EGF-pEGFR-2-pShc-Grb2-SOS"
+        },
+        {
+          "id": "reaction_12",
+          "equation": "Grb2 + SOS → Grb2-SOS"
+        },
+        {
+          "id": "reaction_13",
+          "equation": "EGF-pEGFR-2-pShc + Grb2-SOS → EGF-pEGFR-2-pShc-Grb2-SOS"
+        },
+        {
+          "id": "reaction_14",
+          "equation": "EGF-pEGFR-2-pShc-Grb2-SOS + RasGDP → EGF-pEGFR-2-pShc-Grb2-SOS-RasGDP"
+        },
+        {
+          "id": "reaction_15",
+          "equation": "EGF-pEGFR-2-pShc-Grb2-SOS-RasGDP → EGF-pEGFR-2-pShc-Grb2-SOS + RasGTP"
+        },
+        {
+          "id": "reaction_16",
+          "equation": "EGF-pEGFR-2 + Grb2 → EGF-pEGFR-2-Grb2"
+        },
+        {
+          "id": "reaction_17",
+          "equation": "EGF-pEGFR-2-Grb2 + SOS → EGF-pEGFR-2-Grb2-SOS"
+        },
+        {
+          "id": "reaction_18",
+          "equation": "EGF-pEGFR-2 + Grb2-SOS → EGF-pEGFR-2-Grb2-SOS"
+        },
+        {
+          "id": "reaction_19",
+          "equation": "EGF-pEGFR-2-Grb2-SOS + RasGDP → EGF-pEGFR-2-Grb2-SOS-RasGDP"
+        },
+        {
+          "id": "reaction_20",
+          "equation": "EGF-pEGFR-2-Grb2-SOS-RasGDP → EGF-pEGFR-2-Grb2-SOS + RasGTP"
+        },
+        {
+          "id": "reaction_21",
+          "equation": "Raf + RasGTP → Raf-RasGTP"
+        },
+        {
+          "id": "reaction_22",
+          "equation": "Raf-RasGTP → pRaf + RasGTP"
+        },
+        {
+          "id": "reaction_23",
+          "equation": "pRaf + MEK → pRaf-MEK"
+        },
+        {
+          "id": "reaction_24",
+          "equation": "pRaf-MEK → pRaf + pMEK"
+        },
+        {
+          "id": "reaction_25",
+          "equation": "pRaf + pMEK → pRaf-pMEK"
+        },
+        {
+          "id": "reaction_26",
+          "equation": "pRaf-pMEK → pRaf + ppMEK"
+        },
+        {
+          "id": "reaction_27",
+          "equation": "ppMEK + ERK → ppMEK-ERK"
+        },
+        {
+          "id": "reaction_28",
+          "equation": "ppMEK-ERK → ppMEK + pERK"
+        },
+        {
+          "id": "reaction_29",
+          "equation": "ppMEK + pERK → ppMEK-pERK"
+        },
+        {
+          "id": "reaction_30",
+          "equation": "ppMEK-pERK → ppMEK + ppERK"
+        },
+        {
+          "id": "reaction_41",
+          "equation": "RasGTP → RasGDP"
+        }
+      ]
+    },
+    "after": {
+      "species_count": 10,
+      "species": [
+        "EGF",
+        "EGFR_active",
+        "Shc_complex",
+        "SHP",
+        "Grb2_SOS_complex",
+        "Ras_active",
+        "Raf_active",
+        "MEK_active",
+        "ERK_active",
+        "Ras_inactive"
+      ],
+      "edge_count": 10,
+      "edges": [
+        {
+          "source": "EGF",
+          "target": "EGFR_active",
+          "mechanism": "binding",
+          "reaction_equation": "EGF + EGFR → EGFR_active",
+          "injected": false
+        },
+        {
+          "source": "EGFR_active",
+          "target": "Shc_complex",
+          "mechanism": "binding",
+          "reaction_equation": "EGFR_active + Shc_complex → Shc_complex",
+          "injected": false
+        },
+        {
+          "source": "SHP",
+          "target": "Shc_complex",
+          "mechanism": "binding",
+          "reaction_equation": "Shc_complex + SHP → Shc_complex",
+          "injected": false
+        },
+        {
+          "source": "Shc_complex",
+          "target": "Grb2_SOS_complex",
+          "mechanism": "binding",
+          "reaction_equation": "Shc_complex + Grb2_SOS_complex → Grb2_SOS_complex",
+          "injected": false
+        },
+        {
+          "source": "Grb2_SOS_complex",
+          "target": "Ras_active",
+          "mechanism": "binding",
+          "reaction_equation": "Grb2_SOS_complex + Ras_inactive → Ras_active",
+          "injected": false
+        },
+        {
+          "source": "EGFR_active",
+          "target": "Grb2_SOS_complex",
+          "mechanism": "binding",
+          "reaction_equation": "EGFR_active + Grb2_SOS_complex → Grb2_SOS_complex",
+          "injected": false
+        },
+        {
+          "source": "Ras_active",
+          "target": "Raf_active",
+          "mechanism": "binding",
+          "reaction_equation": "Raf_active + Ras_active → Raf_active",
+          "injected": false
+        },
+        {
+          "source": "Raf_active",
+          "target": "MEK_active",
+          "mechanism": "binding",
+          "reaction_equation": "Raf_active + MEK_active → MEK_active",
+          "injected": false
+        },
+        {
+          "source": "MEK_active",
+          "target": "ERK_active",
+          "mechanism": "binding",
+          "reaction_equation": "MEK_active + ERK_active → ERK_active",
+          "injected": false
+        },
+        {
+          "source": "Ras_active",
+          "target": "Ras_inactive",
+          "mechanism": "conversion",
+          "reaction_equation": "Ras_active → Ras_inactive",
+          "injected": false
+        }
+      ]
+    }
+  },
+  "simulation": {
+    "sandbox_status": "success",
+    "sandbox_error_class": "none",
+    "stdout_stderr": "BIO_CHECK: EGF = 0.0082\nBIO_CHECK: EGFR_active = 0.0100\nBIO_CHECK: Shc_complex = 0.0101\nBIO_CHECK: SHP = 0.0245\nBIO_CHECK: Grb2_SOS_complex = 2.0258\nBIO_CHECK: Ras_active = 0.0099\nBIO_CHECK: Raf_active = 0.0795\nBIO_CHECK: MEK_active = 0.0104\nBIO_CHECK: ERK_active = 1.6278\nBIO_CHECK: Ras_inactive = 0.0005\n",
+    "local_returncode": 0,
+    "local_stderr": "",
+    "canonical_metrics": {
+      "EGFR_active": {
+        "peak": 0.01,
+        "peak_time_min": 19.26,
+        "final": 0.01
+      },
+      "Shc_complex": {
+        "peak": 1.0,
+        "peak_time_min": 0.0,
+        "final": 0.010073
+      },
+      "Grb2_SOS_complex": {
+        "peak": 2.149439,
+        "peak_time_min": 2.81,
+        "final": 2.025756
+      },
+      "Ras_active": {
+        "peak": 0.103704,
+        "peak_time_min": 1.61,
+        "final": 0.009937
+      },
+      "Raf_active": {
+        "peak": 0.5,
+        "peak_time_min": 0.0,
+        "final": 0.079472
+      },
+      "MEK_active": {
+        "peak": 0.68,
+        "peak_time_min": 0.0,
+        "final": 0.010449
+      },
+      "ERK_active": {
+        "peak": 1.62777,
+        "peak_time_min": 120.0,
+        "final": 1.62777
+      }
+    },
+    "bio_final_values": {
+      "EGF": 0.0082,
+      "EGFR_active": 0.01,
+      "Shc_complex": 0.0101,
+      "SHP": 0.0245,
+      "Grb2_SOS_complex": 2.0258,
+      "Ras_active": 0.0099,
+      "Raf_active": 0.0795,
+      "MEK_active": 0.0104,
+      "ERK_active": 1.6278,
+      "Ras_inactive": 0.0005
+    }
+  }
+}

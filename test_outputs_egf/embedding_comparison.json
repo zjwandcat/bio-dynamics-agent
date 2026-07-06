@@ -1,0 +1,173 @@
+[
+  {
+    "name": "讯飞 xop3qwen8bembedding",
+    "status": "success",
+    "dim": 768,
+    "latency": 0.26326727867126465,
+    "query_results": [
+      {
+        "query": "EGF EGFR binding k_on association rate",
+        "description": "EGF-EGFR 结合速率常数",
+        "latency": 0.23730039596557617,
+        "sim_to_test": 0.8780467862454469,
+        "dim": 768
+      },
+      {
+        "query": "EGFR phosphorylation rate constant",
+        "description": "EGFR 磷酸化速率",
+        "latency": 0.24094080924987793,
+        "sim_to_test": 0.8929025021797214,
+        "dim": 768
+      },
+      {
+        "query": "EGF-EGFR complex dissociation k_off",
+        "description": "EGF-EGFR 复合物解离速率",
+        "latency": 0.22988176345825195,
+        "sim_to_test": 0.8043186591738342,
+        "dim": 768
+      },
+      {
+        "query": "MAPK signaling cascade amplification",
+        "description": "MAPK 级联信号放大",
+        "latency": 0.23668885231018066,
+        "sim_to_test": 0.7052199423911037,
+        "dim": 768
+      },
+      {
+        "query": "Ras GTP GDP exchange SOS catalysis",
+        "description": "Ras GDP-GTP 交换",
+        "latency": 0.23635625839233398,
+        "sim_to_test": 0.6233749701228344,
+        "dim": 768
+      },
+      {
+        "query": "Shc Grb2 SOS adapter protein recruitment",
+        "description": "Shc-Grb2-SOS 接头蛋白招募",
+        "latency": 0.23032522201538086,
+        "sim_to_test": 0.6920175081661584,
+        "dim": 768
+      },
+      {
+        "query": "EGF 受体磷酸化信号级联动力学参数",
+        "description": "中文查询：EGF 受体磷酸化动力学",
+        "latency": 0.2520277500152588,
+        "sim_to_test": 0.8485132129738415,
+        "dim": 768
+      }
+    ]
+  },
+  {
+    "name": "SiliconFlow BAAI/bge-m3",
+    "status": "success",
+    "dim": 1024,
+    "latency": 0.28202247619628906,
+    "query_results": [
+      {
+        "query": "EGF EGFR binding k_on association rate",
+        "description": "EGF-EGFR 结合速率常数",
+        "latency": 0.27099180221557617,
+        "sim_to_test": 0.6670235629762251,
+        "dim": 1024
+      },
+      {
+        "query": "EGFR phosphorylation rate constant",
+        "description": "EGFR 磷酸化速率",
+        "latency": 0.25653529167175293,
+        "sim_to_test": 0.7410990791889857,
+        "dim": 1024
+      },
+      {
+        "query": "EGF-EGFR complex dissociation k_off",
+        "description": "EGF-EGFR 复合物解离速率",
+        "latency": 0.2185981273651123,
+        "sim_to_test": 0.6219920158446,
+        "dim": 1024
+      },
+      {
+        "query": "MAPK signaling cascade amplification",
+        "description": "MAPK 级联信号放大",
+        "latency": 0.24784088134765625,
+        "sim_to_test": 0.40379020008710254,
+        "dim": 1024
+      },
+      {
+        "query": "Ras GTP GDP exchange SOS catalysis",
+        "description": "Ras GDP-GTP 交换",
+        "latency": 0.23674225807189941,
+        "sim_to_test": 0.43388490244033934,
+        "dim": 1024
+      },
+      {
+        "query": "Shc Grb2 SOS adapter protein recruitment",
+        "description": "Shc-Grb2-SOS 接头蛋白招募",
+        "latency": 0.302870512008667,
+        "sim_to_test": 0.3797600172618565,
+        "dim": 1024
+      },
+      {
+        "query": "EGF 受体磷酸化信号级联动力学参数",
+        "description": "中文查询：EGF 受体磷酸化动力学",
+        "latency": 0.2875521183013916,
+        "sim_to_test": 0.7090209016354684,
+        "dim": 1024
+      }
+    ]
+  },
+  {
+    "name": "OpenRouter nvidia/llama-nemotron-embed",
+    "status": "success",
+    "dim": 2048,
+    "latency": 1.4544734954833984,
+    "query_results": [
+      {
+        "query": "EGF EGFR binding k_on association rate",
+        "description": "EGF-EGFR 结合速率常数",
+        "latency": 1.0719799995422363,
+        "sim_to_test": 0.7201235630910747,
+        "dim": 2048
+      },
+      {
+        "query": "EGFR phosphorylation rate constant",
+        "description": "EGFR 磷酸化速率",
+        "latency": 0.9803071022033691,
+        "sim_to_test": 0.7724713904364034,
+        "dim": 2048
+      },
+      {
+        "query": "EGF-EGFR complex dissociation k_off",
+        "description": "EGF-EGFR 复合物解离速率",
+        "latency": 1.0642924308776855,
+        "sim_to_test": 0.6396503865553373,
+        "dim": 2048
+      },
+      {
+        "query": "MAPK signaling cascade amplification",
+        "description": "MAPK 级联信号放大",
+        "latency": 1.030243158340454,
+        "sim_to_test": 0.2503259588573538,
+        "dim": 2048
+      },
+      {
+        "query": "Ras GTP GDP exchange SOS catalysis",
+        "description": "Ras GDP-GTP 交换",
+        "latency": 1.0344126224517822,
+        "sim_to_test": 0.24806149509402597,
+        "dim": 2048
+      },
+      {
+        "query": "Shc Grb2 SOS adapter protein recruitment",
+        "description": "Shc-Grb2-SOS 接头蛋白招募",
+        "latency": 1.0280370712280273,
+        "sim_to_test": 0.2644827856698661,
+        "dim": 2048
+      },
+      {
+        "query": "EGF 受体磷酸化信号级联动力学参数",
+        "description": "中文查询：EGF 受体磷酸化动力学",
+        "latency": 1.006882905960083,
+        "sim_to_test": 0.6098510050452977,
+        "dim": 2048
+      }
+    ]
+  }
+]
