@@ -211,3 +211,14 @@ class BioDynamicsState(TypedDict, total=False):
     # V4_ODE_TEMPLATE_V2_ENABLED=false 时保持 None，仍走 v3 ode_templates/
     # v4 ODE 渲染产物仍调用 sandbox.py 执行（沙盒不变）
     v4_ode_system: dict
+
+    # =============================================================================
+    # v4 迁移字段（Phase 4 新增）
+    # 详见 BioDynamics_v4_Migration_Plan.md §Phase 4
+    # 共存策略：v4_pathway_class 与 v3 mechanism.pathway 共存，不同步
+    # =============================================================================
+    # v4 Pathway Planner 输出（Phase 4）
+    # 单通路如 "EGFR_RTK"，多通路如 "MULTI:EGFR_RTK+PI3K_AKT_mTOR"，
+    # 未识别为 "UNKNOWN"
+    # V4_PATHWAY_PLANNER_ENABLED=false 时保持 None，不影响 v3 流程
+    v4_pathway_class: str

@@ -231,6 +231,16 @@ class Settings:
         "V4_ODE_TEMPLATE_V2_ENABLED", "false"
     ).lower() == "true"
 
+    # Phase 4: Pathway Planner + Specialist + Cross-talk Coordinator
+    # V4_PATHWAY_PLANNER_ENABLED: 控制 v4 Pathway Planner 的通路识别
+    #   - false（默认）：跳过通路识别，state.v4_pathway_class 保持 None
+    #   - true：调用 Pathway Planner 输出 v4_pathway_class + 预识别 cross-talk edges
+    # 铁律：flag=false 时系统行为与 v3 完全一致（不识别通路、不写 v4_pathway_class）
+    # 依赖关系：建议与 V4_PATHWAY_GRAPH_ENABLED 配合使用（Pathway Specialist 需通路图）
+    V4_PATHWAY_PLANNER_ENABLED: bool = os.getenv(
+        "V4_PATHWAY_PLANNER_ENABLED", "false"
+    ).lower() == "true"
+
 
 settings = Settings()
 
