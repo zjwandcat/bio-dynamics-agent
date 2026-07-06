@@ -249,6 +249,16 @@ class Settings:
         "V4_PATHWAY_SPECIALIST_ENABLED", "false"
     ).lower() == "true"
 
+    # V4_CROSSTALK_COORDINATOR_ENABLED: 控制 v4 Cross-talk Coordinator 的执行
+    #   - false（默认）：跳过 cross-talk 协调，state.v4_crosstalk_edges 等保持空
+    #   - true：多通路场景下调用 Coordinator 合并 shared species + cross-talk edges
+    # 铁律：flag=false 时 Coordinator 不执行，v3 行为完全不受影响
+    # 依赖关系：建议与 V4_PATHWAY_SPECIALIST_ENABLED 配合使用（Coordinator 消费 Specialist 输出）
+    # 职责边界：不修改 Specialist 内部 Reaction；不生成 ODE；不做 SBML 验证
+    V4_CROSSTALK_COORDINATOR_ENABLED: bool = os.getenv(
+        "V4_CROSSTALK_COORDINATOR_ENABLED", "false"
+    ).lower() == "true"
+
 
 settings = Settings()
 

@@ -222,3 +222,30 @@ class BioDynamicsState(TypedDict, total=False):
     # 未识别为 "UNKNOWN"
     # V4_PATHWAY_PLANNER_ENABLED=false 时保持 None，不影响 v3 流程
     v4_pathway_class: str
+
+    # =============================================================================
+    # v4 迁移字段（Phase 4 / Task 4.13 - Cross-talk Coordinator）
+    # 详见 spec.md Part 3 Cross-talk Coordinator Agent（第 262-272 行）
+    # 共存策略：v4_crosstalk_edges 与 v4_pathway_graph.cross_talk_edges 共存
+    # =============================================================================
+    # v4 Cross-talk Coordinator 输出（Phase 4 / Task 4.13）
+    # 结构：list[CrossTalkEdge.model_dump()]，每条含 id / source_pathway /
+    #   target_pathway / source_node / target_node / mechanism / shared_species 等
+    # V4_CROSSTALK_COORDINATOR_ENABLED=false 时保持空，不影响 v3 流程
+    v4_crosstalk_edges: list[dict]
+
+    # v4 shared species 名列表（Cross-talk Coordinator 识别的跨通路共享物种）
+    # 如 ["RasGTP", "AKT", "MEK", "p53", "p21"]，同一 ODE 变量同步
+    # V4_CROSSTALK_COORDINATOR_ENABLED=false 时保持空，不影响 v3 流程
+    v4_shared_species: list[str]
+
+    # v4 shared species 同步策略（同一 ODE 变量映射 + 主导通路 + 冲突解决）
+    # 结构：{sync_map: {species: canonical_var}, pathway_assignments: {...},
+    #        conflict_resolution: {...}}
+    # V4_CROSSTALK_COORDINATOR_ENABLED=false 时保持空，不影响 v3 流程
+    v4_shared_species_sync: dict
+
+    # v4 时间尺度对齐结果（多通路 max_step 统一）
+    # 结构：{unified_max_step: float, pathway_time_scales: list, alignment_strategy: str}
+    # V4_CROSSTALK_COORDINATOR_ENABLED=false 时保持空，不影响 v3 流程
+    v4_time_scale_alignment: dict
