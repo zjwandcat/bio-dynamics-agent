@@ -16,8 +16,16 @@ from app.validation_v2.level1_internal import (
     Level1InternalValidator,
     level1_hook_node,
 )
+from app.validation_v2.level2_sbml import (
+    Level2SBMLValidator,
+    level2_hook_node,
+)
+from app.validation_v2.thresholds import PathwayThresholds
 
 __all__ = [
     "Level1InternalValidator",
     "level1_hook_node",
+    "Level2SBMLValidator",
+    "level2_hook_node",
+    "PathwayThresholds",
 ]
