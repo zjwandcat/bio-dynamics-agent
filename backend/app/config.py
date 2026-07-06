@@ -259,6 +259,107 @@ class Settings:
         "V4_CROSSTALK_COORDINATOR_ENABLED", "false"
     ).lower() == "true"
 
+    # =============================================================================
+    # Phase 5 Feature Flags（SBML Grounding + Validation Pyramid）
+    # =============================================================================
+    # V4_SBML_GROUNDER_ENABLED: 控制 v4 SBML Grounder Agent 的执行
+    # 职责：建立 ODE ↔ Reaction ↔ SBML ↔ Parameter ↔ PMID 五级映射链
+    # 铁律：flag=false 时 Grounder 不执行，v3 LLM 解析行为不变
+    V4_SBML_GROUNDER_ENABLED: bool = os.getenv(
+        "V4_SBML_GROUNDER_ENABLED", "false"
+    ).lower() == "true"
+
+    # V4_VALIDATION_PYRAMID_ENABLED: 控制 v4 Validation Pyramid（5 层）的执行
+    # 职责：Level 1 internal / Level 2 SBML / Level 3 cross-pathway / Level 4 benchmark / Level 5 hypothesis
+    # 铁律：flag=false 时 Pyramid 不执行，v3 model_consistency_validator + sbml_validator 行为不变
+    V4_VALIDATION_PYRAMID_ENABLED: bool = os.getenv(
+        "V4_VALIDATION_PYRAMID_ENABLED", "false"
+    ).lower() == "true"
+
+    # V4_CALIBRATION_AGENT_ENABLED: 控制 v4 Calibration Agent 的执行
+    # 职责：用 BioModels reference 或用户实验数据拟合参数，输出置信区间
+    # 铁律：flag=false 时 Calibration 不执行，v3 参数估计行为不变
+    V4_CALIBRATION_AGENT_ENABLED: bool = os.getenv(
+        "V4_CALIBRATION_AGENT_ENABLED", "false"
+    ).lower() == "true"
+
+
+# =============================================================================
+# 依赖隔离策略（try-import 模板）—— Phase 5 前置（SubTask 5.0.2）
+# =============================================================================
+# 设计原则：所有可选科学计算依赖必须 try-import，失败时降级到标准库或简化方法，
+# 并记录 warning，不阻塞主流水线。
+#
+# 依赖矩阵：
+# - roadrunner  : SBML 仿真（Level 2 Track A）  → 不可用降级到 Track B 结构相似度
+# - lmfit       : 参数校准（Calibration Agent） → 不可用降级到 scipy.optimize.least_squares
+# - SALib       : Sobol/Morris 全局灵敏度       → 不可用仅运行 local sensitivity
+# - lxml        : SBML XML 解析（sbml_parser_v2）→ 不可用降级到 xml.etree.ElementTree
+# - chromadb    : 向量库（已在 P1 中处理）       → 不可用降级到内存检索
+#
+# 使用模式（在消费模块中）：
+#   from app.config import ROADRUNNER_AVAILABLE
+#   if ROADRUNNER_AVAILABLE:
+#       import roadrunner
+#       # Track A: 真实 SBML 仿真
+#   else:
+#       # Track B: 结构相似度评分
+# =============================================================================
+
+# roadrunner: SBML 仿真器（Level 2 Track A 依赖）
+try:
+    import roadrunner  # type: ignore
+    ROADRUNNER_AVAILABLE = True
+    ROADRUNNER_VERSION = getattr(roadrunner, "__version__", "unknown")
+except ImportError:
+    ROADRUNNER_AVAILABLE = False
+    ROADRUNNER_VERSION = None
+    logger.warning(
+        "roadrunner 未安装：Level 2 SBML Validation 将降级到 Track B 结构相似度评分。"
+        "安装命令：pip install python-roadrunner"
+    )
+
+# lmfit: 参数校准（Calibration Agent 依赖）
+try:
+    import lmfit  # type: ignore
+    LMFIT_AVAILABLE = True
+    LMFIT_VERSION = getattr(lmfit, "__version__", "unknown")
+except ImportError:
+    LMFIT_AVAILABLE = False
+    LMFIT_VERSION = None
+    logger.warning(
+        "lmfit 未安装：Calibration Agent 将降级到 scipy.optimize.least_squares。"
+        "安装命令：pip install lmfit"
+    )
+
+# SALib: 全局灵敏度分析（Sobol/Morris 依赖）
+try:
+    import SALib  # type: ignore
+    SALIB_AVAILABLE = True
+    SALIB_VERSION = getattr(SALib, "__version__", "unknown")
+except ImportError:
+    SALIB_AVAILABLE = False
+    SALIB_VERSION = None
+    logger.warning(
+        "SALib 未安装：Sensitivity Analysis 将仅运行 local sensitivity（forward difference）。"
+        "安装命令：pip install SALib"
+    )
+
+# lxml: SBML XML 解析（sbml_parser_v2 依赖）
+try:
+    import lxml  # type: ignore
+    from lxml import etree as lxml_etree  # type: ignore
+    LXML_AVAILABLE = True
+    LXML_VERSION = getattr(lxml, "__version__", "unknown")
+except ImportError:
+    LXML_AVAILABLE = False
+    LXML_VERSION = None
+    # 不打印 warning：xml.etree.ElementTree 作为标准库后备已足够（lxml 是优化，非必需）
+    logger.info(
+        "lxml 未安装：sbml_parser_v2 将使用 xml.etree.ElementTree（标准库）解析 SBML。"
+        "如需更严格的 XML 校验，可安装：pip install lxml"
+    )
+
 
 settings = Settings()
 
