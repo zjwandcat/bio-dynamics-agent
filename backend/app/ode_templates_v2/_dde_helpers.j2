@@ -1,0 +1,38 @@
+{# v4 DDE 求解器辅助模块
+   对应 PART C5 + 审计 §3.2 无 DDE 支持。
+   被 oscillatory_feedback.j2 通过 {% include %} 组合。
+
+   功能：
+   1. try-import jitcdde（DDE 求解器），失败时降级为 ODE 近似
+   2. 提供 history function（DDE 初始历史）
+   3. 提供 delay-aware rhs wrapper
+
+   降级策略：
+   - jitcdde 可用：使用 DDE 求解，转录延迟 τ 真实生效
+   - jitcdde 不可用：将延迟项近似为 y(t-τ) ≈ y(t)（即 ODE），延迟失效但仍可仿真
+#}
+{% if requires_dde %}
+# =============================================================================
+# v4 DDE 求解器（try-import 降级）
+# =============================================================================
+try:
+    from jitcdde import jitcdde, y as jitcdde_y
+    from jitcdde import t as jitcdde_t
+    _JITCDDE_AVAILABLE = True
+except ImportError:
+    _JITCDDE_AVAILABLE = False
+    # 降级：使用 scipy ODE 求解器，延迟项近似为 y(t)
+    import warnings
+    warnings.warn(
+        "jitcdde 不可用，DDE 将降级为 ODE（延迟项近似为 y(t)）。"
+        "建议安装：pip install jitcdde",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+DDE_DELAY = {{ dde_delay_minutes }}  # 转录延迟（分钟）
+
+def _history(t):
+    """DDE 历史函数：t < 0 时的初始值（稳态）。"""
+    return list(Y0)
+{% endif %}

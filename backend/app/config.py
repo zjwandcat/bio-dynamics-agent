@@ -201,6 +201,36 @@ class Settings:
         "V4_PATHWAY_GRAPH_ENABLED", "false"
     ).lower() == "true"
 
+    # Phase 2: Reaction IR v2 + Adapter Pattern
+    # V4_REACTION_IR_ENABLED: 控制 v4 Reaction IR v2 的生成
+    #   - false（默认）：worker_ode 跳过 v4 路径，完全走 v3 network_json
+    #   - true：调用 Reaction Builder 生成 v4_reaction_ir 写入 state
+    # V4_REACTION_IR_ADAPTER_ENABLED: 控制 v4→v3 的 Adapter 同步
+    #   - false（默认）：v4_reaction_ir 生成但不同步到 network_json
+    #   - true：v4_reaction_ir 生成后，通过 v4_to_v3 Adapter 同步写入 network_json
+    # 铁律：两个 flag 均为 false 时，系统行为与 v3 完全一致
+    V4_REACTION_IR_ENABLED: bool = os.getenv(
+        "V4_REACTION_IR_ENABLED", "false"
+    ).lower() == "true"
+    V4_REACTION_IR_ADAPTER_ENABLED: bool = os.getenv(
+        "V4_REACTION_IR_ADAPTER_ENABLED", "false"
+    ).lower() == "true"
+
+    # Phase 3: Pathway Graph + ODE Template v2
+    # V4_PATHWAY_GRAPH_ENABLED: 控制 v4 Pathway Graph 的构建
+    #   - false（默认）：跳过 Pathway Graph 构建，state.v4_pathway_graph 保持 None
+    #   - true：调用 PathwayGraphBuilder 构建 v4_pathway_graph 写入 state
+    # V4_ODE_TEMPLATE_V2_ENABLED: 控制 v4 ODE Template 的渲染
+    #   - false（默认）：worker_ode 跳过 v4 路径，仍走 v3 ode_templates/
+    #   - true：调用 ODERendererV2 从 ReactionIRv2 + PathwayGraph 渲染 v4 ODE 代码
+    # 铁律：两个 flag 均为 false 时，系统行为与 v3 完全一致
+    # 依赖关系：V4_ODE_TEMPLATE_V2_ENABLED=true 时建议同时开启
+    #           V4_PATHWAY_GRAPH_ENABLED（用于提取 temporal/DDE 信息）
+    # 注意：V4_PATHWAY_GRAPH_ENABLED 已在 Phase 1 段定义（第 200 行），此处不重复
+    V4_ODE_TEMPLATE_V2_ENABLED: bool = os.getenv(
+        "V4_ODE_TEMPLATE_V2_ENABLED", "false"
+    ).lower() == "true"
+
 
 settings = Settings()
 

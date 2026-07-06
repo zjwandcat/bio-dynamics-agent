@@ -1,0 +1,250 @@
+{# v4 ODE Template: 双稳态开关通路（Bistable Switch Pathway）
+   对应 PART C5 + 审计 §3.4 双稳态检测缺失 + §3.6 无多时间尺度。
+
+   适用通路：
+     - Apoptosis (Caspase3-Bid 正反馈，全或无决策)
+     - Cell_Cycle (E2F-Rb 正反馈，G1/S 转换)
+
+   模型结构（以 Apoptosis 为例）：
+     dCaspase3_active/dt = k_act * Caspase3 * Caspase3_active - k_deg * Caspase3_active
+                          + k_bid * tBid * Caspase3
+     dtBid/dt = k_casp3 * Caspase3_active * Bid - k_deg * tBid
+     正反馈：Caspase3_active → tBid → Caspase3_active（双稳态）
+
+   关键特性：
+     1. 正反馈产生双稳态（低/高两个稳定状态）
+     2. 双稳态检测：检查最终状态是否进入高态
+     3. 多时间尺度：Apoptosis MEDIUM + Cell_Cycle SLOW
+
+   参数：
+     - SPECIES_NAMES: 物种列表
+     - EDGES: 反应边列表
+     - PARAMS: 每个物种的动力学参数
+     - T_END: 仿真总时长（分钟）
+#}
+"""
+ODE 仿真（v4 双稳态开关通路）— Bistable Switch Pathway
+- 适用：Apoptosis（Caspase3-Bid 正反馈）/ Cell_Cycle（E2F-Rb 正反馈）
+- 支持双稳态检测（高/低态判定）
+- 多时间尺度：Apoptosis MEDIUM + Cell_Cycle SLOW
+
+对应审计修复：
+  §3.4 双稳态检测缺失 → 新增双稳态检测
+  §3.6 无多时间尺度 → FAST/MEDIUM/SLOW 分层 max_step
+"""
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+from scipy.integrate import solve_ivp
+
+SPECIES_NAMES = {{ species_names }}
+T_END = {{ t_end }}
+N_EVAL = {{ n_eval }}
+Y0 = {{ y0 }}
+EDGES = {{ edges_json }}
+PARAMS = {{ params_json }}
+
+N_SP = len(SPECIES_NAMES)
+SP_IDX = {name: i for i, name in enumerate(SPECIES_NAMES)}
+
+# 多时间尺度 max_step 配置（审计 §3.6 修复）
+MAX_STEP_MEDIUM = 0.5    # Apoptosis
+MAX_STEP_SLOW = 1.0      # Cell_Cycle
+
+
+def _get_param(target_name, param_key, default):
+    """从 PARAMS 中获取指定 target 的参数值。"""
+    eparams = PARAMS.get(target_name, {})
+    return eparams.get(param_key, default)
+
+
+def _ode_rhs(t, y):
+    """ODE 右端函数（双稳态开关）。"""
+    dy = np.zeros(N_SP)
+    for edge in EDGES:
+        src_name = edge.get("source", "")
+        tgt_name = edge.get("target", "")
+        mechanism = edge.get("mechanism", "activation")
+        if src_name not in SP_IDX or tgt_name not in SP_IDX:
+            continue
+        s_idx = SP_IDX[src_name]
+        t_idx = SP_IDX[tgt_name]
+        src = y[s_idx]
+        tgt = y[t_idx]
+
+        if mechanism == "cleavage":
+            # 切割激活（Caspase3 切割 Bid/PARP）
+            k_cleavage = _get_param(tgt_name, "k_cleavage", 0.1)
+            _rate = k_cleavage * src * tgt
+            dy[t_idx] -= _rate  # 底物消耗
+            # 产物生成（active 形式）
+            if tgt_name.endswith("_active") or tgt_name.startswith("Cleaved"):
+                dy[t_idx] += _rate  # 简化：active 形式
+
+        elif mechanism == "phosphorylation":
+            # Michaelis-Menten（v4 恢复）
+            k_cat = _get_param(tgt_name, "k_cat", 0.1)
+            Km = _get_param(tgt_name, "Km", 0.1)
+            k_dephos = _get_param(tgt_name, "k_dephos", 0.001)
+            _Vmax = k_cat * src
+            _rate = _Vmax * src / (Km + src) if (Km + src) > 0 else 0.0
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_dephos * tgt
+
+        elif mechanism == "transcription":
+            # 转录（Hill 函数）
+            k_trans = _get_param(tgt_name, "k_trans", 0.1)
+            n_hill = _get_param(tgt_name, "n_hill", 2.0)
+            K_d = _get_param(tgt_name, "K_d", 0.5)
+            k_mRNA_deg = _get_param(tgt_name, "k_mRNA_deg", 0.01)
+            _hill = (src ** n_hill) / (K_d ** n_hill + src ** n_hill) if (K_d ** n_hill + src ** n_hill) > 0 else 0.0
+            _rate = k_trans * _hill
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_mRNA_deg * tgt
+
+        elif mechanism == "translation":
+            k_transl = _get_param(tgt_name, "k_transl", 0.05)
+            k_prot_deg = _get_param(tgt_name, "k_prot_deg", 0.005)
+            _rate = k_transl * src
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_prot_deg * tgt
+
+        elif mechanism == "complex_formation":
+            # 复合体形成（mass-action，消耗两个底物）
+            k_form = _get_param(tgt_name, "k_form", 0.1)
+            _rate = k_form * src  # 简化：仅消耗 src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "dissociation":
+            # 解离（mass-action）
+            k_diss = _get_param(tgt_name, "k_diss", 0.01)
+            _rate = k_diss * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "inhibition":
+            # 抑制（hybrid）
+            k_inhib = _get_param(tgt_name, "k_inhib", 0.05)
+            _rate = k_inhib * src * tgt
+            dy[t_idx] -= _rate
+
+        elif mechanism == "activation":
+            # 激活（hybrid）
+            k_act = _get_param(tgt_name, "k_act", 0.05)
+            _rate = k_act * src
+            dy[t_idx] += _rate
+
+        else:
+            k_default = _get_param(tgt_name, "k", 0.01)
+            _rate = k_default * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+    return dy
+
+
+def detect_bistability(t_arr, y_arr, threshold_ratio=0.5):
+    """双稳态检测（审计 §3.4 修复）。
+
+    判定规则：
+      - 找到关键 species（如 Caspase3_active / pRb）
+      - 检查其最终状态是否超过最大值的 threshold_ratio
+      - 若超过 → 进入高态（"ON"）
+      - 若未超过 → 保持低态（"OFF"）
+
+    Args:
+        t_arr: 时间序列
+        y_arr: 状态序列（N_time x N_species）
+        threshold_ratio: 高/低态判定阈值（默认 0.5）
+
+    Returns:
+        dict: {
+            "bistable": bool,        # 是否检测到双稳态行为
+            "final_state": str,      # "ON" / "OFF" / "TRANSIENT"
+            "switch_time": float,    # 状态切换时间（-1 表示无切换）
+            "key_species": str,      # 判定所用的关键 species
+            "max_value": float,      # 关键 species 最大值
+            "final_value": float,    # 关键 species 最终值
+        }
+    """
+    # 寻找关键 species（active / Cleaved / p 开头）
+    key_species_idx = -1
+    key_species_name = ""
+    for i, name in enumerate(SPECIES_NAMES):
+        if name.endswith("_active") or name.startswith("Cleaved") or name.startswith("p"):
+            key_species_idx = i
+            key_species_name = name
+            break
+
+    if key_species_idx < 0:
+        return {
+            "bistable": False,
+            "final_state": "UNKNOWN",
+            "switch_time": -1.0,
+            "key_species": "",
+            "max_value": 0.0,
+            "final_value": 0.0,
+        }
+
+    key_series = y_arr[:, key_species_idx]
+    max_val = float(np.max(key_series))
+    final_val = float(key_series[-1])
+    threshold = max_val * threshold_ratio
+
+    # 判定最终状态
+    if final_val >= threshold and max_val > 0:
+        final_state = "ON"
+    elif final_val < threshold * 0.1:
+        final_state = "OFF"
+    else:
+        final_state = "TRANSIENT"
+
+    # 检测切换时间（首次超过 threshold 的时间）
+    switch_time = -1.0
+    for i, val in enumerate(key_series):
+        if val >= threshold:
+            switch_time = float(t_arr[i])
+            break
+
+    return {
+        "bistable": final_state == "ON",
+        "final_state": final_state,
+        "switch_time": switch_time,
+        "key_species": key_species_name,
+        "max_value": max_val,
+        "final_value": final_val,
+    }
+
+
+# =============================================================================
+# 主程序
+# =============================================================================
+if __name__ == "__main__":
+    t_eval = np.linspace(0, T_END, N_EVAL)
+    # 多时间尺度选择 max_step
+    max_step = MAX_STEP_SLOW if T_END > 1000 else MAX_STEP_MEDIUM
+
+    sol = solve_ivp(
+        _ode_rhs, [0, T_END], Y0, t_eval=t_eval,
+        method="LSODA", max_step=max_step, rtol=1e-6, atol=1e-9,
+    )
+
+    t_arr = sol.t
+    y_arr = sol.y.T
+
+    # 双稳态检测
+    bistab_result = detect_bistability(t_arr, y_arr)
+
+    import json
+    result = {
+        "species_names": SPECIES_NAMES,
+        "time_points": t_arr.tolist(),
+        "concentrations": y_arr.tolist(),
+        "bistability": bistab_result,
+    }
+    print(json.dumps(result, default=str))

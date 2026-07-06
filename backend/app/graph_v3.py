@@ -41,6 +41,12 @@ from app.nodes_v2 import (
 # v4 迁移 Phase 1：Ontology Agent hook（仅新增 import，不修改任何 v3 导入）
 # V4_ONTOLOGY_AGENT_ENABLED=false 时 hook 节点直接返回空 dict，行为同 v3
 from app.ontology.ontology_agent import ontology_hook_node
+# v4 迁移 Phase 2：Reaction IR v2 + Adapter hook
+# V4_REACTION_IR_ENABLED=false 时 hook 直接返回空 dict，行为同 v3
+# V4_REACTION_IR_ADAPTER_ENABLED=true 时通过 Adapter 同步 network_json
+from app.adapters.adapter_registry import get_adapter_registry
+from app.config import settings as _v4_settings
+from app.reaction_ir_v2.reaction_builder import build_from_network_json
 from app.sandbox import ERR_NONE, execute_simulation_code_v2
 from app.state import BioDynamicsState
 from app.supervisor import orchestrator
@@ -756,6 +762,31 @@ def worker_ode(state: BioDynamicsState) -> dict[str, Any]:
     """ODE 方程生成 Worker。"""
     dispatches = [_dispatch_for_v3_worker("worker_ode", "in_progress")]
 
+    # === v4 迁移 Phase 2：Reaction IR v2 + Adapter hook ===
+    # V4_REACTION_IR_ENABLED=true 时，从 network_json 构建 v4_reaction_ir 写入 state
+    # V4_REACTION_IR_ADAPTER_ENABLED=true 时，通过 v4_to_v3 Adapter 同步 network_json
+    # 两个 flag 均为 false 时，hook 直接跳过，完全走 v3 路径
+    v4_hook_result = _reaction_ir_v2_hook(state)
+    if v4_hook_result:
+        # hook 产出了 v4 字段（可能含同步后的 network_json），合并到 state
+        state = {**state, **v4_hook_result}
+
+    # === v4 迁移 Phase 3：Pathway Graph hook ===
+    # V4_PATHWAY_GRAPH_ENABLED=true 时，从 v4_reaction_ir + v4_ontology_entities
+    # 构建 PathwayGraph 写入 state.v4_pathway_graph
+    # flag 关闭或 v4_reaction_ir 缺失时跳过，完全走 v3 路径
+    v4_pg_result = _pathway_graph_hook(state)
+    if v4_pg_result:
+        state = {**state, **v4_pg_result}
+
+    # === v4 迁移 Phase 3：ODE Template v2 hook ===
+    # V4_ODE_TEMPLATE_V2_ENABLED=true 时，从 v4_reaction_ir + v4_pathway_graph
+    # 渲染 v4 ODE 代码写入 state.v4_ode_system（不覆盖 state.ode_model，共存）
+    # flag 关闭或 v4_reaction_ir 缺失时跳过，仍走 v3 ode_templates/
+    v4_ode_result = _ode_template_v2_hook(state)
+    if v4_ode_result:
+        state = {**state, **v4_ode_result}
+
     # 将用户干预中的建模选项转换为额外上下文
     clarification = state.get("clarification_response")
     modeling_note = ""
@@ -777,8 +808,257 @@ def worker_ode(state: BioDynamicsState) -> dict[str, Any]:
         ode_model["code"] = code
         s6["ode_model"] = ode_model
 
+    # 将 v4_reaction_ir 透传到 s6 输出（保证下游 worker 可见）
+    if v4_hook_result and "v4_reaction_ir" in v4_hook_result:
+        s6["v4_reaction_ir"] = v4_hook_result["v4_reaction_ir"]
+
+    # 将 v4_pathway_graph 透传到 s6 输出（Phase 3 新增）
+    if v4_pg_result and "v4_pathway_graph" in v4_pg_result:
+        s6["v4_pathway_graph"] = v4_pg_result["v4_pathway_graph"]
+
+    # 将 v4_ode_system 透传到 s6 输出（Phase 3 新增）
+    # 注意：v4_ode_system.ode_code 不覆盖 s6.ode_model.code（共存策略）
+    # P4 阶段才接入 v4_ode_system.ode_code 到 sandbox 执行
+    if v4_ode_result and "v4_ode_system" in v4_ode_result:
+        s6["v4_ode_system"] = v4_ode_result["v4_ode_system"]
+
     s6["agent_dispatches"] = dispatches + (s6.get("agent_dispatches", []) or [])
     return s6
+
+
+def _reaction_ir_v2_hook(state: BioDynamicsState) -> dict[str, Any] | None:
+    """v4 Reaction IR v2 + Adapter hook（Phase 2 新增）。
+
+    策略（对应 Migration Plan §2.5）：
+    1. V4_REACTION_IR_ENABLED=false：返回 None，完全跳过 v4 路径
+    2. V4_REACTION_IR_ENABLED=true：
+       - 从 state.network_json 构建 v4_reaction_ir（通过 Reaction Builder）
+       - 写入 state.v4_reaction_ir
+    3. V4_REACTION_IR_ADAPTER_ENABLED=true：
+       - 额外调用 v4_to_v3 Adapter，将 v4_reaction_ir 转回 network_json
+       - 同步写入 state.network_json（覆盖原值）
+    4. Adapter 失败时记录 warning + 不阻塞（fail-safe）
+
+    Returns:
+        包含 v4_reaction_ir（和可选 network_json）的 dict，或 None（flag 关闭时）
+    """
+    if not _v4_settings.V4_REACTION_IR_ENABLED:
+        # flag 关闭，完全跳过 v4 路径
+        return None
+
+    network_json = state.get("network_json")
+    if not network_json:
+        logger.warning(
+            "_reaction_ir_v2_hook: network_json 为空，跳过 v4 Reaction IR 生成"
+        )
+        return None
+
+    # 从 P1 Ontology Agent 输出获取 ontology_entities（可选）
+    ontology_entities = state.get("v4_ontology_entities")
+    sbml_model_id = state.get("sbml_model_id")
+    pathway_tag = ""
+    # 从 mechanism 字段推断 pathway_tag
+    mechanism = state.get("mechanism", {}) or {}
+    pathway_tag = mechanism.get("pathway", "") or ""
+
+    # 通过 Adapter Registry 调用 v3_to_v4（带 fail-safe）
+    registry = get_adapter_registry()
+    ir = registry.safe_v3_to_v4(
+        network_json,
+        ontology_entities=ontology_entities,
+        pathway_tag=pathway_tag,
+        sbml_model_id=sbml_model_id,
+    )
+
+    if ir is None:
+        logger.warning(
+            "_reaction_ir_v2_hook: v3_to_v4 转换失败，降级到 v3 路径（fail-safe）"
+        )
+        return None
+
+    result: dict[str, Any] = {"v4_reaction_ir": ir.to_dict()}
+    logger.info(
+        "_reaction_ir_v2_hook: v4_reaction_ir 生成成功，%d species, %d reactions",
+        len(ir.species), len(ir.reactions),
+    )
+
+    # 可选：通过 v4_to_v3 Adapter 同步 network_json
+    if _v4_settings.V4_REACTION_IR_ADAPTER_ENABLED:
+        synced_json = registry.safe_v4_to_v3(ir)
+        if synced_json is not None:
+            result["network_json"] = synced_json
+            logger.info(
+                "_reaction_ir_v2_hook: v4_to_v3 Adapter 同步 network_json 成功，"
+                "%d nodes, %d edges",
+                len(synced_json.get("nodes", [])),
+                len(synced_json.get("edges", [])),
+            )
+        else:
+            logger.warning(
+                "_reaction_ir_v2_hook: v4_to_v3 Adapter 同步失败，"
+                "保留原 network_json（fail-safe）"
+            )
+
+    return result
+
+
+def _pathway_graph_hook(state: BioDynamicsState) -> dict[str, Any] | None:
+    """v4 Pathway Graph hook（Phase 3 新增）。
+
+    策略（对应 Migration Plan §Phase 3）：
+    1. V4_PATHWAY_GRAPH_ENABLED=false：返回 None，完全跳过 v4 路径
+    2. V4_PATHWAY_GRAPH_ENABLED=true：
+       - 从 state.v4_reaction_ir（P2 输出）+ state.v4_ontology_entities（P1 输出）
+         构建 PathwayGraph
+       - 写入 state.v4_pathway_graph
+    3. v4_reaction_ir 缺失时降级到 v3（fail-safe，不阻塞）
+    4. PathwayGraph 是 Reaction IR 的下游产物，不替代 network_json
+
+    Returns:
+        包含 v4_pathway_graph 的 dict，或 None（flag 关闭或输入缺失时）
+    """
+    if not _v4_settings.V4_PATHWAY_GRAPH_ENABLED:
+        return None
+
+    # P3 依赖 P2 输出（v4_reaction_ir）
+    reaction_ir = state.get("v4_reaction_ir")
+    if not reaction_ir:
+        logger.warning(
+            "_pathway_graph_hook: v4_reaction_ir 为空，跳过 Pathway Graph 构建"
+        )
+        return None
+
+    # 延迟导入，避免 v4 模块在 flag 关闭时被加载
+    try:
+        from app.pathway_graph.builder import PathwayGraphBuilder
+        from app.pathway_graph.initializer import PathwayInitializer
+    except ImportError as e:
+        logger.warning(
+            "_pathway_graph_hook: pathway_graph 模块导入失败: %s，跳过", e
+        )
+        return None
+
+    # 提取通路类别（从 mechanism.pathway 或 reaction_ir.pathway_class）
+    mechanism = state.get("mechanism", {}) or {}
+    pathway_class = mechanism.get("pathway", "") or reaction_ir.get("pathway_class", "")
+    if not pathway_class:
+        # 默认 EGFR_RTK（MVP 阶段保守选择）
+        pathway_class = "EGFR_RTK"
+        logger.info("_pathway_graph_hook: pathway_class 未指定，默认 EGFR_RTK")
+
+    # 从 initializer 获取 feedback_loops / cross_talk_edges
+    _, _, feedback_loops, cross_talk_edges = PathwayInitializer.get_pathway_init_data(
+        pathway_class
+    )
+
+    # 构建 PathwayGraph
+    ontology_entities = state.get("v4_ontology_entities")
+    builder = PathwayGraphBuilder()
+    try:
+        graph = builder.build(
+            pathway_class=pathway_class,
+            ontology_entities=ontology_entities,
+            reaction_ir=reaction_ir,
+            cross_talk_edges=cross_talk_edges,
+            feedback_loops=feedback_loops,
+        )
+    except Exception as e:
+        logger.warning(
+            "_pathway_graph_hook: PathwayGraph 构建失败: %s，跳过（fail-safe）", e
+        )
+        return None
+
+    logger.info(
+        "_pathway_graph_hook: v4_pathway_graph 构建成功，pathway=%s nodes=%d edges=%d",
+        pathway_class, len(graph.nodes), len(graph.edges),
+    )
+    return {"v4_pathway_graph": graph.to_dict()}
+
+
+def _ode_template_v2_hook(state: BioDynamicsState) -> dict[str, Any] | None:
+    """v4 ODE Template v2 hook（Phase 3 新增）。
+
+    策略（对应 Migration Plan §Phase 3）：
+    1. V4_ODE_TEMPLATE_V2_ENABLED=false：返回 None，仍走 v3 ode_templates/
+    2. V4_ODE_TEMPLATE_V2_ENABLED=true：
+       - 从 state.v4_reaction_ir + state.v4_pathway_graph 渲染 v4 ODE 代码
+       - 写入 state.v4_ode_system（不覆盖 state.ode_model，共存策略）
+    3. v4_reaction_ir 缺失时降级到 v3（fail-safe）
+    4. 渲染产物仍需 sandbox.py 执行（沙盒不变）
+
+    注意：本 hook 只生成 v4_ode_system 字段，不修改 state.ode_model。
+          下游 worker_sandbox 仍执行 state.ode_model.code（v3 路径）。
+          P4 阶段才接入 v4_ode_system.ode_code 到 sandbox。
+
+    Returns:
+        包含 v4_ode_system 的 dict，或 None（flag 关闭或输入缺失时）
+    """
+    if not _v4_settings.V4_ODE_TEMPLATE_V2_ENABLED:
+        return None
+
+    # P3 ODE 渲染依赖 P2 输出（v4_reaction_ir）
+    reaction_ir = state.get("v4_reaction_ir")
+    if not reaction_ir:
+        logger.warning(
+            "_ode_template_v2_hook: v4_reaction_ir 为空，跳过 v4 ODE 渲染"
+        )
+        return None
+
+    # 延迟导入
+    try:
+        from app.ode_renderer_v2 import ODERendererV2
+    except ImportError as e:
+        logger.warning(
+            "_ode_template_v2_hook: ode_renderer_v2 模块导入失败: %s，跳过", e
+        )
+        return None
+
+    # 提取通路类别
+    mechanism = state.get("mechanism", {}) or {}
+    pathway_class = mechanism.get("pathway", "") or reaction_ir.get("pathway_class", "")
+    if not pathway_class:
+        pathway_class = "EGFR_RTK"
+
+    pathway_graph = state.get("v4_pathway_graph")
+
+    # 渲染 v4 ODE 代码
+    try:
+        renderer = ODERendererV2()
+        ode_code = renderer.render(
+            pathway_class=pathway_class,
+            reaction_ir=reaction_ir,
+            pathway_graph=pathway_graph,
+        )
+    except Exception as e:
+        logger.warning(
+            "_ode_template_v2_hook: v4 ODE 渲染失败: %s，跳过（fail-safe）", e
+        )
+        return None
+
+    # 提取 temporal 信息（用于报告）
+    temporal_info = None
+    if pathway_graph and isinstance(pathway_graph, dict):
+        temporal_info = pathway_graph.get("temporal")
+
+    ode_system = {
+        "pathway_class": pathway_class,
+        "template_name": "oscillatory_feedback.j2" if pathway_class in {
+            "p53_signaling", "NF_kB", "TGF_beta", "JAK_STAT"
+        } else "bistable_switch.j2" if pathway_class in {"Apoptosis", "Cell_Cycle"} else "oscillatory_feedback.j2",
+        "ode_code": ode_code,
+        "temporal": temporal_info,
+        "dde_info": {
+            "requires_dde": temporal_info.get("requires_dde", False) if temporal_info else False,
+            "dde_delay_minutes": temporal_info.get("dde_delay_minutes", 0.0) if temporal_info else 0.0,
+        },
+        "version": "v4.0",
+    }
+
+    logger.info(
+        "_ode_template_v2_hook: v4_ode_system 渲染成功，pathway=%s template=%s code_len=%d",
+        pathway_class, ode_system["template_name"], len(ode_code),
+    )
+    return {"v4_ode_system": ode_system}
 
 
 _MAX_SANDBOX_RETRIES: dict[str, int] = {

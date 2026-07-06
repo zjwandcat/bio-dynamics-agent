@@ -181,3 +181,33 @@ class BioDynamicsState(TypedDict, total=False):
     #                    species_type, verified, source}], pathway_class, warnings}
     # V4_ONTOLOGY_AGENT_ENABLED=false 时保持 None，不影响 v3 流程
     v4_ontology_entities: dict
+
+    # =============================================================================
+    # v4 迁移字段（Phase 2 新增）
+    # 详见 BioDynamics_v4_Migration_Plan.md §Phase 2
+    # 共存策略：v4_reaction_ir 与 network_json 共存，不同步（除非 Adapter 开启）
+    # =============================================================================
+    # v4 Reaction IR v2 输出（Phase 2）
+    # 结构：ReactionIRv2.model_dump()，包含 species/reactions/composite_reactions/
+    #   state_machines/compartments/constraints/version/source/warnings
+    # V4_REACTION_IR_ENABLED=false 时保持 None，不影响 v3 流程
+    # V4_REACTION_IR_ADAPTER_ENABLED=true 时，通过 v4_to_v3 Adapter 同步写入 network_json
+    v4_reaction_ir: dict
+
+    # =============================================================================
+    # v4 迁移字段（Phase 3 新增）
+    # 详见 BioDynamics_v4_Migration_Plan.md §Phase 3
+    # 共存策略：v4_pathway_graph / v4_ode_system 与 network_json / code 共存
+    # =============================================================================
+    # v4 Pathway Graph 输出（Phase 3）
+    # 结构：PathwayGraph.model_dump()，包含 nodes/edges/feedback_loops/
+    #   cross_talk_edges/temporal/version/source/warnings
+    # V4_PATHWAY_GRAPH_ENABLED=false 时保持 None，不影响 v3 流程
+    # Pathway Graph 是 Reaction IR 的输入，不是 ODE 的直接输入
+    v4_pathway_graph: dict
+
+    # v4 ODE 系统输出（Phase 3）
+    # 结构：{pathway_class, template_name, ode_code, temporal, dde_info, version}
+    # V4_ODE_TEMPLATE_V2_ENABLED=false 时保持 None，仍走 v3 ode_templates/
+    # v4 ODE 渲染产物仍调用 sandbox.py 执行（沙盒不变）
+    v4_ode_system: dict

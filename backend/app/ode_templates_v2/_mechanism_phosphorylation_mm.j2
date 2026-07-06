@@ -1,0 +1,59 @@
+{# Tier 3 v4 子模块：phosphorylation 机制块（Michaelis-Menten 恢复版）
+   对应 PART C5 + 审计 §3.1 致命错误修复。
+
+   v3 致命错误（_mechanism_phosphorylation.j2）：
+     - TASK 4 错误地移除 Michaelis-Menten，强制 mass-action ONLY
+     - 导致 EGFR → pEGFR 反应失去酶饱和特性，仿真曲线失真
+
+   v4 修复：
+     - 恢复 Michaelis-Menten：v = Vmax * [substrate] / (Km + [substrate])
+     - Vmax = k_cat * [enzyme]
+     - 酶催化双分子：v = Vmax * [substrate] / (Km + [substrate])
+     - 自磷酸化：v = k_phos * [substrate]（一级近似，无酶饱和）
+     - 逆反应（去磷酸化）：v = k_dephos * [product]（一级 mass-action）
+
+   严格质量守恒：底物消耗 = 产物生成。
+
+   使用方式：
+     {% include "_mechanism_phosphorylation_mm.j2" %}
+     在 Signaling_Cascade_Phos v4 主模板中通过 {% include %} 组合。
+#}
+            # Xxx → pXxx (Michaelis-Menten 磷酸化，严格质量守恒)
+            # v4 修复：恢复 Michaelis-Menten 酶饱和动力学
+            # v3 错误：mass-action ONLY，失去酶饱和特性
+            k_cat = _get_param(tgt_name, "k_cat", _get_param(tgt_name, "k_phos", 0.1))
+            Km = _get_param(tgt_name, "Km", _get_param(tgt_name, "km", 0.1))
+            k_dephos = _get_param(tgt_name, "k_dephos", _get_param(tgt_name, "k2", 0.001))
+
+            if _is_enzyme and reaction_eq and "→" in reaction_eq:
+                # source 是酶：找底物（反应式左侧除 source 外的物种）
+                _lhs = reaction_eq.split("→", 1)[0]
+                _lhs_tokens = [s.strip() for s in _lhs.replace("+", " ").split() if s.strip()]
+                _substrate_name = ""
+                for tok in _lhs_tokens:
+                    if tok != src_name and tok in SP_IDX:
+                        _substrate_name = tok
+                        break
+                if _substrate_name:
+                    _sub_idx = SP_IDX[_substrate_name]
+                    _sub_conc = y[_sub_idx]
+                    # Michaelis-Menten: Vmax = k_cat * [enzyme]
+                    #                   v = Vmax * [substrate] / (Km + [substrate])
+                    _Vmax = k_cat * src
+                    _phos_rate = _Vmax * _sub_conc / (Km + _sub_conc) if (Km + _sub_conc) > 0 else 0.0
+                    # 消耗底物（Xxx → pXxx 的质量守恒）
+                    dy[_sub_idx] -= _phos_rate
+                else:
+                    _phos_rate = 0.0
+            else:
+                # source 是底物：消耗 source 以保证质量守恒
+                # 自磷酸化或一级近似（无酶饱和）：v = k_phos * [substrate]
+                _phos_rate = k_cat * src
+                dy[s_idx] -= _phos_rate
+            # 产物生成（严格守恒：产物增加 = 底物消耗）
+            dy[t_idx] += _phos_rate
+            # 去磷酸化消耗（pXxx → Xxx 的逆反应，一级动力学）
+            dy[t_idx] -= k_dephos * tgt
+            # 去磷酸化回收：pXxx → Xxx，补充 free form
+            if not _is_enzyme:
+                dy[s_idx] += k_dephos * tgt
