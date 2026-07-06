@@ -84,11 +84,14 @@ class TestDependencyIsolationStrategy:
         assert settings.V4_CALIBRATION_AGENT_ENABLED is False
 
     def test_try_import_does_not_raise(self):
-        """验证 try-import 模板不会因依赖缺失而抛异常（铁律：失败降级不阻塞）。"""
-        # 多次导入 config 不应抛异常
-        import importlib
-        import app.config
-        importlib.reload(app.config)
+        """验证 try-import 模板不会因依赖缺失而抛异常（铁律：失败降级不阻塞）。
+
+        注意：不使用 importlib.reload(app.config)，因为它会重建 settings 单例，
+        破坏后续测试中 @patch 对 settings 属性的 mock（导致 test_p4_hook_e2e 等
+        组合运行时失败）。改为只验证标志可读且为 bool 类型。
+        """
+        # 多次导入 config 模块本身不会抛异常（try-import 模板保证）
+        import app.config  # noqa: F401
         # 再次验证标志可读
         from app.config import (
             ROADRUNNER_AVAILABLE,
