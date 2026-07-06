@@ -255,3 +255,16 @@ class BioDynamicsState(TypedDict, total=False):
     # 结构：{unified_max_step: float, pathway_time_scales: list, alignment_strategy: str}
     # V4_CROSSTALK_COORDINATOR_ENABLED=false 时保持空，不影响 v3 流程
     v4_time_scale_alignment: dict
+
+    # =============================================================================
+    # v4 迁移字段（Phase 5 新增）
+    # 详见 spec.md Part 4 SBML Grounder Agent 重新定义（第 319-333 行）
+    # 共存策略：v4_grounding_ledger 与 v3 sbml_parsed_network 共存，不同步
+    # =============================================================================
+    # v4 SBML Grounder Agent 输出（Phase 5 / Task 5.1）
+    # 结构：{ode_equations: [{eq_id, reaction_id, sbml_reaction_id,
+    #   parameter_ids, pmids, species_ids}], species_mapping: [...],
+    #   integrity: bool, warnings: [...], statistics: {...}}
+    # V4_SBML_GROUNDER_ENABLED=false 时保持空，不影响 v3 流程
+    # 铁律：不修改 v3 任何字段；仅消费 P1/P2/P3 产出
+    v4_grounding_ledger: dict
