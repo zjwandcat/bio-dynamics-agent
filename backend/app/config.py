@@ -241,6 +241,14 @@ class Settings:
         "V4_PATHWAY_PLANNER_ENABLED", "false"
     ).lower() == "true"
 
+    # V4_PATHWAY_SPECIALIST_ENABLED: 控制 v4 Pathway Specialist 的执行
+    #   - false（默认）：跳过 Specialist 模块加载与应用，state.v4_reaction_ir 不被 Specialist 修改
+    #   - true：根据 pathway_class 调用对应 Specialist，输出通路特异 Reaction IR 片段
+    # 铁律：flag=false 时 Specialist 不执行，v3 行为完全不受影响
+    V4_PATHWAY_SPECIALIST_ENABLED: bool = os.getenv(
+        "V4_PATHWAY_SPECIALIST_ENABLED", "false"
+    ).lower() == "true"
+
 
 settings = Settings()
 
