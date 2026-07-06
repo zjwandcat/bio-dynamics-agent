@@ -41,6 +41,13 @@ from app.nodes_v2 import (
 # v4 迁移 Phase 1：Ontology Agent hook（仅新增 import，不修改任何 v3 导入）
 # V4_ONTOLOGY_AGENT_ENABLED=false 时 hook 节点直接返回空 dict，行为同 v3
 from app.ontology.ontology_agent import ontology_hook_node
+# v4 迁移 Phase 4：P4 Pathway Planner + Specialist + Cross-talk Coordinator hooks
+# 三个 hook 在 worker_mechanism 后串联注入（最小侵入，不改路由）
+# V4_PATHWAY_PLANNER_ENABLED / V4_PATHWAY_SPECIALIST_ENABLED /
+# V4_CROSSTALK_COORDINATOR_ENABLED 均默认 false，flag=false 时 hook 返回 {}
+from app.pathways.pathway_planner import pathway_planner_hook_node
+from app.pathways.specialist_hook import specialist_hook_node
+from app.crosstalk.coordinator import crosstalk_coordinator_hook_node
 # v4 迁移 Phase 2：Reaction IR v2 + Adapter hook
 # V4_REACTION_IR_ENABLED=false 时 hook 直接返回空 dict，行为同 v3
 # V4_REACTION_IR_ADAPTER_ENABLED=true 时通过 Adapter 同步 network_json
@@ -1419,6 +1426,13 @@ def build_workflow_v3() -> StateGraph:
     # V4_ONTOLOGY_AGENT_ENABLED=false 时 hook 返回空 dict，行为与 v3 完全一致
     workflow.add_node("ontology_hook", ontology_hook_node)
 
+    # v4 Phase 4：在 worker_mechanism 后串联注入 3 个 P4 hook 节点
+    # _pathway_planner_hook → _specialist_hook → _crosstalk_coordinator_hook
+    # 所有 hook flag=false 时返回 {}，state 不被修改，行为与 v3 完全一致
+    workflow.add_node("_pathway_planner_hook", pathway_planner_hook_node)
+    workflow.add_node("_specialist_hook", specialist_hook_node)
+    workflow.add_node("_crosstalk_coordinator_hook", crosstalk_coordinator_hook_node)
+
     workflow.add_edge(START, "ontology_hook")
     workflow.add_edge("ontology_hook", "pre_router")
     workflow.add_edge("pre_router", "supervisor")
@@ -1441,8 +1455,18 @@ def build_workflow_v3() -> StateGraph:
     )
 
     # 所有 Worker 完成后回到 Supervisor
+    # 注意：worker_mechanism 后先经过 P4 hook 链再回 supervisor
+    # （hook flag=false 时返回 {}，state 不变，等价于直连 supervisor）
     for worker in WORKER_NAMES:
-        workflow.add_edge(worker, "supervisor")
+        if worker == "worker_mechanism":
+            # worker_mechanism → _pathway_planner_hook → _specialist_hook
+            # → _crosstalk_coordinator_hook → supervisor
+            workflow.add_edge(worker, "_pathway_planner_hook")
+            workflow.add_edge("_pathway_planner_hook", "_specialist_hook")
+            workflow.add_edge("_specialist_hook", "_crosstalk_coordinator_hook")
+            workflow.add_edge("_crosstalk_coordinator_hook", "supervisor")
+        else:
+            workflow.add_edge(worker, "supervisor")
 
     # ClarificationNode 后也回到 Supervisor（等待 respond 回灌 clarification_response 后，Supervisor 会清除 pending 并继续）
     workflow.add_edge("clarification_node", "supervisor")

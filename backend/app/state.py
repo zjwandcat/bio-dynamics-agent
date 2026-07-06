@@ -223,6 +223,12 @@ class BioDynamicsState(TypedDict, total=False):
     # V4_PATHWAY_PLANNER_ENABLED=false 时保持 None，不影响 v3 流程
     v4_pathway_class: str
 
+    # v4 Pathway Specialist 输出（Phase 4 / Task 4.14）
+    # 结构：list[dict]，每条含 pathway_class / species / reactions /
+    #   feedback_loops / crosstalk_reactions / validation_rules / shared_species 等
+    # V4_PATHWAY_SPECIALIST_ENABLED=false 时保持 None，不影响 v3 流程
+    v4_specialist_outputs: list[dict]
+
     # =============================================================================
     # v4 迁移字段（Phase 4 / Task 4.13 - Cross-talk Coordinator）
     # 详见 spec.md Part 3 Cross-talk Coordinator Agent（第 262-272 行）
