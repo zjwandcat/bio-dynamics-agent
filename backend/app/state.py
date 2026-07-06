@@ -268,3 +268,11 @@ class BioDynamicsState(TypedDict, total=False):
     # V4_SBML_GROUNDER_ENABLED=false 时保持空，不影响 v3 流程
     # 铁律：不修改 v3 任何字段；仅消费 P1/P2/P3 产出
     v4_grounding_ledger: dict
+
+    # v4 Validation Pyramid 报告（Phase 5 / Task 5.2+）
+    # 结构：{level1: {pass, mass_conservation_error, non_negative_violations,
+    #   steady_state_check, numerical_stability, constraint_violations},
+    #   level2: {...}, level3: {...}, ...}
+    # V4_VALIDATION_PYRAMID_ENABLED=false 时保持空，不影响 v3 流程
+    # 铁律：不修改 v3 任何字段；仅消费 P1/P2/P3 产出
+    v4_validation_report: dict
