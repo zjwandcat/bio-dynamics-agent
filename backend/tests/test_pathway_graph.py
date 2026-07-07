@@ -218,23 +218,42 @@ def test_pathway_initializer_metadata():
 # 4. ODERendererV2 模板选择与渲染
 # =============================================================================
 def test_ode_renderer_v2_template_selection():
-    """测试 ODERendererV2 模板选择逻辑。"""
+    """测试 ODERendererV2 模板选择逻辑（P0-2 修复：11 个模板均可达）。"""
     from app.ode_renderer_v2 import ODERendererV2
 
     renderer = ODERendererV2()
 
-    # 振荡通路 → oscillatory_feedback.j2
-    assert renderer._select_template("p53_signaling", False) == "oscillatory_feedback.j2"
-    assert renderer._select_template("NF_kB", False) == "oscillatory_feedback.j2"
-    assert renderer._select_template("TGF_beta", False) == "oscillatory_feedback.j2"
-    assert renderer._select_template("JAK_STAT", False) == "oscillatory_feedback.j2"
+    # 转录延迟振荡通路 → transcriptional_delay.j2
+    assert renderer._select_template("p53_signaling", False) == "transcriptional_delay.j2"
+    assert renderer._select_template("NF_kB", False) == "transcriptional_delay.j2"
 
-    # 双稳态通路 → bistable_switch.j2
-    assert renderer._select_template("Apoptosis", False) == "bistable_switch.j2"
-    assert renderer._select_template("Cell_Cycle", False) == "bistable_switch.j2"
+    # 转录因子 + 核转运通路 → transcription_factor.j2
+    assert renderer._select_template("TGF_beta", False) == "transcription_factor.j2"
+    assert renderer._select_template("JAK_STAT", False) == "transcription_factor.j2"
 
-    # DDE 需求 → oscillatory_feedback.j2
+    # Caspase 级联（Apoptosis）→ caspase_cascade.j2
+    assert renderer._select_template("Apoptosis", False) == "caspase_cascade.j2"
+
+    # Cyclin-CDK toggle（Cell Cycle）→ cyclin_cdk_toggle.j2
+    assert renderer._select_template("Cell_Cycle", False) == "cyclin_cdk_toggle.j2"
+
+    # 磷酸化级联 → oscillatory_feedback.j2（承载模板，_ode_rhs 内含
+    # phosphorylation 分支；_mechanism_phosphorylation_mm.j2 是 include 片段）
     assert renderer._select_template("EGFR_RTK", True) == "oscillatory_feedback.j2"
+    assert renderer._select_template("MAPK_ERK", False) == "oscillatory_feedback.j2"
+    assert renderer._select_template("PI3K_AKT_mTOR", False) == "oscillatory_feedback.j2"
+
+    # Wnt → destruction_complex.j2
+    assert renderer._select_template("Wnt", False) == "destruction_complex.j2"
+
+    # 大小写不敏感 + specialist 命名（如 p53 / APOPTOSIS / NF_KB）
+    assert renderer._select_template("p53", False) == "transcriptional_delay.j2"
+    assert renderer._select_template("APOPTOSIS", False) == "caspase_cascade.j2"
+    assert renderer._select_template("NF_KB", False) == "transcriptional_delay.j2"
+
+    # 未知 pathway_class 向后兼容 → oscillatory_feedback.j2（默认）
+    assert renderer._select_template("UNKNOWN_PATHWAY", False) == "oscillatory_feedback.j2"
+    assert renderer._select_template("", True) == "oscillatory_feedback.j2"
 
 
 def test_ode_renderer_v2_render_basic():

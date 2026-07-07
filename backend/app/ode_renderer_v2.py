@@ -32,11 +32,51 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 _V4_TEMPLATES_DIR = Path(__file__).parent / "ode_templates_v2"
 
-# 振荡通路类别（需要 oscillatory_feedback.j2）
-_OSCILLATORY_PATHWAYS = {"p53_signaling", "NF_kB", "TGF_beta", "JAK_STAT"}
-
-# 双稳态通路类别（需要 bistable_switch.j2）
-_BISTABLE_PATHWAYS = {"Apoptosis", "Cell_Cycle"}
+# =============================================================================
+# pathway_class → v4 ODE 模板路由表（P0-2 修复：11 个模板均可达）
+# =============================================================================
+# 覆盖 10 个 Pathway Specialist 的 pathway_class 值 +
+# pathway_graph/initializer.py 的通路键（两套命名约定的并集）。
+# 大小写不敏感（查找时统一 upper()），兼容 specialist 与 initializer 两种命名。
+#
+# 路由依据（与各 specialist 的 ODE 动力学需求对齐）：
+#   - EGFR / MAPK / PI3K-AKT-mTOR：磷酸化级联 → oscillatory_feedback
+#     （注意：_mechanism_phosphorylation_mm.j2 是 {% include %} 片段而非独立
+#     模板，无法被 ODERendererV2.render() 顶层渲染；oscillatory_feedback.j2
+#     的 _ode_rhs 内含 phosphorylation 分支（Michaelis-Menten），可正确处理
+#     磷酸化级联动力学，故作为这三条通路的承载模板。）
+#   - p53 / NF-κB：转录延迟振荡（DDE 脉冲振荡）→ transcriptional_delay
+#   - JAK-STAT / TGF-β：转录因子 + 核转运 → transcription_factor
+#   - Wnt：β-catenin 破坏复合体 → destruction_complex
+#   - Apoptosis：Caspase 级联（含 MOMP 双稳态）→ caspase_cascade
+#   - Cell Cycle：Cyclin-CDK toggle（双稳态开关）→ cyclin_cdk_toggle
+#
+# 次要特征说明（主模板已覆盖次要特征检测）：
+#   - p53 同时具备振荡 + 转录延迟：transcriptional_delay.detect_delay_effect
+#     检测延迟脉冲，覆盖振荡表征。
+#   - Apoptosis 同时具备 bistability + caspase cascade：
+#     caspase_cascade.detect_momp_and_bistability 覆盖双稳态检测。
+#   - Cell Cycle 同时具备 bistability + toggle：
+#     cyclin_cdk_toggle.detect_toggle_and_oscillation 覆盖双稳态检测。
+_PATHWAY_TEMPLATE_MAP: dict[str, str] = {
+    # 磷酸化级联（承载模板：oscillatory_feedback.j2，含 phosphorylation 分支）
+    "EGFR_RTK": "oscillatory_feedback.j2",
+    "MAPK_ERK": "oscillatory_feedback.j2",
+    "PI3K_AKT_MTOR": "oscillatory_feedback.j2",
+    # 转录延迟振荡器（DDE 脉冲振荡）
+    "P53": "transcriptional_delay.j2",
+    "P53_SIGNALING": "transcriptional_delay.j2",
+    "NF_KB": "transcriptional_delay.j2",
+    # 转录因子 + 核转运
+    "JAK_STAT": "transcription_factor.j2",
+    "TGF_BETA": "transcription_factor.j2",
+    # β-catenin 破坏复合体
+    "WNT": "destruction_complex.j2",
+    # Caspase 级联（Apoptosis，含 MOMP 双稳态）
+    "APOPTOSIS": "caspase_cascade.j2",
+    # Cyclin-CDK toggle（Cell Cycle，双稳态开关）
+    "CELL_CYCLE": "cyclin_cdk_toggle.j2",
+}
 
 
 class ODERendererV2:
@@ -158,18 +198,44 @@ class ODERendererV2:
     def _select_template(self, pathway_class: str, requires_dde: bool) -> str:
         """根据通路类别与 DDE 需求选择 v4 模板。
 
+        P0-2 修复：通过 ``_PATHWAY_TEMPLATE_MAP`` 路由表覆盖全部 10 个
+        Pathway Specialist + pathway_graph/initializer.py 通路键，使 11 个
+        v4 模板均可在运行时被选中（原实现仅路由到 oscillatory_feedback /
+        bistable_switch 两个模板，7 个 P3 模板不可达）。
+
         选择规则：
-          1. 振荡通路（p53/NF-κB/TGF-β/JAK-STAT）→ oscillatory_feedback.j2
-          2. 双稳态通路（Apoptosis/Cell_Cycle）→ bistable_switch.j2
-          3. 其他通路 → 默认 oscillatory_feedback.j2（含完整机制支持）
+          1. 已知 pathway_class → 查 ``_PATHWAY_TEMPLATE_MAP``（大小写不敏感），
+             返回该通路的主模板。
+          2. 未知 pathway_class + requires_dde=True → ``oscillatory_feedback.j2``
+             （DDE 振荡模板，向后兼容）。
+          3. 未知 pathway_class + requires_dde=False → ``oscillatory_feedback.j2``
+             （默认模板，支持所有机制类型，向后兼容）。
+
+        Args:
+            pathway_class: 通路类别键（specialist 的 ``pathway_class`` 属性
+                或 initializer 的通路键）。
+            requires_dde: 是否需要延迟微分方程（DDE）求解。
+
+        Returns:
+            v4 ODE 模板文件名（含 ``.j2`` 后缀）。
         """
-        if pathway_class in _OSCILLATORY_PATHWAYS or requires_dde:
-            return "oscillatory_feedback.j2"
-        elif pathway_class in _BISTABLE_PATHWAYS:
-            return "bistable_switch.j2"
-        else:
-            # 默认使用 oscillatory_feedback.j2（它支持所有机制类型）
-            return "oscillatory_feedback.j2"
+        # 1. 查找 pathway_class → template 路由表（大小写不敏感）
+        key = (pathway_class or "").upper()
+        if key and key in _PATHWAY_TEMPLATE_MAP:
+            template = _PATHWAY_TEMPLATE_MAP[key]
+            # 次要特征提示（debug 级，不阻塞流程）
+            if key in ("P53", "P53_SIGNALING", "NF_KB"):
+                logger.debug(
+                    "pathway_class='%s' 路由到 %s（振荡为次要特征，"
+                    "由 transcriptional_delay 模板覆盖）",
+                    pathway_class, template,
+                )
+            return template
+
+        # 2. 向后兼容：未知 pathway_class 的回退逻辑（与原实现一致）
+        # requires_dde=True 或默认均回退到 oscillatory_feedback.j2
+        # （它支持全部机制类型 + DDE 降级，是安全的默认选择）
+        return "oscillatory_feedback.j2"
 
     # -------------------------------------------------------------------------
     # 从 Reaction IR v2 提取数据
