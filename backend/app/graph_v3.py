@@ -55,6 +55,13 @@ from app.crosstalk.coordinator import crosstalk_coordinator_hook_node
 # flag=false 时 hook 返回 {}，行为同 v3
 from app.sbml_grounder.grounder_agent import sbml_grounder_hook_node
 from app.validation_v2.validation_agent import validation_pyramid_hook_node
+# v4 迁移 Phase 6：Hypothesis Agent + Dynamic Router hooks（P6 / Task 6.7）
+# _hypothesis_agent_hook: 在 worker_report 前注入，生成 v4_hypothesis_list
+# _dynamic_router_hook: 在路由层注入，记录 13 Agent 调度（v4_agent_dispatches）
+# V4_HYPOTHESIS_AGENT_ENABLED / V4_DYNAMIC_ROUTING_ENABLED 均默认 false，
+# flag=false 时 hook 返回 {}，行为同 v3
+from app.hypothesis.hypothesis_agent import hypothesis_agent_hook_node
+from app.agent_orchestration.dynamic_router import dynamic_router_hook_node
 # v4 迁移 Phase 2：Reaction IR v2 + Adapter hook
 # V4_REACTION_IR_ENABLED=false 时 hook 直接返回空 dict，行为同 v3
 # V4_REACTION_IR_ADAPTER_ENABLED=true 时通过 Adapter 同步 network_json
@@ -1450,8 +1457,15 @@ def build_workflow_v3() -> StateGraph:
     workflow.add_node("_sbml_grounder_hook", sbml_grounder_hook_node)
     workflow.add_node("_validation_pyramid_hook", validation_pyramid_hook_node)
 
+    # v4 Phase 6：P6 hook 节点
+    # _dynamic_router_hook: 路由层注入，记录 13 Agent 调度（V4_DYNAMIC_ROUTING_ENABLED=false 时返回 {}）
+    # _hypothesis_agent_hook: 在 worker_report 前注入，生成假设列表（V4_HYPOTHESIS_AGENT_ENABLED=false 时返回 {}）
+    workflow.add_node("_dynamic_router_hook", dynamic_router_hook_node)
+    workflow.add_node("_hypothesis_agent_hook", hypothesis_agent_hook_node)
+
     workflow.add_edge(START, "ontology_hook")
-    workflow.add_edge("ontology_hook", "pre_router")
+    workflow.add_edge("ontology_hook", "_dynamic_router_hook")
+    workflow.add_edge("_dynamic_router_hook", "pre_router")
     workflow.add_edge("pre_router", "supervisor")
 
     workflow.add_conditional_edges(
@@ -1466,10 +1480,14 @@ def build_workflow_v3() -> StateGraph:
             "worker_ode": "worker_ode",
             "worker_sandbox": "worker_sandbox",
             "worker_validator": "worker_validator",
-            "worker_report": "worker_report",
+            "worker_report": "_hypothesis_agent_hook",
             END: END,
         },
     )
+
+    # v4 Phase 6: hypothesis hook → worker_report
+    # V4_HYPOTHESIS_AGENT_ENABLED=false 时 hook 返回 {}，等价于直连 worker_report
+    workflow.add_edge("_hypothesis_agent_hook", "worker_report")
 
     # 所有 Worker 完成后回到 Supervisor
     # 注意：worker_mechanism 后先经过 P4 hook 链再回 supervisor

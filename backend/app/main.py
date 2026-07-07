@@ -546,6 +546,17 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
                 if isinstance(output, dict) and output.get("mcp_tokens_saved"):
                     mcp_tokens_saved = max(mcp_tokens_saved, int(output["mcp_tokens_saved"]))
 
+                # v4 Phase 6: 假设生成完成事件（前端可不订阅）
+                # Hypothesis Agent hook 输出 v4_hypothesis_generated=True 时发射
+                if isinstance(output, dict) and output.get("v4_hypothesis_generated"):
+                    yield _sse_event({
+                        "event": "v4_hypothesis_generated",
+                        "data": {
+                            "hypothesis_count": len(output.get("v4_hypothesis_list", [])),
+                            "hypothesis_list": output.get("v4_hypothesis_list", []),
+                        },
+                    })
+
                 # 各 Worker 输出映射到前端事件
                 async for sse in _emit_worker_outputs(node_name, output):
                     yield sse
