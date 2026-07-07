@@ -10,9 +10,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.config import rerank_manager, settings
 from app.graph_v3 import (
@@ -21,6 +21,7 @@ from app.graph_v3 import (
     set_clarification_response,
     set_clarification_stop,
 )
+from app.logging_config import setup_logging
 from app.schemas import (
     ChatRequest,
     ClarificationResponseRequest,
@@ -35,6 +36,11 @@ from app.rag_collections import get_rag_collections
 
 
 logger = logging.getLogger(__name__)
+
+# Task G.2：在导入阶段统一配置 JSON 结构化日志，确保所有后续日志（含
+# uvicorn / langgraph 子 logger）均按统一格式输出。setup_logging 幂等，
+# 重复调用不会叠加 handler。
+setup_logging(level=settings.LOG_LEVEL, json_output=settings.LOG_JSON)
 
 
 @asynccontextmanager
@@ -67,6 +73,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Task G.2：全局异常处理中间件
+# 捕获所有未被路由层显式处理的异常，统一返回 500 JSON 响应并记录结构化日志，
+# 避免未捕获异常以 HTML 500 traceback 形式泄露给前端。
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "detail": str(exc)},
+    )
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -564,7 +582,11 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
 
         except Exception as exc:
             logger.exception("v3 工作流执行异常")
-            yield _sse_event({"event": "error", "data": f"工作流执行异常：{exc}"})
+            # Task G.2：SSE 错误事件统一结构化格式 {message, code}，便于前端按 code 分支处理
+            yield _sse_event({
+                "event": "error",
+                "data": {"message": f"工作流执行异常：{exc}", "code": "workflow_exception"},
+            })
         finally:
             if latest_token_usage:
                 payload = dict(latest_token_usage)
@@ -803,8 +825,12 @@ def _v4_benchmark_event_stream():
             yield _sse_event({"event": "benchmark_complete", "data": summary})
         except Exception as exc:
             logger.exception("v4 benchmark stream failed")
+            # Task G.2：SSE 错误事件统一结构化格式 {message, code}
             yield _sse_event(
-                {"event": "error", "data": f"benchmark stream error: {exc}"}
+                {
+                    "event": "error",
+                    "data": {"message": f"benchmark stream error: {exc}", "code": "benchmark_stream_error"},
+                }
             )
         finally:
             yield _sse_event({"event": "end", "data": ""})

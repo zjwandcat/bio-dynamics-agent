@@ -43,6 +43,12 @@ class Settings:
     # CORS 配置
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
+    # 日志配置（Task G.2：统一 JSON 结构化日志）
+    # LOG_LEVEL: 控制日志级别（DEBUG/INFO/WARNING/ERROR），不区分大小写，非法值回退 INFO
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    # LOG_JSON: True 使用 JSON 格式化器（生产推荐，便于日志聚合）；False 使用纯文本（本地调试）
+    LOG_JSON: bool = os.getenv("LOG_JSON", "true").lower() == "true"
+
     # ChromaDB 向量库配置（本地持久化，无需 Docker）
     _chroma_persist_dir_raw: str = os.getenv(
         "CHROMA_PERSIST_DIR", str(BASE_DIR / "data" / "vector_db")
