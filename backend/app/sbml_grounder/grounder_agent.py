@@ -24,6 +24,7 @@ import logging
 from typing import Any
 
 from app.config import settings
+from app.state import set_v4_state
 from app.sbml_grounder.alias_resolution import AliasResolver
 from app.sbml_grounder.canonical_species import CanonicalSpeciesResolver
 from app.sbml_grounder.five_level_mapping import FiveLevelMapper
@@ -212,7 +213,11 @@ def sbml_grounder_hook_node(state: dict[str, Any]) -> dict[str, Any]:
 
     try:
         agent = SBMLGrounderAgent()
-        return agent.ground(state)
+        result = agent.ground(state)
+        # Task B.2: 双写 v4_grounding_ledger → v4_state["grounding"]["ledger"]
+        if "v4_grounding_ledger" in result:
+            set_v4_state(result, "grounding", "ledger", result["v4_grounding_ledger"])
+        return result
     except Exception as exc:
         # 任何失败都不阻塞流水线，记录 warning 并返回空更新
         logger.warning("SBML Grounder hook 失败，降级跳过: %s", exc)

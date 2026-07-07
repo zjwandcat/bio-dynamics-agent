@@ -27,6 +27,7 @@ from typing import Any
 from app.crosstalk.crosstalk_edges import CrossTalkEdgeInjector
 from app.crosstalk.shared_species_sync import SharedSpeciesSync
 from app.crosstalk.time_scale_aligner import TimeScaleAligner
+from app.state import set_v4_state
 
 logger = logging.getLogger(__name__)
 
@@ -532,12 +533,13 @@ def crosstalk_coordinator_hook_node(state: dict[str, Any]) -> dict[str, Any]:
         )
 
         # 仅返回 v4 字段（不含 v4_pathway_tag_isolation，避免污染 state）
-        return {
-            "v4_crosstalk_edges": result.get("v4_crosstalk_edges", []),
-            "v4_shared_species": result.get("v4_shared_species", []),
-            "v4_shared_species_sync": result.get("v4_shared_species_sync", {}),
-            "v4_time_scale_alignment": result.get("v4_time_scale_alignment", {}),
-        }
+        # Task B.2: 双写 4 个 crosstalk 字段 → v4_state["specialist"][*]
+        result_update: dict[str, Any] = {}
+        set_v4_state(result_update, "specialist", "crosstalk_edges", result.get("v4_crosstalk_edges", []))
+        set_v4_state(result_update, "specialist", "shared_species", result.get("v4_shared_species", []))
+        set_v4_state(result_update, "specialist", "shared_species_sync", result.get("v4_shared_species_sync", {}))
+        set_v4_state(result_update, "specialist", "time_scale_alignment", result.get("v4_time_scale_alignment", {}))
+        return result_update
     except Exception as exc:
         # 任何失败都不阻塞流水线，记录 warning 并返回空更新
         logger.warning("CrossTalkCoordinator hook 失败，降级跳过: %s", exc)

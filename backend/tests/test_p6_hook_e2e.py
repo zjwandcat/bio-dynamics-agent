@@ -669,8 +669,8 @@ class TestP6HookE2E(unittest.TestCase):
 
         # v3 字段不被修改
         self.assertEqual(state["network_json"], original_network_json)
-        # 返回的 dict 仅含 v4_agent_dispatches
-        self.assertTrue(set(result.keys()) <= {"v4_agent_dispatches"})
+        # 返回的 dict 仅含 v4_agent_dispatches（和 Task B.2 双写的 v4_state）
+        self.assertTrue(set(result.keys()) <= {"v4_agent_dispatches", "v4_state"})
 
     # =========================================================================
     # 用例 15：_hypothesis_agent_hook 节点存在于构建的 workflow

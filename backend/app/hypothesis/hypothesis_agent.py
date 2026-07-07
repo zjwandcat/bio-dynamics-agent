@@ -28,6 +28,7 @@ import logging
 from typing import Any
 
 from app.config import settings
+from app.state import set_v4_state
 from app.hypothesis.hypothesis_generator import HypothesisGenerator
 
 logger = logging.getLogger(__name__)
@@ -490,10 +491,11 @@ def hypothesis_agent_hook_node(state: dict[str, Any]) -> dict[str, Any]:
         agent = HypothesisAgent()
         hypothesis_list = agent.generate(state)
         # v4_hypothesis_generated 标志位（Task 6.7 SSE 事件消费）
-        return {
-            "v4_hypothesis_list": hypothesis_list,
-            "v4_hypothesis_generated": True,
-        }
+        # Task B.2: 双写 v4_hypothesis_list / v4_hypothesis_generated → v4_state["hypothesis"]
+        result_update: dict[str, Any] = {}
+        set_v4_state(result_update, "hypothesis", "list", hypothesis_list)
+        set_v4_state(result_update, "hypothesis", "generated", True)
+        return result_update
     except Exception as exc:
         # 任何失败都不阻塞流水线，记录 warning 并返回空更新
         logger.warning("Hypothesis Agent hook 失败，降级跳过: %s", exc)

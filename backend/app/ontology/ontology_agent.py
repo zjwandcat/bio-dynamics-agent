@@ -15,6 +15,7 @@ import re
 from typing import Any
 
 from app.config import settings
+from app.state import set_v4_state
 from app.ontology.chebi_client import query_chebi
 from app.ontology.go_client import query_go
 from app.ontology.hgnc_client import query_hgnc
@@ -401,7 +402,10 @@ def ontology_hook_node(state: dict[str, Any]) -> dict[str, Any]:
             result.get("pathway_class"),
         )
         # 仅写入 v4 字段，不触碰任何 v3 字段
-        return {"v4_ontology_entities": result}
+        # Task B.2: 双写 v4_ontology_entities → v4_state["ontology"]["entities"]
+        result_update: dict[str, Any] = {}
+        set_v4_state(result_update, "ontology", "entities", result)
+        return result_update
     except Exception as exc:
         # 任何失败都不阻塞流水线，记录 warning 并返回空更新
         logger.warning("Ontology Agent hook 失败，降级跳过: %s", exc)

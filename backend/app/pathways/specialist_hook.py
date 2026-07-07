@@ -28,6 +28,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.state import set_v4_state
+
 logger = logging.getLogger(__name__)
 
 
@@ -211,7 +213,10 @@ def specialist_hook_node(state: dict[str, Any]) -> dict[str, Any]:
             )
             return {}
 
-        return {"v4_specialist_outputs": specialist_outputs}
+        # Task B.2: 双写 v4_specialist_outputs → v4_state["specialist"]["outputs"]
+        result_update: dict[str, Any] = {}
+        set_v4_state(result_update, "specialist", "outputs", specialist_outputs)
+        return result_update
     except Exception as exc:
         # 任何失败都不阻塞流水线，记录 warning 并返回空更新
         logger.warning("specialist_hook 失败，降级跳过: %s", exc)

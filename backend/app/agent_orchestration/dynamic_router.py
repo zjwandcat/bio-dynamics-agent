@@ -27,6 +27,7 @@ from app.agent_orchestration.fail_safe import (
     FailSafeDispatcher,
 )
 from app.agent_orchestration.pathway_class_dispatcher import PathwayClassDispatcher
+from app.state import set_v4_state
 
 logger = logging.getLogger(__name__)
 
@@ -442,6 +443,9 @@ def dynamic_router_hook_node(state: dict) -> dict:
             "Dynamic Router hook 完成：v4_agent_dispatches 含 %d 条记录",
             len(update.get("v4_agent_dispatches", [])),
         )
+        # Task B.2: 双写 v4_agent_dispatches → v4_state["router"]["dispatches"]
+        if "v4_agent_dispatches" in update:
+            set_v4_state(update, "router", "dispatches", update["v4_agent_dispatches"])
         return update
     except Exception as exc:
         # 任何失败都不阻塞流水线，记录 warning 并返回空更新

@@ -805,8 +805,8 @@ class TestDynamicRouterHookNode:
         }
         original = {k: v for k, v in state.items()}
         update = dynamic_router_hook_node(state)
-        # 仅返回 v4_agent_dispatches
-        assert set(update.keys()) <= {"v4_agent_dispatches"}
+        # 仅返回 v4_agent_dispatches（和 Task B.2 双写的 v4_state）
+        assert set(update.keys()) <= {"v4_agent_dispatches", "v4_state"}
         # v3 字段未被修改
         assert state["user_input"] == original["user_input"]
         assert state["network_json"] == original["network_json"]

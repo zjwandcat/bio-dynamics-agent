@@ -39,6 +39,7 @@ import logging
 from typing import Any, Callable
 
 from app.config import SALIB_AVAILABLE, settings
+from app.state import set_v4_state
 from app.sensitivity.local_sensitivity import (
     LocalSensitivityAnalyzer,
     LocalSensitivityResult,
@@ -380,7 +381,11 @@ def sensitivity_hook_node(state: dict[str, Any]) -> dict[str, Any]:
 
     try:
         agent = SensitivityAnalyzer()
-        return agent.analyze(state)
+        result = agent.analyze(state)
+        # Task B.2: 双写 v4_sensitivity_report → v4_state["validation"]["sensitivity_report"]
+        if "v4_sensitivity_report" in result:
+            set_v4_state(result, "validation", "sensitivity_report", result["v4_sensitivity_report"])
+        return result
     except Exception as exc:
         # 任何失败都不阻塞流水线，记录 warning 并返回空更新
         logger.warning("Sensitivity Analysis hook 失败，降级跳过: %s", exc)

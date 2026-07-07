@@ -22,6 +22,7 @@ import re
 from typing import Any
 
 from app.config import llm, settings, strip_markdown_json
+from app.state import set_v4_state
 from app.ontology.pathway_registry import (
     PATHWAY_REGISTRY,
     PathwayEntry,
@@ -356,10 +357,11 @@ def pathway_planner_hook_node(state: dict[str, Any]) -> dict[str, Any]:
         )
 
         # 仅写入 v4 字段，不触碰任何 v3 字段
-        return {
-            "v4_pathway_class": pathway_class,
-            "v4_pathway_graph": pathway_graph,
-        }
+        # Task B.2: 双写 v4_pathway_class / v4_pathway_graph → v4_state
+        result_update: dict[str, Any] = {}
+        set_v4_state(result_update, "pathway_class", "class", pathway_class)
+        set_v4_state(result_update, "pathway_graph", "graph", pathway_graph)
+        return result_update
     except Exception as exc:
         # 任何失败都不阻塞流水线，记录 warning 并返回空更新
         logger.warning("Pathway Planner hook 失败，降级跳过: %s", exc)

@@ -33,6 +33,7 @@ import logging
 from typing import Any
 
 from app.config import settings
+from app.state import set_v4_state
 from app.validation_v2.level1_internal import Level1InternalValidator
 from app.validation_v2.level2_sbml import Level2SBMLValidator
 from app.validation_v2.level3_crosstalk import Level3CrossPathwayValidator
@@ -324,7 +325,9 @@ def validation_pyramid_hook_node(state: dict[str, Any]) -> dict[str, Any]:
         agent = ValidationAgent()
         report = agent.validate(state)
 
-        update: dict[str, Any] = {"v4_validation_report": report}
+        update: dict[str, Any] = {}
+        # Task B.2: 双写 v4_validation_report → v4_state["validation"]["report"]
+        set_v4_state(update, "validation", "report", report)
 
         # 失败短路：overall_pass=False 时设置 pending_clarification
         if not report.get("overall_pass", False):

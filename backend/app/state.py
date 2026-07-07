@@ -16,6 +16,26 @@ def reset_if_empty_list(existing: list, new: list) -> list:
     return (existing or []) + new
 
 
+def merge_v4_state(existing: dict | None, new: dict | None) -> dict:
+    """自定义 reducer：v4_state 按 group 一级 deep-merge。
+
+    解决多 hook 各自返回 ``{"v4_state": {group: {...}}}`` 时，LangGraph
+    默认 dict 替换语义会丢失前序 hook 写入的 group 问题。
+
+    合并策略：group 级 dict.update（同 group 内 new 覆盖 existing 的同名 key，
+    不同 key 保留）。非 dict 值直接覆盖。
+    """
+    result = dict(existing or {})
+    for group, sub in (new or {}).items():
+        if isinstance(sub, dict):
+            merged = dict(result.get(group, {}) or {})
+            merged.update(sub)
+            result[group] = merged
+        else:
+            result[group] = sub
+    return result
+
+
 class BioDynamicsState(TypedDict, total=False):
     """LangGraph 全局状态。所有字段均为可选，节点返回时只需提供发生变化的键值对。"""
 
@@ -330,3 +350,155 @@ class BioDynamicsState(TypedDict, total=False):
     # V4_DYNAMIC_ROUTING_ENABLED=false 时保持空，不影响 v3 流程
     # 铁律：不修改 v3 任何字段；仅消费 v4_pathway_class / v4_pathway_graph
     v4_agent_dispatches: list[dict]
+
+    # =============================================================================
+    # v4_state: 17 个 v4_ 字段的统一容器（Task B.2 合并）
+    # 详见 BioDynamics_v4_Migration_Plan.md / RC Sprint Task B.2
+    # 结构：按 phase 分组的嵌套 dict（见 V4_FIELD_MAP）
+    # 共存策略：v4_state 与 17 个 v4_ 平铺字段双写（dual-write），保证向后兼容
+    #           老代码读 state["v4_ontology_entities"] 仍可用（通过 get_v4 / get_v4_state 回退）
+    # reducer：merge_v4_state 按 group 一级 deep-merge，避免多 hook 返回值互相覆盖
+    # =============================================================================
+    v4_state: Annotated[dict, merge_v4_state]
+
+
+# =============================================================================
+# Task B.2: v4_state 字段合并工具函数
+# =============================================================================
+# V4_FIELD_MAP: 17 个 v4_ 平铺字段 → (group, key) 的映射
+# group 按 phase 划分（与 BioDynamics_v4_Migration_Plan.md 对齐）
+V4_FIELD_MAP: dict[str, tuple[str, str]] = {
+    # Phase 1: Ontology
+    "v4_ontology_entities":      ("ontology", "entities"),
+    # Phase 2: Reaction IR
+    "v4_reaction_ir":            ("reaction_ir", "ir"),
+    # Phase 3: Pathway Graph + ODE
+    "v4_pathway_graph":          ("pathway_graph", "graph"),
+    "v4_ode_system":             ("pathway_graph", "ode_system"),
+    # Phase 4: Pathway Class + Specialist + Cross-talk
+    "v4_pathway_class":          ("pathway_class", "class"),
+    "v4_specialist_outputs":     ("specialist", "outputs"),
+    "v4_crosstalk_edges":        ("specialist", "crosstalk_edges"),
+    "v4_shared_species":         ("specialist", "shared_species"),
+    "v4_shared_species_sync":    ("specialist", "shared_species_sync"),
+    "v4_time_scale_alignment":   ("specialist", "time_scale_alignment"),
+    # Phase 5: Grounding + Validation + Calibration + Sensitivity
+    "v4_grounding_ledger":       ("grounding", "ledger"),
+    "v4_validation_report":      ("validation", "report"),
+    "v4_calibration_result":     ("validation", "calibration_result"),
+    "v4_sensitivity_report":     ("validation", "sensitivity_report"),
+    # Phase 6: Hypothesis + Dynamic Router
+    "v4_hypothesis_list":        ("hypothesis", "list"),
+    "v4_hypothesis_generated":   ("hypothesis", "generated"),
+    "v4_agent_dispatches":       ("router", "dispatches"),
+}
+
+# 反向映射：(group, key) → 平铺字段名（供 get_v4_state 内部使用）
+_V4_REVERSE_MAP: dict[tuple[str, str], str] = {
+    (g, k): flat for flat, (g, k) in V4_FIELD_MAP.items()
+}
+
+
+def set_v4_state(target: dict, group: str, key: str, value) -> None:
+    """双写：同时写入 v4_state[group][key] 和对应的 v4_ 平铺字段。
+
+    用于 hook 节点构造返回值 dict 时调用。调用后 target 同时包含：
+    - target["v4_<flat_field>"] = value  （向后兼容，老代码可读）
+    - target["v4_state"][group][key] = value  （新统一容器）
+
+    Args:
+        target: 待写入的 dict（通常是 hook 的返回值 dict）
+        group: v4_state 的一级分组名（如 "ontology" / "validation"）
+        key: v4_state 的二级键名（如 "entities" / "report"）
+        value: 字段值
+    """
+    flat_field = _V4_REVERSE_MAP.get((group, key))
+    if flat_field is None:
+        # 未知 (group, key) 组合：仅写 v4_state，不写平铺字段
+        # （兼容未来新增字段，不阻塞调用方）
+        pass
+    else:
+        target[flat_field] = value
+    v4_state = target.setdefault("v4_state", {})
+    v4_state.setdefault(group, {})[key] = value
+
+
+def get_v4_state(state: dict, group: str, key: str, default=None):
+    """读取 v4_state[group][key]，回退到对应的 v4_ 平铺字段。
+
+    读取优先级：
+    1. state["v4_state"][group][key]  （新统一容器，优先）
+    2. state["v4_<flat_field>"]       （向后兼容回退）
+    3. default
+
+    Args:
+        state: LangGraph 全局状态 dict
+        group: v4_state 的一级分组名
+        key: v4_state 的二级键名
+        default: 两处都缺失时的默认值
+
+    Returns:
+        字段值，或 default
+    """
+    v4_state = state.get("v4_state") or {}
+    group_dict = v4_state.get(group) or {}
+    if key in group_dict:
+        return group_dict[key]
+    # 回退到平铺字段
+    flat_field = _V4_REVERSE_MAP.get((group, key))
+    if flat_field is not None and flat_field in state:
+        return state[flat_field]
+    return default
+
+
+def get_v4(state: dict, field_name: str, default=None):
+    """按 v4_ 平铺字段名读取，优先从 v4_state 取，回退到平铺字段。
+
+    供老代码迁移使用：将 state.get("v4_ontology_entities") 替换为
+    get_v4(state, "v4_ontology_entities") 即可获得 v4_state 优先读取能力。
+
+    Args:
+        state: LangGraph 全局状态 dict
+        field_name: v4_ 平铺字段名（如 "v4_ontology_entities"）
+        default: 两处都缺失时的默认值
+
+    Returns:
+        字段值，或 default
+    """
+    mapping = V4_FIELD_MAP.get(field_name)
+    if mapping is not None:
+        group, key = mapping
+        v4_state = state.get("v4_state") or {}
+        group_dict = v4_state.get(group) or {}
+        if key in group_dict:
+            return group_dict[key]
+    # 回退到平铺字段
+    if field_name in state:
+        return state[field_name]
+    return default
+
+
+def normalize_v4_state(state: dict) -> dict:
+    """从 17 个 v4_ 平铺字段重建 v4_state（幂等，原地修改）。
+
+    用途：
+    - hook 返回值经 LangGraph / state.update() 合并后，v4_state 可能被覆盖
+      （dict 替换语义）。调用本函数从平铺字段重建 v4_state，保证一致性。
+    - 加载持久化 state（仅含平铺字段）时，重建 v4_state 供新代码读取。
+    - 已有 v4_state[group][key] 的值不会被平铺字段覆盖（v4_state 优先）。
+
+    Args:
+        state: LangGraph 全局状态 dict（原地修改）
+
+    Returns:
+        state（同一引用，便于链式调用）
+    """
+    v4_state = state.setdefault("v4_state", {})
+    for flat_field, (group, key) in V4_FIELD_MAP.items():
+        if flat_field not in state:
+            continue
+        group_dict = v4_state.setdefault(group, {})
+        # 仅在 group_dict 中缺失时填充（v4_state 优先，不覆盖已有值）
+        if key not in group_dict:
+            group_dict[key] = state[flat_field]
+    return state

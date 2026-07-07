@@ -31,6 +31,7 @@ from typing import Any
 from app.calibration.confidence_interval import ConfidenceIntervalEstimator
 from app.calibration.least_squares_fitter import FitResult, LeastSquaresFitter
 from app.config import settings
+from app.state import set_v4_state
 
 logger = logging.getLogger(__name__)
 
@@ -359,7 +360,11 @@ def calibration_hook_node(state: dict[str, Any]) -> dict[str, Any]:
 
     try:
         agent = CalibrationAgent()
-        return agent.calibrate(state)
+        result = agent.calibrate(state)
+        # Task B.2: 双写 v4_calibration_result → v4_state["validation"]["calibration_result"]
+        if "v4_calibration_result" in result:
+            set_v4_state(result, "validation", "calibration_result", result["v4_calibration_result"])
+        return result
     except Exception as exc:
         # 任何失败都不阻塞流水线，记录 warning 并返回空更新
         logger.warning("Calibration Agent hook 失败，降级跳过: %s", exc)

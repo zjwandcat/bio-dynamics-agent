@@ -69,7 +69,7 @@ from app.adapters.adapter_registry import get_adapter_registry
 from app.config import settings as _v4_settings
 from app.reaction_ir_v2.reaction_builder import build_from_network_json
 from app.sandbox import ERR_NONE, execute_simulation_code_v2
-from app.state import BioDynamicsState
+from app.state import BioDynamicsState, normalize_v4_state, set_v4_state
 from app.supervisor import orchestrator
 
 logger = logging.getLogger(__name__)
@@ -808,6 +808,11 @@ def worker_ode(state: BioDynamicsState) -> dict[str, Any]:
     if v4_ode_result:
         state = {**state, **v4_ode_result}
 
+    # Task B.2: hook 返回值经 {**state, **result} 合并后，v4_state 会被最后
+    # 一个 hook 的 v4_state 覆盖（dict 替换语义）。调用 normalize_v4_state
+    # 从所有 v4_ 平铺字段重建 v4_state，保证 9 个 group 全部就位。
+    normalize_v4_state(state)
+
     # 将用户干预中的建模选项转换为额外上下文
     clarification = state.get("clarification_response")
     modeling_note = ""
@@ -842,6 +847,10 @@ def worker_ode(state: BioDynamicsState) -> dict[str, Any]:
     # P4 阶段才接入 v4_ode_system.ode_code 到 sandbox 执行
     if v4_ode_result and "v4_ode_system" in v4_ode_result:
         s6["v4_ode_system"] = v4_ode_result["v4_ode_system"]
+
+    # Task B.2: 透传 v4_state 到 s6 输出（保证下游 worker 可读统一容器）
+    # normalize_v4_state 从已透传的平铺字段重建 v4_state，无需手动拼装
+    normalize_v4_state(s6)
 
     s6["agent_dispatches"] = dispatches + (s6.get("agent_dispatches", []) or [])
     return s6
@@ -897,7 +906,9 @@ def _reaction_ir_v2_hook(state: BioDynamicsState) -> dict[str, Any] | None:
         )
         return None
 
-    result: dict[str, Any] = {"v4_reaction_ir": ir.to_dict()}
+    result: dict[str, Any] = {}
+    # Task B.2: 双写 v4_reaction_ir → v4_state["reaction_ir"]["ir"]
+    set_v4_state(result, "reaction_ir", "ir", ir.to_dict())
     logger.info(
         "_reaction_ir_v2_hook: v4_reaction_ir 生成成功，%d species, %d reactions",
         len(ir.species), len(ir.reactions),
@@ -993,7 +1004,10 @@ def _pathway_graph_hook(state: BioDynamicsState) -> dict[str, Any] | None:
         "_pathway_graph_hook: v4_pathway_graph 构建成功，pathway=%s nodes=%d edges=%d",
         pathway_class, len(graph.nodes), len(graph.edges),
     )
-    return {"v4_pathway_graph": graph.to_dict()}
+    # Task B.2: 双写 v4_pathway_graph → v4_state["pathway_graph"]["graph"]
+    result: dict[str, Any] = {}
+    set_v4_state(result, "pathway_graph", "graph", graph.to_dict())
+    return result
 
 
 def _ode_template_v2_hook(state: BioDynamicsState) -> dict[str, Any] | None:
@@ -1079,7 +1093,10 @@ def _ode_template_v2_hook(state: BioDynamicsState) -> dict[str, Any] | None:
         "_ode_template_v2_hook: v4_ode_system 渲染成功，pathway=%s template=%s code_len=%d",
         pathway_class, ode_system["template_name"], len(ode_code),
     )
-    return {"v4_ode_system": ode_system}
+    # Task B.2: 双写 v4_ode_system → v4_state["pathway_graph"]["ode_system"]
+    result: dict[str, Any] = {}
+    set_v4_state(result, "pathway_graph", "ode_system", ode_system)
+    return result
 
 
 _MAX_SANDBOX_RETRIES: dict[str, int] = {
