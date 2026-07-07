@@ -1,0 +1,62 @@
+# BioDynamics v4 Official Benchmark Suite — MAPK / ERK Cascade
+# Literature: Schoeberl 2001 (PMID:11483517) / Goldbeter & Koshland 1981 (PMID:1941687)
+# Reused from P5 Level4BenchmarkValidator BENCHMARK_REGISTRY["MAPK_ERK"]
+# and MAPKSpecialist._MAPK_VALIDATION_RULES.
+pathway_class: MAPK_ERK
+name: "MAPK / ERK Signaling Cascade"
+input:
+  hypothesis: "Three-tier MAPK cascade (Raf->MEK->ERK) exhibits zero-order ultrasensitivity and signal amplification"
+  pathway_class: MAPK_ERK
+  species: ["RasGTP", "Raf", "pRaf", "MEK", "pMEK", "ppMEK", "ERK", "pERK", "ppERK"]
+  duration: 60  # minutes
+ground_truth:
+  source: "Schoeberl 2001 / Goldbeter & Koshland 1981"
+  pmid: "PMID:11483517"
+  key_findings:
+    - "MAPK cascade amplification 10-100x from Raf to ERK"
+    - "Zero-order ultrasensitivity Hill coefficient >2 (saturated enzyme regime)"
+    - "ERK peaks at 2-8 min after EGF/RasGTP stimulation"
+expected_dynamics:
+  - species: "MAPK_amplification"
+    behavior: "amplification"
+    threshold: "10-100x baseline"
+  - species: "zero_order_ultrasensitivity_hill_coefficient"
+    behavior: "ultrasensitivity"
+    threshold: ">2 (typical 2-10)"
+  - species: "pERK"
+    behavior: "peak"
+    timing: "2-8 min"
+    threshold: ">0"
+validation:
+  level1_internal: true
+  level2_sbml: true
+  level3_crosstalk: true
+  level4_benchmark: true
+pass_criteria:
+  - criterion: "MAPK amplification 10-100x"
+    metric_name: "MAPK_amplification"
+    expected_min: 10.0
+    expected_max: 100.0
+    tolerance: 5.0
+    unit: "fold"
+  - criterion: "Zero-order ultrasensitivity Hill coefficient 2-10"
+    metric_name: "zero_order_ultrasensitivity_hill_coefficient"
+    expected_min: 2.0
+    expected_max: 10.0
+    tolerance: 0.5
+    unit: "hill_n"
+  - criterion: "ERK peak 2-8 min after stimulation"
+    metric_name: "ERK_peak_time"
+    expected_min: 2.0
+    expected_max: 8.0
+    tolerance: 1.0
+    unit: "minutes"
+  - criterion: "Mass conservation <5% error"
+    metric_name: "mass_conservation_error"
+    expected_min: 0.0
+    expected_max: 0.05
+    tolerance: 0.0
+    unit: "fraction"
+performance:
+  max_runtime_seconds: 60
+  max_memory_mb: 500

@@ -1,0 +1,64 @@
+# BioDynamics v4 Official Benchmark Suite — p53 Tumor Suppressor
+# Literature: Lev Bar-Or 2000 (PMID:10644692)
+# Reused from P5 Level4BenchmarkValidator BENCHMARK_REGISTRY["p53"]
+# and P53Specialist._P53_VALIDATION_RULES.
+pathway_class: p53
+name: "p53 Tumor Suppressor Signaling"
+input:
+  hypothesis: "DNA damage triggers ATM-mediated p53 phosphorylation, p53-Mdm2 DDE negative feedback produces pulse oscillation"
+  pathway_class: p53
+  species: ["ATM", "p53", "p53_p", "p53_tet", "p53_nuclear", "Mdm2", "Mdm2_mRNA", "p21", "Bax", "PUMA"]
+  duration: 720  # minutes (12 hours, to capture 5-7h pulse period)
+ground_truth:
+  source: "Lev Bar-Or 2000"
+  pmid: "PMID:10644692"
+  key_findings:
+    - "p53-Mdm2 DDE negative feedback produces 5-7 hour pulse oscillation"
+    - "Mdm2 transcription/translation delay 60-120 min"
+    - "p53 phosphorylation response time 5-30 min after DNA damage"
+expected_dynamics:
+  - species: "p53"
+    behavior: "pulse_oscillation"
+    timing: "5-7 hour period"
+    threshold: ">0"
+  - species: "Mdm2_mRNA"
+    behavior: "delayed_response"
+    timing: "60-120 min after p53 activation"
+    threshold: ">0"
+  - species: "p53_p"
+    behavior: "rapid_response"
+    timing: "5-30 min after DNA damage"
+    threshold: ">0"
+validation:
+  level1_internal: true
+  level2_sbml: true
+  level3_crosstalk: true
+  level4_benchmark: true
+pass_criteria:
+  - criterion: "p53 pulse period 5-7 hours"
+    metric_name: "p53_pulse_period"
+    expected_min: 5.0
+    expected_max: 7.0
+    tolerance: 1.0
+    unit: "hours"
+  - criterion: "Mdm2 transcription delay 60-120 min"
+    metric_name: "Mdm2_transcription_delay"
+    expected_min: 60.0
+    expected_max: 120.0
+    tolerance: 10.0
+    unit: "minutes"
+  - criterion: "p53 phosphorylation response 5-30 min"
+    metric_name: "p53_phosphorylation_response_time"
+    expected_min: 5.0
+    expected_max: 30.0
+    tolerance: 2.0
+    unit: "minutes"
+  - criterion: "Mass conservation <5% error"
+    metric_name: "mass_conservation_error"
+    expected_min: 0.0
+    expected_max: 0.05
+    tolerance: 0.0
+    unit: "fraction"
+performance:
+  max_runtime_seconds: 90
+  max_memory_mb: 500

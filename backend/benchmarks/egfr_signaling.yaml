@@ -1,0 +1,62 @@
+# BioDynamics v4 Official Benchmark Suite — EGFR RTK Signaling
+# Literature: Levchenko 2000 (PMID:11923475) / Schoeberl 2001 (PMID:11483517)
+# Reused from P5 Level4BenchmarkValidator BENCHMARK_REGISTRY["EGFR_RTK"]
+# and EGFRSpecialist._EGFR_VALIDATION_RULES.
+pathway_class: EGFR_RTK
+name: "EGFR RTK Signaling"
+input:
+  hypothesis: "EGF stimulation leads to EGFR phosphorylation and MAPK cascade activation"
+  pathway_class: EGFR_RTK
+  species: ["EGF", "EGFR", "pEGFR", "Shc", "pShc", "Grb2", "SOS", "Ras", "RasGTP", "Raf", "pRaf"]
+  duration: 120  # minutes
+ground_truth:
+  source: "Levchenko 2000 / Schoeberl 2001"
+  pmid: "PMID:11923475"
+  key_findings:
+    - "pEGFR peaks at 5-10 min after EGF stimulation"
+    - "MAPK signal amplification 10-100x from Ras to ERK"
+    - "EGFR internalization half-life 10-15 min"
+expected_dynamics:
+  - species: "pEGFR"
+    behavior: "peak"
+    timing: "5-10 min"
+    threshold: ">0"
+  - species: "MAPK_amplification"
+    behavior: "amplification"
+    threshold: "10-100x baseline"
+  - species: "EGFR_surface"
+    behavior: "decay"
+    half_life: "10-15 min"
+validation:
+  level1_internal: true
+  level2_sbml: true
+  level3_crosstalk: true
+  level4_benchmark: true
+pass_criteria:
+  - criterion: "pEGFR peak occurs between 5-10 min"
+    metric_name: "pEGFR_peak_time"
+    expected_min: 5.0
+    expected_max: 10.0
+    tolerance: 2.0
+    unit: "minutes"
+  - criterion: "MAPK amplification 10-100x"
+    metric_name: "MAPK_amplification"
+    expected_min: 10.0
+    expected_max: 100.0
+    tolerance: 5.0
+    unit: "fold"
+  - criterion: "EGFR internalization half-life 10-15 min"
+    metric_name: "EGFR_internalization_half_life"
+    expected_min: 10.0
+    expected_max: 15.0
+    tolerance: 2.0
+    unit: "minutes"
+  - criterion: "Mass conservation <5% error"
+    metric_name: "mass_conservation_error"
+    expected_min: 0.0
+    expected_max: 0.05
+    tolerance: 0.0
+    unit: "fraction"
+performance:
+  max_runtime_seconds: 60
+  max_memory_mb: 500

@@ -1,0 +1,62 @@
+# BioDynamics v4 Official Benchmark Suite — PI3K / AKT / mTOR
+# Literature: Mazzoletti 2009 (PMID:19211571) — P4-P5-P6 Integration Report §4.2
+# Reused from PI3KAKTmTORSpecialist._PI3K_VALIDATION_RULES.
+pathway_class: PI3K_AKT_mTOR
+name: "PI3K / AKT / mTOR Signaling"
+input:
+  hypothesis: "Growth factor stimulation activates PI3K->PIP3->AKT->TSC2->Rheb->mTORC1->S6K1 cascade"
+  pathway_class: PI3K_AKT_mTOR
+  species: ["PI3K", "PIP2", "PIP3", "PTEN", "PDK1", "AKT", "pAKT", "TSC2", "pTSC2", "Rheb", "mTORC1", "S6K1", "pS6K1"]
+  duration: 180  # minutes
+ground_truth:
+  source: "Mazzoletti 2009"
+  pmid: "PMID:19211571"
+  key_findings:
+    - "pAKT peaks at 30-60 min after growth factor stimulation"
+    - "PIP2 + PIP3 mass conservation ratio ~1.0 (PI3K/PTEN bidirectional conversion)"
+    - "pS6K1 peak delayed 30-60 min after pAKT peak (cascade timing)"
+expected_dynamics:
+  - species: "pAKT"
+    behavior: "peak"
+    timing: "30-60 min"
+    threshold: ">0"
+  - species: "PIP_PIP3_mass_conservation"
+    behavior: "conservation"
+    threshold: "~1.0 (0.95-1.05)"
+  - species: "pS6K1"
+    behavior: "delayed_peak"
+    timing: "30-60 min after pAKT"
+    threshold: ">0"
+validation:
+  level1_internal: true
+  level2_sbml: true
+  level3_crosstalk: true
+  level4_benchmark: true
+pass_criteria:
+  - criterion: "pAKT peak 30-60 min after stimulation"
+    metric_name: "pAKT_peak_time"
+    expected_min: 30.0
+    expected_max: 60.0
+    tolerance: 5.0
+    unit: "minutes"
+  - criterion: "PIP2/PIP3 mass conservation ratio 0.95-1.05"
+    metric_name: "PIP_PIP3_mass_conservation"
+    expected_min: 0.95
+    expected_max: 1.05
+    tolerance: 0.02
+    unit: "ratio"
+  - criterion: "S6K1 peak delayed 30-60 min after AKT peak"
+    metric_name: "S6K1_peak_delay_vs_AKT"
+    expected_min: 30.0
+    expected_max: 60.0
+    tolerance: 5.0
+    unit: "minutes_delay"
+  - criterion: "Mass conservation <5% error"
+    metric_name: "mass_conservation_error"
+    expected_min: 0.0
+    expected_max: 0.05
+    tolerance: 0.0
+    unit: "fraction"
+performance:
+  max_runtime_seconds: 90
+  max_memory_mb: 500

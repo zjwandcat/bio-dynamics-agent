@@ -1,0 +1,62 @@
+# BioDynamics v4 Official Benchmark Suite — Apoptosis (Intrinsic + Extrinsic)
+# Literature: Rehm 2006 / Green & Kroemer 2004 (PMID:15241432)
+# P4-P5-P6 Integration Report §4.2 (Rehm 2006).
+# Reused from ApoptosisSpecialist._APOPTOSIS_VALIDATION_RULES.
+pathway_class: APOPTOSIS
+name: "Apoptosis (Intrinsic + Extrinsic)"
+input:
+  hypothesis: "Intrinsic apoptosis: BH3-only -> Bax/Bak -> MOMP -> Cyt c -> Apaf-1 -> Casp9 -> Casp3 (bistable, point-of-no-return)"
+  pathway_class: APOPTOSIS
+  species: ["BH3", "Bax", "Bak", "MOMP", "Cyt_c", "Apaf1", "Casp9", "Casp3", "Casp8", "tBid", "DISC", "Casp6", "XIAP", "PARP"]
+  duration: 240  # minutes
+ground_truth:
+  source: "Rehm 2006 / Green & Kroemer 2004"
+  pmid: "PMID:15241432"
+  key_findings:
+    - "Cyt c release precedes Caspase-3 activation by 5-15 min"
+    - "MOMP is point-of-no-return with bistable all-or-none behavior"
+    - "Caspase-3 bistable activation threshold 0.1-0.5 (10-50% procaspase activation)"
+expected_dynamics:
+  - species: "Cyt_c"
+    behavior: "release_precedes_Casp3"
+    timing: "5-15 min before Casp3"
+    threshold: ">0"
+  - species: "MOMP"
+    behavior: "bistable_switch"
+    threshold: "all-or-none (point-of-no-return)"
+  - species: "Casp3"
+    behavior: "bistable_activation"
+    threshold: "0.1-0.5 activation threshold"
+validation:
+  level1_internal: true
+  level2_sbml: true
+  level3_crosstalk: true
+  level4_benchmark: true
+pass_criteria:
+  - criterion: "Cyt c precedes Caspase-3 by 5-15 min"
+    metric_name: "Cyt_c_precedes_Casp3"
+    expected_min: 5.0
+    expected_max: 15.0
+    tolerance: 1.0
+    unit: "minutes_delay"
+  - criterion: "MOMP bistable all-or-none switch"
+    metric_name: "MOMP_bistable_switch"
+    expected_min: 1
+    expected_max: 1
+    tolerance: 0
+    unit: "boolean"
+  - criterion: "Caspase-3 activation threshold 0.1-0.5"
+    metric_name: "Caspase3_activation_threshold"
+    expected_min: 0.1
+    expected_max: 0.5
+    tolerance: 0.05
+    unit: "fraction_of_max"
+  - criterion: "Mass conservation <5% error"
+    metric_name: "mass_conservation_error"
+    expected_min: 0.0
+    expected_max: 0.05
+    tolerance: 0.0
+    unit: "fraction"
+performance:
+  max_runtime_seconds: 90
+  max_memory_mb: 500

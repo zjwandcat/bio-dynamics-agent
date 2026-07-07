@@ -1,0 +1,63 @@
+# BioDynamics v4 Official Benchmark Suite — Cell Cycle Regulation
+# Literature: Tyson 1991 / Pomerening 2005 (PMID:11389814) / Yao 2008 (PMID:12064617)
+# P4-P5-P6 Integration Report §4.2 (Tyson 1991).
+# Reused from CellCycleSpecialist._CELL_CYCLE_VALIDATION_RULES.
+pathway_class: CELL_CYCLE
+name: "Cell Cycle Regulation"
+input:
+  hypothesis: "CyclinB-Cdk1-APC/C delayed negative feedback produces 8-12h oscillation; Rb-E2F bistable G1/S switch"
+  pathway_class: CELL_CYCLE
+  species: ["CyclinB", "Cdk1", "CyclinB_Cdk1", "APC_C", "Cdc20", "Securin", "Separase", "CyclinD1", "Cdk4", "Rb", "pRb", "E2F"]
+  duration: 1440  # minutes (24 hours, to capture 8-12h period)
+ground_truth:
+  source: "Tyson 1991 / Pomerening 2005 / Yao 2008"
+  pmid: "PMID:11389814"
+  key_findings:
+    - "CyclinB-APC/C delayed negative feedback oscillation period 8-12 hours"
+    - "Rb-E2F bistable G1/S switch (once Rb phosphorylated past threshold, E2F permanently released)"
+    - "Cyclin D1 peaks at 60-240 min in G1 phase (growth factor induced)"
+expected_dynamics:
+  - species: "CyclinB_APC_oscillation"
+    behavior: "oscillation"
+    timing: "8-12 hour period"
+    threshold: ">0"
+  - species: "Rb_E2F"
+    behavior: "bistable_switch"
+    threshold: "G1/S all-or-none"
+  - species: "Cyclin_D1"
+    behavior: "peak"
+    timing: "60-240 min"
+    threshold: ">0"
+validation:
+  level1_internal: true
+  level2_sbml: true
+  level3_crosstalk: true
+  level4_benchmark: true
+pass_criteria:
+  - criterion: "CyclinB-APC/C oscillation period 8-12 hours"
+    metric_name: "CyclinB_APC_oscillation_period"
+    expected_min: 8.0
+    expected_max: 12.0
+    tolerance: 0.5
+    unit: "hours"
+  - criterion: "Rb-E2F bistable G1/S switch"
+    metric_name: "Rb_E2F_bistable_switch"
+    expected_min: 1
+    expected_max: 1
+    tolerance: 0
+    unit: "boolean"
+  - criterion: "Cyclin D1 peak time 60-240 min"
+    metric_name: "Cyclin_D1_peak_time"
+    expected_min: 60.0
+    expected_max: 240.0
+    tolerance: 10.0
+    unit: "minutes"
+  - criterion: "Mass conservation <5% error"
+    metric_name: "mass_conservation_error"
+    expected_min: 0.0
+    expected_max: 0.05
+    tolerance: 0.0
+    unit: "fraction"
+performance:
+  max_runtime_seconds: 120
+  max_memory_mb: 500

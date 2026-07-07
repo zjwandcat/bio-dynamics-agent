@@ -1,0 +1,64 @@
+# BioDynamics v4 Official Benchmark Suite — TGF-β Signaling
+# Literature: Clarke 2009 / Massagué 1998 (PMID:9674480) / Schmierer 2007 (PMID:17721552)
+# P4-P5-P6 Integration Report §4.2 (Clarke 2009).
+# Reused from TgfBetaSpecialist._TGF_BETA_VALIDATION_RULES.
+pathway_class: TGF_BETA
+name: "TGF-β Signaling"
+input:
+  hypothesis: "TGF-β stimulation activates TβRI/II->Smad2/3 phosphorylation->pSmad2:Smad4 heteromer->nuclear accumulation->transcription; SMAD7 transcriptional negative feedback"
+  pathway_class: TGF_BETA
+  species: ["TGFB", "TbRI", "TbRII", "Smad2", "pSmad2", "Smad4", "pSmad2_Smad4", "pSmad2_Smad4_nuclear", "SMAD7_mRNA", "SMAD7"]
+  duration: 240  # minutes
+ground_truth:
+  source: "Clarke 2009 / Massagué 1998 / Schmierer 2007"
+  pmid: "PMID:9674480"
+  key_findings:
+    - "pSmad2 (Ser465/467 phosphorylation) peaks at 5-15 min after TGF-β stimulation"
+    - "pSmad2-Smad4 heteromer nuclear accumulation peaks at 15-30 min"
+    - "SMAD7 mRNA delayed 30-60 min after pSmad2:Smad4 transcriptional activation (transcriptional delay negative feedback)"
+expected_dynamics:
+  - species: "pSmad2"
+    behavior: "peak"
+    timing: "5-15 min"
+    threshold: ">0"
+  - species: "pSmad2_Smad4_nuclear"
+    behavior: "nuclear_accumulation"
+    timing: "15-30 min"
+    threshold: ">0"
+  - species: "SMAD7_mRNA"
+    behavior: "delayed_peak"
+    timing: "30-60 min after pSmad2:Smad4"
+    threshold: ">0"
+validation:
+  level1_internal: true
+  level2_sbml: true
+  level3_crosstalk: true
+  level4_benchmark: true
+pass_criteria:
+  - criterion: "pSmad2 peak 5-15 min after TGF-β stimulation"
+    metric_name: "pSmad2_peak_time"
+    expected_min: 5.0
+    expected_max: 15.0
+    tolerance: 1.0
+    unit: "minutes"
+  - criterion: "pSmad2-Smad4 nuclear accumulation 15-30 min"
+    metric_name: "pSmad2_Smad4_nuclear_accumulation_time"
+    expected_min: 15.0
+    expected_max: 30.0
+    tolerance: 2.0
+    unit: "minutes"
+  - criterion: "SMAD7 mRNA delay 30-60 min"
+    metric_name: "SMAD7_mRNA_delay"
+    expected_min: 30.0
+    expected_max: 60.0
+    tolerance: 5.0
+    unit: "minutes"
+  - criterion: "Mass conservation <5% error"
+    metric_name: "mass_conservation_error"
+    expected_min: 0.0
+    expected_max: 0.05
+    tolerance: 0.0
+    unit: "fraction"
+performance:
+  max_runtime_seconds: 60
+  max_memory_mb: 500

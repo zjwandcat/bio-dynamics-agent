@@ -1,0 +1,63 @@
+# BioDynamics v4 Official Benchmark Suite — JAK-STAT Signaling
+# Literature: Timm 2003 / Schwartz 2003 (PMID:15286703)
+# P4-P5-P6 Integration Report §4.2 (Timm 2003).
+# Reused from JakStatSpecialist._JAK_STAT_VALIDATION_RULES.
+pathway_class: JAK_STAT
+name: "JAK-STAT Signaling"
+input:
+  hypothesis: "IL-6/EPO stimulation activates JAK->STAT5 phosphorylation; STAT5->SOCS transcriptional negative feedback produces single pulse"
+  pathway_class: JAK_STAT
+  species: ["IL6", "JAK", "STAT5", "pSTAT5", "pSTAT5_nuclear", "SOCS_mRNA", "SOCS", "CIS"]
+  duration: 240  # minutes
+ground_truth:
+  source: "Timm 2003 / Schwartz 2003"
+  pmid: "PMID:15286703"
+  key_findings:
+    - "pSTAT5 peaks at 5-15 min after IL-6/EPO stimulation (rapid tyrosine phosphorylation)"
+    - "SOCS mRNA delayed 30-60 min after STAT5 transcriptional activation"
+    - "STAT5 nuclear/cytoplasmic ratio shows single pulse (not sustained oscillation, SOCS negative feedback shuts off STAT5 signal)"
+expected_dynamics:
+  - species: "pSTAT5"
+    behavior: "peak"
+    timing: "5-15 min"
+    threshold: ">0"
+  - species: "SOCS_mRNA"
+    behavior: "delayed_peak"
+    timing: "30-60 min after pSTAT5"
+    threshold: ">0"
+  - species: "STAT5_nuclear_cytoplasmic_ratio"
+    behavior: "single_pulse"
+    threshold: "non-oscillatory"
+validation:
+  level1_internal: true
+  level2_sbml: true
+  level3_crosstalk: true
+  level4_benchmark: true
+pass_criteria:
+  - criterion: "pSTAT5 peak 5-15 min after stimulation"
+    metric_name: "pSTAT5_peak_time"
+    expected_min: 5.0
+    expected_max: 15.0
+    tolerance: 1.0
+    unit: "minutes"
+  - criterion: "SOCS mRNA delay 30-60 min"
+    metric_name: "SOCS_mRNA_delay"
+    expected_min: 30.0
+    expected_max: 60.0
+    tolerance: 5.0
+    unit: "minutes"
+  - criterion: "STAT5 nuclear/cytoplasmic ratio single pulse"
+    metric_name: "STAT5_nuclear_cytoplasmic_ratio_pulse"
+    expected_min: 1
+    expected_max: 1
+    tolerance: 0
+    unit: "boolean"
+  - criterion: "Mass conservation <5% error"
+    metric_name: "mass_conservation_error"
+    expected_min: 0.0
+    expected_max: 0.05
+    tolerance: 0.0
+    unit: "fraction"
+performance:
+  max_runtime_seconds: 60
+  max_memory_mb: 500

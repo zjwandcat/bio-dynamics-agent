@@ -1,0 +1,62 @@
+# BioDynamics v4 Official Benchmark Suite — Wnt / β-catenin Signaling
+# Literature: Lee 2003 (PMID:12906785) / Polakis 2002 (PMID:12064617)
+# Reused from P5 Level4BenchmarkValidator BENCHMARK_REGISTRY["WNT"]
+# and WntSpecialist._WNT_VALIDATION_RULES.
+pathway_class: WNT
+name: "Wnt / β-catenin Signaling"
+input:
+  hypothesis: "Wnt+Frizzled+LRP5/6->Dvl->LRP6 phosphorylation->Axin recruitment->destruction complex dissociation->β-catenin accumulation->nuclear translocation->TCF/LEF transcription"
+  pathway_class: WNT
+  species: ["Wnt", "Frizzled", "LRP6", "pLRP6", "Dvl", "Axin", "APC", "GSK3b", "CK1", "bcatenin", "bcatenin_nuclear", "TCF", "Axin2_mRNA"]
+  duration: 360  # minutes (6 hours, to capture Axin2 60-120 min peak)
+ground_truth:
+  source: "Lee 2003 / Polakis 2002"
+  pmid: "PMID:12906785"
+  key_findings:
+    - "β-catenin steady-state <10 nM without Wnt (destruction complex continuously degrades β-catenin)"
+    - "Axin2 mRNA peaks at 60-120 min after Wnt stimulation (β-catenin transcriptional target, 30 min transcriptional delay)"
+    - "Destruction complex (Axin+APC+GSK3β+CK1+β-catenin) intact without Wnt signal"
+expected_dynamics:
+  - species: "bcatenin_steady_state_no_wnt"
+    behavior: "low_steady_state"
+    threshold: "<10 nM"
+  - species: "Axin2_mRNA"
+    behavior: "peak"
+    timing: "60-120 min"
+    threshold: ">0"
+  - species: "destruction_complex"
+    behavior: "intact_assembly"
+    threshold: "complete without Wnt"
+validation:
+  level1_internal: true
+  level2_sbml: true
+  level3_crosstalk: true
+  level4_benchmark: true
+pass_criteria:
+  - criterion: "β-catenin steady-state <10 nM without Wnt"
+    metric_name: "bcatenin_steady_state_no_wnt"
+    expected_min: 0.0
+    expected_max: 10.0
+    tolerance: 2.0
+    unit: "nM"
+  - criterion: "Axin2 mRNA peak 60-120 min"
+    metric_name: "Axin2_mRNA_peak_time"
+    expected_min: 60.0
+    expected_max: 120.0
+    tolerance: 5.0
+    unit: "minutes"
+  - criterion: "Destruction complex intact assembly without Wnt"
+    metric_name: "destruction_complex_assembly"
+    expected_min: 1
+    expected_max: 1
+    tolerance: 0
+    unit: "boolean"
+  - criterion: "Mass conservation <5% error"
+    metric_name: "mass_conservation_error"
+    expected_min: 0.0
+    expected_max: 0.05
+    tolerance: 0.0
+    unit: "fraction"
+performance:
+  max_runtime_seconds: 60
+  max_memory_mb: 500

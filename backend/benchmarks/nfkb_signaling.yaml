@@ -1,0 +1,63 @@
+# BioDynamics v4 Official Benchmark Suite — NF-κB Signaling
+# Literature: Nelson 2004 (PMID:14976212)
+# Reused from P5 Level4BenchmarkValidator BENCHMARK_REGISTRY["NF_KB"]
+# and NfKappaBSpecialist._NF_KB_VALIDATION_RULES.
+pathway_class: NF_KB
+name: "NF-κB Signaling"
+input:
+  hypothesis: "TNF stimulation activates IKK->IκBα phosphorylation->degradation->NF-κB release->nuclear translocation; NF-κB-IκBα DDE negative feedback produces nuclear oscillation"
+  pathway_class: NF_KB
+  species: ["TNF", "TNFR", "IKK", "IkBa", "pIkBa", "NFkB", "NFkB_nuclear", "IkBa_mRNA", "A20"]
+  duration: 1200  # minutes (20 hours, to capture 6-20h oscillation duration)
+ground_truth:
+  source: "Nelson 2004"
+  pmid: "PMID:14976212"
+  key_findings:
+    - "NF-κB nuclear oscillation period 1-2 hours (DDE delayed negative feedback)"
+    - "IκBα transcription delay 30-60 min (NF-κB activates IκBα mRNA, then protein translation)"
+    - "NF-κB oscillation duration 6-20 hours under sustained TNF stimulation"
+expected_dynamics:
+  - species: "NFkB_nuclear"
+    behavior: "oscillation"
+    timing: "1-2 hour period"
+    threshold: ">0"
+  - species: "IkBa_mRNA"
+    behavior: "delayed_response"
+    timing: "30-60 min after NF-κB activation"
+    threshold: ">0"
+  - species: "NFkB_oscillation_duration"
+    behavior: "sustained_oscillation"
+    threshold: "6-20 hours"
+validation:
+  level1_internal: true
+  level2_sbml: true
+  level3_crosstalk: true
+  level4_benchmark: true
+pass_criteria:
+  - criterion: "NF-κB nuclear oscillation period 1-2 hours"
+    metric_name: "NFkB_nuclear_oscillation_period"
+    expected_min: 1.0
+    expected_max: 2.0
+    tolerance: 0.5
+    unit: "hours"
+  - criterion: "IκBα transcription delay 30-60 min"
+    metric_name: "IkBa_transcription_delay"
+    expected_min: 30.0
+    expected_max: 60.0
+    tolerance: 5.0
+    unit: "minutes"
+  - criterion: "NF-κB oscillation duration 6-20 hours"
+    metric_name: "NFkB_oscillation_duration"
+    expected_min: 6.0
+    expected_max: 20.0
+    tolerance: 1.0
+    unit: "hours"
+  - criterion: "Mass conservation <5% error"
+    metric_name: "mass_conservation_error"
+    expected_min: 0.0
+    expected_max: 0.05
+    tolerance: 0.0
+    unit: "fraction"
+performance:
+  max_runtime_seconds: 120
+  max_memory_mb: 500

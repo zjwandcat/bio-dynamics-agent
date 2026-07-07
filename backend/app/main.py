@@ -5,6 +5,7 @@
 import asyncio
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict
@@ -698,6 +699,117 @@ async def _emit_worker_outputs(node_name: str, output: Dict[str, Any]):
         if report.get("markdown"):
             yield _yield("report", report)
             yield _yield("report_ready", report.get("markdown", ""))
+
+
+# === V4 API ENDPOINTS ===
+# BioDynamics v4 RC Sprint Task E.1: 10-pathway Official Benchmark Suite
+# SSE endpoint. Versioned under /api/v4/ — does NOT modify any existing
+# /api/v3/ or /api/chat endpoint. The runner is READ-ONLY and reuses
+# existing P4 specialists + P5 Level4 validation; it does not invoke
+# scientific code mutation paths.
+
+
+@app.post("/api/v4/benchmarks/run")
+async def v4_benchmarks_run() -> StreamingResponse:
+    """Run the 10-pathway Official Benchmark Suite, streaming progress via SSE.
+
+    Emits Server-Sent Events in order:
+      - ``benchmark_start``: ``{pathway_class, name}`` when a pathway begins.
+      - ``benchmark_progress``: ``{pathway_class, step}`` step transitions.
+      - ``benchmark_result``: full single-pathway result dict (see
+        ``BenchmarkRunner.run_benchmark`` schema).
+      - ``benchmark_complete``: final summary ``{total, passed, failed,
+        results, runtime_seconds}``.
+
+    The endpoint is non-blocking: each pathway runs sequentially in a worker
+    thread so the event loop can stream progress to the client. Failures in
+    any single pathway are isolated and reported as ``status="fail"`` in the
+    per-pathway result; the stream continues with the next pathway.
+    """
+    return StreamingResponse(
+        _v4_benchmark_event_stream(),
+        media_type="text/event-stream",
+    )
+
+
+def _v4_benchmark_event_stream():
+    """SSE event generator for /api/v4/benchmarks/run."""
+
+    async def event_stream():
+        from app.benchmark_runner import BenchmarkRunner
+
+        runner = BenchmarkRunner()
+        results: list[Dict[str, Any]] = []
+        start_ts = time.perf_counter()
+        try:
+            pathway_classes = runner.list_benchmarks()
+            yield _sse_event(
+                {
+                    "event": "benchmark_start",
+                    "data": {
+                        "pathway_class": "__suite__",
+                        "name": "BioDynamics v4 Official Benchmark Suite",
+                        "total": len(pathway_classes),
+                    },
+                }
+            )
+            for pathway_class in pathway_classes:
+                spec = runner.load_all().get(pathway_class, {})
+                yield _sse_event(
+                    {
+                        "event": "benchmark_start",
+                        "data": {
+                            "pathway_class": pathway_class,
+                            "name": spec.get("name", ""),
+                        },
+                    }
+                )
+                yield _sse_event(
+                    {
+                        "event": "benchmark_progress",
+                        "data": {
+                            "pathway_class": pathway_class,
+                            "step": "loading_specialist",
+                        },
+                    }
+                )
+                # Run benchmark in a thread to keep the event loop responsive.
+                result = await asyncio.to_thread(
+                    runner.run_benchmark, pathway_class
+                )
+                yield _sse_event(
+                    {
+                        "event": "benchmark_progress",
+                        "data": {
+                            "pathway_class": pathway_class,
+                            "step": "validation_complete",
+                        },
+                    }
+                )
+                yield _sse_event(
+                    {"event": "benchmark_result", "data": result}
+                )
+                results.append(result)
+
+            passed = sum(1 for r in results if r.get("status") == "pass")
+            failed = len(results) - passed
+            summary = {
+                "total": len(results),
+                "passed": passed,
+                "failed": failed,
+                "results": results,
+                "runtime_seconds": round(time.perf_counter() - start_ts, 4),
+            }
+            yield _sse_event({"event": "benchmark_complete", "data": summary})
+        except Exception as exc:
+            logger.exception("v4 benchmark stream failed")
+            yield _sse_event(
+                {"event": "error", "data": f"benchmark stream error: {exc}"}
+            )
+        finally:
+            yield _sse_event({"event": "end", "data": ""})
+
+    return event_stream()
 
 
 if __name__ == "__main__":
