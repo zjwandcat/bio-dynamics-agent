@@ -48,6 +48,13 @@ from app.ontology.ontology_agent import ontology_hook_node
 from app.pathways.pathway_planner import pathway_planner_hook_node
 from app.pathways.specialist_hook import specialist_hook_node
 from app.crosstalk.coordinator import crosstalk_coordinator_hook_node
+# v4 迁移 Phase 5：SBML Grounder + Validation Pyramid hooks
+# _sbml_grounder_hook 在 worker_ode 后串联注入（建立五级映射链）
+# _validation_pyramid_hook 在 worker_validator 后串联注入（编排 5 层验证）
+# V4_SBML_GROUNDER_ENABLED / V4_VALIDATION_PYRAMID_ENABLED 均默认 false，
+# flag=false 时 hook 返回 {}，行为同 v3
+from app.sbml_grounder.grounder_agent import sbml_grounder_hook_node
+from app.validation_v2.validation_agent import validation_pyramid_hook_node
 # v4 迁移 Phase 2：Reaction IR v2 + Adapter hook
 # V4_REACTION_IR_ENABLED=false 时 hook 直接返回空 dict，行为同 v3
 # V4_REACTION_IR_ADAPTER_ENABLED=true 时通过 Adapter 同步 network_json
@@ -1433,6 +1440,16 @@ def build_workflow_v3() -> StateGraph:
     workflow.add_node("_specialist_hook", specialist_hook_node)
     workflow.add_node("_crosstalk_coordinator_hook", crosstalk_coordinator_hook_node)
 
+    # v4 Phase 5：在 worker_ode 后串联注入 2 个 P5 hook 节点
+    # _sbml_grounder_hook → _validation_pyramid_hook
+    # SBML Grounder 建立 ODE↔Reaction↔SBML↔Parameter↔PMID 五级映射链
+    # Validation Pyramid 编排 Level 1→2→3→4→5 五层验证
+    # 所有 hook flag=false 时返回 {}，state 不被修改，行为与 v3 完全一致
+    # 注意：Level 4 Benchmark 需要仿真 metrics（N8 输出），metrics 未计算时
+    #       ValidationAgent 自动将 Level 4 标记为 skipped pass=True（不阻塞）
+    workflow.add_node("_sbml_grounder_hook", sbml_grounder_hook_node)
+    workflow.add_node("_validation_pyramid_hook", validation_pyramid_hook_node)
+
     workflow.add_edge(START, "ontology_hook")
     workflow.add_edge("ontology_hook", "pre_router")
     workflow.add_edge("pre_router", "supervisor")
@@ -1456,6 +1473,7 @@ def build_workflow_v3() -> StateGraph:
 
     # 所有 Worker 完成后回到 Supervisor
     # 注意：worker_mechanism 后先经过 P4 hook 链再回 supervisor
+    #       worker_ode 后先经过 P5 hook 链再回 supervisor
     # （hook flag=false 时返回 {}，state 不变，等价于直连 supervisor）
     for worker in WORKER_NAMES:
         if worker == "worker_mechanism":
@@ -1465,6 +1483,13 @@ def build_workflow_v3() -> StateGraph:
             workflow.add_edge("_pathway_planner_hook", "_specialist_hook")
             workflow.add_edge("_specialist_hook", "_crosstalk_coordinator_hook")
             workflow.add_edge("_crosstalk_coordinator_hook", "supervisor")
+        elif worker == "worker_ode":
+            # worker_ode → _sbml_grounder_hook → _validation_pyramid_hook → supervisor
+            # P5 hook 链：建立五级映射链 + 编排五层验证
+            # flag=false 时 hook 返回 {}，等价于 worker_ode → supervisor
+            workflow.add_edge(worker, "_sbml_grounder_hook")
+            workflow.add_edge("_sbml_grounder_hook", "_validation_pyramid_hook")
+            workflow.add_edge("_validation_pyramid_hook", "supervisor")
         else:
             workflow.add_edge(worker, "supervisor")
 

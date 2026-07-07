@@ -34,6 +34,10 @@ from app.validation_v2.level5_hypothesis import (
     level5_hook_node,
 )
 from app.validation_v2.thresholds import PathwayThresholds
+from app.validation_v2.validation_agent import (
+    ValidationAgent,
+    validation_pyramid_hook_node,
+)
 
 __all__ = [
     "Level1InternalValidator",
@@ -48,4 +52,6 @@ __all__ = [
     "Level5HypothesisValidator",
     "level5_hook_node",
     "PathwayThresholds",
+    "ValidationAgent",
+    "validation_pyramid_hook_node",
 ]
