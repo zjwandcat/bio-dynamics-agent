@@ -24,6 +24,11 @@ from app.validation_v2.level3_crosstalk import (
     Level3CrossPathwayValidator,
     level3_hook_node,
 )
+from app.validation_v2.level4_benchmark import (
+    BENCHMARK_REGISTRY,
+    Level4BenchmarkValidator,
+    level4_hook_node,
+)
 from app.validation_v2.thresholds import PathwayThresholds
 
 __all__ = [
@@ -33,5 +38,8 @@ __all__ = [
     "level2_hook_node",
     "Level3CrossPathwayValidator",
     "level3_hook_node",
+    "Level4BenchmarkValidator",
+    "level4_hook_node",
+    "BENCHMARK_REGISTRY",
     "PathwayThresholds",
 ]
