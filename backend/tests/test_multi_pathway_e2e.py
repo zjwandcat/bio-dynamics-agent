@@ -346,6 +346,7 @@ class TestMultiPathwayE2E(unittest.TestCase):
         from app.crosstalk.coordinator import crosstalk_coordinator_hook_node
         with patch("app.config.settings") as mock_settings:
             mock_settings.V4_CROSSTALK_COORDINATOR_ENABLED = False
+            mock_settings.effective_v4_crosstalk_coordinator_enabled.return_value = False
             state = _mock_egfr_pi3k_state()
             result = crosstalk_coordinator_hook_node(state)
             self.assertEqual(result, {})

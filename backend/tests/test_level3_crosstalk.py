@@ -278,6 +278,7 @@ class TestLevel3HookNode(unittest.TestCase):
         """V4_VALIDATION_PYRAMID_ENABLED=false → hook 返回 {}。"""
         with patch("app.validation_v2.level3_crosstalk.settings") as mock_settings:
             mock_settings.V4_VALIDATION_PYRAMID_ENABLED = False
+            mock_settings.effective_v4_validation_pyramid_enabled.return_value = False
             result = level3_hook_node({"v4_pathway_class": MOCK_MULTI_PATHWAY})
         self.assertEqual(result, {})
 

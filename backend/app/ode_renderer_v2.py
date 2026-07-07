@@ -344,8 +344,8 @@ def render_ode_v2(
     仅当 V4_ODE_TEMPLATE_V2_ENABLED=true 时使用 v4 渲染器；
     否则返回空字符串（调用方应回退到 v3 ode_templates/）。
     """
-    if not getattr(settings, "V4_ODE_TEMPLATE_V2_ENABLED", False):
-        logger.debug("V4_ODE_TEMPLATE_V2_ENABLED=false，跳过 v4 渲染")
+    if not settings.effective_v4_ode_template_v2_enabled():
+        logger.debug("V4_ODE_TEMPLATE_V2_ENABLED effective=false，跳过 v4 渲染")
         return ""
 
     renderer = ODERendererV2()
@@ -359,7 +359,7 @@ def render_ode_v2(
 
 def is_v4_ode_available() -> bool:
     """返回 v4 ODE 渲染器是否可用（feature flag + 模板目录）。"""
-    if not getattr(settings, "V4_ODE_TEMPLATE_V2_ENABLED", False):
+    if not settings.effective_v4_ode_template_v2_enabled():
         return False
     return _V4_TEMPLATES_DIR.exists() and any(_V4_TEMPLATES_DIR.glob("*.j2"))
 

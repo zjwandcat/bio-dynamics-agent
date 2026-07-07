@@ -205,6 +205,7 @@ class TestCalibrationHookNode(unittest.TestCase):
         """V4_CALIBRATION_AGENT_ENABLED=false → hook 返回 {}。"""
         with patch("app.calibration.calibration_agent.settings") as mock_settings:
             mock_settings.V4_CALIBRATION_AGENT_ENABLED = False
+            mock_settings.effective_v4_calibration_agent_enabled.return_value = False
             result = calibration_hook_node(MOCK_STATE_NORMAL)
         self.assertEqual(result, {})
 
@@ -248,6 +249,7 @@ class TestCalibrationHookNode(unittest.TestCase):
         }
         with patch("app.calibration.calibration_agent.settings") as mock_settings:
             mock_settings.V4_CALIBRATION_AGENT_ENABLED = False
+            mock_settings.effective_v4_calibration_agent_enabled.return_value = False
             result = calibration_hook_node(v3_state)
         # 返回空 dict，不修改任何 v3 字段
         self.assertEqual(result, {})

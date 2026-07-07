@@ -354,8 +354,8 @@ def calibration_hook_node(state: dict[str, Any]) -> dict[str, Any]:
         异常时返回 {}
     """
     # Feature Flag 检查：默认 false，跳过所有逻辑
-    if not getattr(settings, "V4_CALIBRATION_AGENT_ENABLED", False):
-        logger.debug("V4_CALIBRATION_AGENT_ENABLED=false，跳过 Calibration Agent")
+    if not settings.effective_v4_calibration_agent_enabled():
+        logger.debug("V4_CALIBRATION_AGENT_ENABLED effective=false，跳过 Calibration Agent")
         return {}
 
     try:

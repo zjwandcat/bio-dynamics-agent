@@ -181,6 +181,7 @@ class TestLevel5HookNode(unittest.TestCase):
         """V4_VALIDATION_PYRAMID_ENABLED=false → hook 返回 {}。"""
         with patch("app.validation_v2.level5_hypothesis.settings") as mock_settings:
             mock_settings.V4_VALIDATION_PYRAMID_ENABLED = False
+            mock_settings.effective_v4_validation_pyramid_enabled.return_value = False
             mock_settings.V4_HYPOTHESIS_AGENT_ENABLED = True
             result = level5_hook_node({"v4_hypothesis_list": MOCK_FULL_HYPOTHESIS_LIST})
         self.assertEqual(result, {})
@@ -242,6 +243,7 @@ class TestLevel5HookNode(unittest.TestCase):
         """P6 未启用时 hook 写入 skipped pass=True。"""
         mock_settings.V4_VALIDATION_PYRAMID_ENABLED = True
         mock_settings.V4_HYPOTHESIS_AGENT_ENABLED = False
+        mock_settings.effective_v4_hypothesis_enabled.return_value = False
         state = {"v4_hypothesis_list": MOCK_FULL_HYPOTHESIS_LIST}
         result = level5_hook_node(state)
         level5 = result["v4_validation_report"]["level5"]
@@ -491,6 +493,7 @@ class TestP6NotEnabled(unittest.TestCase):
     def test_p6_not_enabled_returns_skipped_pass_true(self, mock_settings):
         """P6 未启用 → skipped pass=True（spec.md 第 317 行）。"""
         mock_settings.V4_HYPOTHESIS_AGENT_ENABLED = False
+        mock_settings.effective_v4_hypothesis_enabled.return_value = False
         state = {
             "v4_hypothesis_list": MOCK_FULL_HYPOTHESIS_LIST,
             "experimental_data": MOCK_EXPERIMENTAL_DATA,

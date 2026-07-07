@@ -501,8 +501,8 @@ def crosstalk_coordinator_hook_node(state: dict[str, Any]) -> dict[str, Any]:
     from app.config import settings
 
     # Feature Flag 检查：默认 false，跳过所有逻辑
-    if not getattr(settings, "V4_CROSSTALK_COORDINATOR_ENABLED", False):
-        logger.debug("V4_CROSSTALK_COORDINATOR_ENABLED=false，跳过 Coordinator")
+    if not settings.effective_v4_crosstalk_coordinator_enabled():
+        logger.debug("V4_CROSSTALK_COORDINATOR_ENABLED effective=false，跳过 Coordinator")
         return {}
 
     try:

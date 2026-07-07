@@ -550,6 +550,7 @@ class TestHypothesisHookFlagIsolation:
         state = {**passed_validation_state, "metrics": oscillation_metrics}
         with patch("app.hypothesis.hypothesis_agent.settings") as mock_settings:
             mock_settings.V4_HYPOTHESIS_AGENT_ENABLED = False
+            mock_settings.effective_v4_hypothesis_enabled.return_value = False
             update = hypothesis_agent_hook_node(state)
 
         assert update == {}, "flag=false 时 hook 应返回空 dict"
@@ -585,6 +586,7 @@ class TestHypothesisHookFlagIsolation:
 
         with patch("app.hypothesis.hypothesis_agent.settings") as mock_settings:
             mock_settings.V4_HYPOTHESIS_AGENT_ENABLED = False
+            mock_settings.effective_v4_hypothesis_enabled.return_value = False
             update = hypothesis_agent_hook_node(state)
 
         # update 应为空，不修改任何 v3 字段

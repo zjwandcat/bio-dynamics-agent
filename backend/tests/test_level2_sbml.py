@@ -309,6 +309,7 @@ class TestLevel2HookNode(unittest.TestCase):
     def test_flag_false_returns_empty(self, mock_settings):
         """Feature Flag false → hook 返回 {}。"""
         mock_settings.V4_VALIDATION_PYRAMID_ENABLED = False
+        mock_settings.effective_v4_validation_pyramid_enabled.return_value = False
         from app.validation_v2.level2_sbml import level2_hook_node
 
         state = {

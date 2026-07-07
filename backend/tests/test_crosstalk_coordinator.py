@@ -607,6 +607,7 @@ class TestCrossTalkCoordinatorHook(unittest.TestCase):
         from app.crosstalk.coordinator import crosstalk_coordinator_hook_node
         with patch("app.config.settings") as mock_settings:
             mock_settings.V4_CROSSTALK_COORDINATOR_ENABLED = False
+            mock_settings.effective_v4_crosstalk_coordinator_enabled.return_value = False
             state = {
                 "v4_pathway_class": "MULTI:EGFR_RTK+PI3K_AKT_mTOR",
                 "v4_specialist_outputs": [_make_egfr_output(), _make_pi3k_output()],

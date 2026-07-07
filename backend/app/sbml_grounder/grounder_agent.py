@@ -207,8 +207,8 @@ def sbml_grounder_hook_node(state: dict[str, Any]) -> dict[str, Any]:
         异常时返回 {}
     """
     # Feature Flag 检查：默认 false，跳过所有逻辑
-    if not getattr(settings, "V4_SBML_GROUNDER_ENABLED", False):
-        logger.debug("V4_SBML_GROUNDER_ENABLED=false，跳过 SBML Grounder")
+    if not settings.effective_v4_sbml_grounder_enabled():
+        logger.debug("V4_SBML_GROUNDER_ENABLED effective=false，跳过 SBML Grounder")
         return {}
 
     try:

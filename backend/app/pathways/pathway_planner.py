@@ -339,8 +339,8 @@ def pathway_planner_hook_node(state: dict[str, Any]) -> dict[str, Any]:
         flag=true 时返回 {"v4_pathway_class": str, "v4_pathway_graph": {...}}
     """
     # Feature Flag 检查：默认 false，跳过所有逻辑
-    if not getattr(settings, "V4_PATHWAY_PLANNER_ENABLED", False):
-        logger.debug("V4_PATHWAY_PLANNER_ENABLED=false，跳过 Pathway Planner")
+    if not settings.effective_v4_pathway_planner_enabled():
+        logger.debug("V4_PATHWAY_PLANNER_ENABLED effective=false，跳过 Pathway Planner")
         return {}
 
     try:

@@ -122,6 +122,7 @@ class TestLevel4HookNode(unittest.TestCase):
             "app.validation_v2.level4_benchmark.settings"
         ) as mock_settings:
             mock_settings.V4_VALIDATION_PYRAMID_ENABLED = False
+            mock_settings.effective_v4_validation_pyramid_enabled.return_value = False
             result = level4_hook_node(
                 {"v4_pathway_class": "EGFR_RTK", "metrics": {}}
             )

@@ -289,7 +289,7 @@ class HypothesisAgent:
             True 表示 Validation 通过或未启用；False 表示 Validation 明确失败
         """
         # P5 Validation 未启用 → 不阻塞（视为 pass=True）
-        if not getattr(settings, "V4_VALIDATION_PYRAMID_ENABLED", False):
+        if not settings.effective_v4_validation_pyramid_enabled():
             return True
 
         validation_report = state.get("v4_validation_report")
@@ -483,8 +483,8 @@ def hypothesis_agent_hook_node(state: dict[str, Any]) -> dict[str, Any]:
         异常时返回 {}
     """
     # Feature Flag 检查：默认 false，跳过所有逻辑
-    if not getattr(settings, "V4_HYPOTHESIS_AGENT_ENABLED", False):
-        logger.debug("V4_HYPOTHESIS_AGENT_ENABLED=false，跳过 Hypothesis Agent")
+    if not settings.effective_v4_hypothesis_enabled():
+        logger.debug("V4_HYPOTHESIS_AGENT_ENABLED effective=false，跳过 Hypothesis Agent")
         return {}
 
     try:

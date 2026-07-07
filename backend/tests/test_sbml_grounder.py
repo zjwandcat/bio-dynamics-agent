@@ -1065,6 +1065,7 @@ class TestSBMLGrounderAgent(unittest.TestCase):
 
         with patch("app.sbml_grounder.grounder_agent.settings") as mock_settings:
             mock_settings.V4_SBML_GROUNDER_ENABLED = False
+            mock_settings.effective_v4_sbml_grounder_enabled.return_value = False
             result = sbml_grounder_hook_node(self._build_full_state())
             self.assertEqual(result, {})
 

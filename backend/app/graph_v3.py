@@ -872,7 +872,7 @@ def _reaction_ir_v2_hook(state: BioDynamicsState) -> dict[str, Any] | None:
     Returns:
         包含 v4_reaction_ir（和可选 network_json）的 dict，或 None（flag 关闭时）
     """
-    if not _v4_settings.V4_REACTION_IR_ENABLED:
+    if not _v4_settings.effective_v4_reaction_ir_enabled():
         # flag 关闭，完全跳过 v4 路径
         return None
 
@@ -915,7 +915,7 @@ def _reaction_ir_v2_hook(state: BioDynamicsState) -> dict[str, Any] | None:
     )
 
     # 可选：通过 v4_to_v3 Adapter 同步 network_json
-    if _v4_settings.V4_REACTION_IR_ADAPTER_ENABLED:
+    if _v4_settings.effective_v4_reaction_ir_adapter_enabled():
         synced_json = registry.safe_v4_to_v3(ir)
         if synced_json is not None:
             result["network_json"] = synced_json
@@ -949,7 +949,7 @@ def _pathway_graph_hook(state: BioDynamicsState) -> dict[str, Any] | None:
     Returns:
         包含 v4_pathway_graph 的 dict，或 None（flag 关闭或输入缺失时）
     """
-    if not _v4_settings.V4_PATHWAY_GRAPH_ENABLED:
+    if not _v4_settings.effective_v4_pathway_graph_enabled():
         return None
 
     # P3 依赖 P2 输出（v4_reaction_ir）
@@ -1028,7 +1028,7 @@ def _ode_template_v2_hook(state: BioDynamicsState) -> dict[str, Any] | None:
     Returns:
         包含 v4_ode_system 的 dict，或 None（flag 关闭或输入缺失时）
     """
-    if not _v4_settings.V4_ODE_TEMPLATE_V2_ENABLED:
+    if not _v4_settings.effective_v4_ode_template_v2_enabled():
         return None
 
     # P3 ODE 渲染依赖 P2 输出（v4_reaction_ir）

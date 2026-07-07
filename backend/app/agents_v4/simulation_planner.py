@@ -103,8 +103,8 @@ class SimulationPlannerAgent:
                 }
         """
         # 1. Feature Flag 检查（铁律：flag=false 不执行）
-        if not getattr(settings, "V4_DYNAMIC_ROUTING_ENABLED", False):
-            logger.debug("V4_DYNAMIC_ROUTING_ENABLED=false，SimulationPlanner 跳过")
+        if not settings.effective_v4_dynamic_routing_enabled():
+            logger.debug("V4_DYNAMIC_ROUTING_ENABLED effective=false，SimulationPlanner 跳过")
             return {}
 
         try:

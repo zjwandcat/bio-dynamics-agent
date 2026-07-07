@@ -504,6 +504,7 @@ class TestSensitivityHookNode(unittest.TestCase):
         """V4_CALIBRATION_AGENT_ENABLED=false → hook 返回 {}。"""
         with patch("app.sensitivity.sensitivity_analyzer.settings") as mock_settings:
             mock_settings.V4_CALIBRATION_AGENT_ENABLED = False
+            mock_settings.effective_v4_calibration_agent_enabled.return_value = False
             result = sensitivity_hook_node(MOCK_STATE_NORMAL)
         self.assertEqual(result, {})
 
@@ -545,6 +546,7 @@ class TestSensitivityHookNode(unittest.TestCase):
         }
         with patch("app.sensitivity.sensitivity_analyzer.settings") as mock_settings:
             mock_settings.V4_CALIBRATION_AGENT_ENABLED = False
+            mock_settings.effective_v4_calibration_agent_enabled.return_value = False
             result = sensitivity_hook_node(v3_state)
         self.assertEqual(result, {})
         # state 字段未变（hook 返回的 dict 是新 dict，不应包含 v3 字段）

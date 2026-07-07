@@ -189,9 +189,38 @@ class Settings:
     WORKFLOW_VERSION: str = os.getenv("WORKFLOW_VERSION", "v3").lower()
 
     # =============================================================================
+    # v4 粗粒度 Feature Flags（Task B.3：收敛 13 个细粒度 flag 为 3 个粗粒度 flag）
+    # 生产环境仅暴露这 3 个开关；13 个细粒度 flag 保留为内部 debug override（env 注入），
+    # 不在 .env.example 中暴露。
+    # 三个粗粒度 flag 均默认 false，全 false 时等价于 v3 行为（所有 v4 hook 不触发）。
+    # 有效值通过 Settings.effective_* 方法解析，见类末尾聚合逻辑。
+    # =============================================================================
+    # V4_SCIENTIFIC_LAYER_ENABLED: 启用 P1-P4 科学层
+    #   覆盖细粒度 flag 1-8：Ontology + Reaction IR + Reaction IR Adapter +
+    #   Pathway Graph + ODE Template v2 + Pathway Planner + Pathway Specialist +
+    #   Cross-talk Coordinator
+    V4_SCIENTIFIC_LAYER_ENABLED: bool = os.getenv(
+        "V4_SCIENTIFIC_LAYER_ENABLED", "false"
+    ).lower() == "true"
+
+    # V4_VALIDATION_ENABLED: 启用 P5 验证层
+    #   覆盖细粒度 flag 9-11：SBML Grounder + Validation Pyramid + Calibration
+    V4_VALIDATION_ENABLED: bool = os.getenv(
+        "V4_VALIDATION_ENABLED", "false"
+    ).lower() == "true"
+
+    # V4_HYPOTHESIS_ENABLED: 启用 P6 假设层
+    #   覆盖细粒度 flag 12-13：Hypothesis Agent + Dynamic Routing
+    V4_HYPOTHESIS_ENABLED: bool = os.getenv(
+        "V4_HYPOTHESIS_ENABLED", "false"
+    ).lower() == "true"
+
+    # =============================================================================
     # v4 迁移 Feature Flags（Phase 1）
     # 详见 BioDynamics_v4_Migration_Plan.md
     # 所有 flag 默认 false，保证 v3 行为完全不受影响
+    # 注意：以下 13 个细粒度 flag 为内部 debug override（env 注入），
+    #       生产环境请使用上方 3 个粗粒度 flag。effective_* 方法会聚合两者。
     # =============================================================================
     # Phase 1: Ontology Agent + Pathway Graph
     V4_ONTOLOGY_AGENT_ENABLED: bool = os.getenv(
@@ -304,6 +333,136 @@ class Settings:
     V4_DYNAMIC_ROUTING_ENABLED: bool = os.getenv(
         "V4_DYNAMIC_ROUTING_ENABLED", "false"
     ).lower() == "true"
+
+    # =============================================================================
+    # Task B.3: 粗粒度 flag 聚合逻辑
+    # =============================================================================
+    # effective_* 方法解析"有效" flag 值，所有 v4 hook 改为读取 effective_* 而非
+    # 原始细粒度 flag。解析规则（优先级从高到低）：
+    # 1. 细粒度 flag 在 env 中显式设置 → 取 env 值（debug override，优先级最高）
+    # 2. 粗粒度 flag = ON → 有效值 ON（除非被规则 1 覆盖为 OFF）
+    # 3. 粗粒度 flag = OFF → 跟随细粒度 flag 属性值（默认 OFF，支持属性 patch）
+    #
+    # 此设计保证：
+    # - 三个粗粒度 flag 全 OFF → 所有 effective_* 返回 False（v3 行为，无 hook 触发）
+    # - 粗粒度 ON → 对应细粒度全部 ON（除非 env 显式 override OFF）
+    # - 粗粒度 OFF + 细粒度属性 ON → 该 hook 仍可单独启用（向后兼容旧测试）
+    # =============================================================================
+    def _resolve_v4_flag(
+        self, coarse: bool, fine_env_key: str, fine_attr: bool
+    ) -> bool:
+        """解析 v4 flag 有效值（粗粒度 OR 细粒度，细粒度 env 显式 override 优先）。
+
+        Args:
+            coarse: 粗粒度 flag 属性值（如 self.V4_SCIENTIFIC_LAYER_ENABLED）
+            fine_env_key: 细粒度 flag 的 env 变量名（如 "V4_ONTOLOGY_AGENT_ENABLED"）
+            fine_attr: 细粒度 flag 属性值（如 self.V4_ONTOLOGY_AGENT_ENABLED）
+
+        Returns:
+            有效 flag 值
+        """
+        # 规则 1：细粒度 flag 在 env 中显式设置 → 取 env 值（debug override）
+        if fine_env_key in os.environ:
+            return os.environ[fine_env_key].lower() == "true"
+        # 规则 2：粗粒度 ON → 有效值 ON
+        if coarse:
+            return True
+        # 规则 3：粗粒度 OFF → 跟随细粒度属性（向后兼容属性 patch）
+        return fine_attr
+
+    # --- P1-P4 科学层（粗粒度：V4_SCIENTIFIC_LAYER_ENABLED）---
+    def effective_v4_ontology_enabled(self) -> bool:
+        return self._resolve_v4_flag(
+            self.V4_SCIENTIFIC_LAYER_ENABLED,
+            "V4_ONTOLOGY_AGENT_ENABLED",
+            self.V4_ONTOLOGY_AGENT_ENABLED,
+        )
+
+    def effective_v4_pathway_graph_enabled(self) -> bool:
+        return self._resolve_v4_flag(
+            self.V4_SCIENTIFIC_LAYER_ENABLED,
+            "V4_PATHWAY_GRAPH_ENABLED",
+            self.V4_PATHWAY_GRAPH_ENABLED,
+        )
+
+    def effective_v4_reaction_ir_enabled(self) -> bool:
+        return self._resolve_v4_flag(
+            self.V4_SCIENTIFIC_LAYER_ENABLED,
+            "V4_REACTION_IR_ENABLED",
+            self.V4_REACTION_IR_ENABLED,
+        )
+
+    def effective_v4_reaction_ir_adapter_enabled(self) -> bool:
+        return self._resolve_v4_flag(
+            self.V4_SCIENTIFIC_LAYER_ENABLED,
+            "V4_REACTION_IR_ADAPTER_ENABLED",
+            self.V4_REACTION_IR_ADAPTER_ENABLED,
+        )
+
+    def effective_v4_ode_template_v2_enabled(self) -> bool:
+        return self._resolve_v4_flag(
+            self.V4_SCIENTIFIC_LAYER_ENABLED,
+            "V4_ODE_TEMPLATE_V2_ENABLED",
+            self.V4_ODE_TEMPLATE_V2_ENABLED,
+        )
+
+    def effective_v4_pathway_planner_enabled(self) -> bool:
+        return self._resolve_v4_flag(
+            self.V4_SCIENTIFIC_LAYER_ENABLED,
+            "V4_PATHWAY_PLANNER_ENABLED",
+            self.V4_PATHWAY_PLANNER_ENABLED,
+        )
+
+    def effective_v4_pathway_specialist_enabled(self) -> bool:
+        return self._resolve_v4_flag(
+            self.V4_SCIENTIFIC_LAYER_ENABLED,
+            "V4_PATHWAY_SPECIALIST_ENABLED",
+            self.V4_PATHWAY_SPECIALIST_ENABLED,
+        )
+
+    def effective_v4_crosstalk_coordinator_enabled(self) -> bool:
+        return self._resolve_v4_flag(
+            self.V4_SCIENTIFIC_LAYER_ENABLED,
+            "V4_CROSSTALK_COORDINATOR_ENABLED",
+            self.V4_CROSSTALK_COORDINATOR_ENABLED,
+        )
+
+    # --- P5 验证层（粗粒度：V4_VALIDATION_ENABLED）---
+    def effective_v4_sbml_grounder_enabled(self) -> bool:
+        return self._resolve_v4_flag(
+            self.V4_VALIDATION_ENABLED,
+            "V4_SBML_GROUNDER_ENABLED",
+            self.V4_SBML_GROUNDER_ENABLED,
+        )
+
+    def effective_v4_validation_pyramid_enabled(self) -> bool:
+        return self._resolve_v4_flag(
+            self.V4_VALIDATION_ENABLED,
+            "V4_VALIDATION_PYRAMID_ENABLED",
+            self.V4_VALIDATION_PYRAMID_ENABLED,
+        )
+
+    def effective_v4_calibration_agent_enabled(self) -> bool:
+        return self._resolve_v4_flag(
+            self.V4_VALIDATION_ENABLED,
+            "V4_CALIBRATION_AGENT_ENABLED",
+            self.V4_CALIBRATION_AGENT_ENABLED,
+        )
+
+    # --- P6 假设层（粗粒度：V4_HYPOTHESIS_ENABLED）---
+    def effective_v4_hypothesis_enabled(self) -> bool:
+        return self._resolve_v4_flag(
+            self.V4_HYPOTHESIS_ENABLED,
+            "V4_HYPOTHESIS_AGENT_ENABLED",
+            self.V4_HYPOTHESIS_AGENT_ENABLED,
+        )
+
+    def effective_v4_dynamic_routing_enabled(self) -> bool:
+        return self._resolve_v4_flag(
+            self.V4_HYPOTHESIS_ENABLED,
+            "V4_DYNAMIC_ROUTING_ENABLED",
+            self.V4_DYNAMIC_ROUTING_ENABLED,
+        )
 
 
 # =============================================================================

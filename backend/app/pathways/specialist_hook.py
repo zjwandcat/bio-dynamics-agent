@@ -112,8 +112,8 @@ def specialist_hook_node(state: dict[str, Any]) -> dict[str, Any]:
     from app.config import settings
 
     # Feature Flag 检查：默认 false，跳过所有逻辑
-    if not getattr(settings, "V4_PATHWAY_SPECIALIST_ENABLED", False):
-        logger.debug("V4_PATHWAY_SPECIALIST_ENABLED=false，跳过 Specialist")
+    if not settings.effective_v4_pathway_specialist_enabled():
+        logger.debug("V4_PATHWAY_SPECIALIST_ENABLED effective=false，跳过 Specialist")
         return {}
 
     try:

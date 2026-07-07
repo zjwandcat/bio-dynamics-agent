@@ -386,8 +386,8 @@ def ontology_hook_node(state: dict[str, Any]) -> dict[str, Any]:
         flag=true 时返回 {"v4_ontology_entities": {...}}
     """
     # Feature Flag 检查：默认 false，跳过所有逻辑
-    if not getattr(settings, "V4_ONTOLOGY_AGENT_ENABLED", False):
-        logger.debug("V4_ONTOLOGY_AGENT_ENABLED=false，跳过 Ontology Agent")
+    if not settings.effective_v4_ontology_enabled():
+        logger.debug("V4_ONTOLOGY_AGENT_ENABLED effective=false，跳过 Ontology Agent")
         return {}
 
     # 执行 Ontology Agent

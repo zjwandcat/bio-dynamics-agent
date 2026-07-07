@@ -325,7 +325,7 @@ class Level5HypothesisValidator:
         Returns:
             True 表示 P6 已启用；False 表示未启用
         """
-        return bool(getattr(settings, "V4_HYPOTHESIS_AGENT_ENABLED", False))
+        return bool(settings.effective_v4_hypothesis_enabled())
 
     def _run_skipped(self, reason: str) -> dict[str, Any]:
         """P6 未启用或无假设时 skipped 状态。
@@ -441,8 +441,8 @@ def level5_hook_node(state: dict[str, Any]) -> dict[str, Any]:
         异常时返回 {}
     """
     # Feature Flag 检查：默认 false，跳过所有逻辑
-    if not getattr(settings, "V4_VALIDATION_PYRAMID_ENABLED", False):
-        logger.debug("V4_VALIDATION_PYRAMID_ENABLED=false，跳过 Level 5 validation")
+    if not settings.effective_v4_validation_pyramid_enabled():
+        logger.debug("V4_VALIDATION_PYRAMID_ENABLED effective=false，跳过 Level 5 validation")
         return {}
 
     try:

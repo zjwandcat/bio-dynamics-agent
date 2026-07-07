@@ -519,6 +519,7 @@ class TestReactionIRv2Hook(unittest.TestCase):
         with patch("app.graph_v3._v4_settings") as mock_settings:
             mock_settings.V4_REACTION_IR_ENABLED = False
             mock_settings.V4_REACTION_IR_ADAPTER_ENABLED = False
+            mock_settings.effective_v4_reaction_ir_enabled.return_value = False
             result = _reaction_ir_v2_hook(state)
         self.assertIsNone(result)
 

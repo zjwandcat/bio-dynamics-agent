@@ -599,8 +599,8 @@ def level3_hook_node(state: dict[str, Any]) -> dict[str, Any]:
         异常时返回 {}
     """
     # Feature Flag 检查：默认 false，跳过所有逻辑
-    if not getattr(settings, "V4_VALIDATION_PYRAMID_ENABLED", False):
-        logger.debug("V4_VALIDATION_PYRAMID_ENABLED=false，跳过 Level 3 validation")
+    if not settings.effective_v4_validation_pyramid_enabled():
+        logger.debug("V4_VALIDATION_PYRAMID_ENABLED effective=false，跳过 Level 3 validation")
         return {}
 
     try:

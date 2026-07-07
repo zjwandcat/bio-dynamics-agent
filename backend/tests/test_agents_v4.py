@@ -304,6 +304,7 @@ class TestMechanismBuilderAgent(unittest.TestCase):
     def test_flag_false_returns_empty(self, mock_settings):
         """V4_DYNAMIC_ROUTING_ENABLED=false → 返回 {}。"""
         mock_settings.V4_DYNAMIC_ROUTING_ENABLED = False
+        mock_settings.effective_v4_dynamic_routing_enabled.return_value = False
         state = {
             "v4_pathway_graph": MOCK_PATHWAY_GRAPH_P53,
             "v4_pathway_class": "p53_signaling",
@@ -467,6 +468,7 @@ class TestODEBuilderAgent(unittest.TestCase):
     def test_flag_false_returns_empty(self, mock_settings):
         """V4_DYNAMIC_ROUTING_ENABLED=false → 返回 {}。"""
         mock_settings.V4_DYNAMIC_ROUTING_ENABLED = False
+        mock_settings.effective_v4_dynamic_routing_enabled.return_value = False
         state = {
             "v4_reaction_ir": MOCK_REACTION_IR,
             "v4_pathway_class": "p53_signaling",
@@ -592,6 +594,7 @@ class TestSimulationPlannerAgent(unittest.TestCase):
     def test_flag_false_returns_empty(self, mock_settings):
         """V4_DYNAMIC_ROUTING_ENABLED=false → 返回 {}。"""
         mock_settings.V4_DYNAMIC_ROUTING_ENABLED = False
+        mock_settings.effective_v4_dynamic_routing_enabled.return_value = False
         state = {
             "v4_ode_system": MOCK_ODE_SYSTEM,
             "v4_pathway_class": "EGFR_RTK",
@@ -776,6 +779,7 @@ class TestParameterAgent(unittest.TestCase):
     def test_flag_false_returns_empty(self, mock_settings):
         """V4_DYNAMIC_ROUTING_ENABLED=false → 返回 {}。"""
         mock_settings.V4_DYNAMIC_ROUTING_ENABLED = False
+        mock_settings.effective_v4_dynamic_routing_enabled.return_value = False
         state = {
             "parameters": MOCK_PARAMETERS_FLAT,
             "v4_pathway_class": "p53_signaling",

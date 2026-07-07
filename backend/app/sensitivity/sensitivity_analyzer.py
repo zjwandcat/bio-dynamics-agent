@@ -373,9 +373,9 @@ def sensitivity_hook_node(state: dict[str, Any]) -> dict[str, Any]:
     # （与 Calibration Agent 共享 V4_CALIBRATION_AGENT_ENABLED flag，
     #  spec.md 第 461 行明确："V4_CALIBRATION_AGENT_ENABLED | P5 |
     #  Calibration + Sensitivity 执行 | 跳过，无参数校准"）
-    if not getattr(settings, "V4_CALIBRATION_AGENT_ENABLED", False):
+    if not settings.effective_v4_calibration_agent_enabled():
         logger.debug(
-            "V4_CALIBRATION_AGENT_ENABLED=false，跳过 Sensitivity Analysis"
+            "V4_CALIBRATION_AGENT_ENABLED effective=false，跳过 Sensitivity Analysis"
         )
         return {}
 

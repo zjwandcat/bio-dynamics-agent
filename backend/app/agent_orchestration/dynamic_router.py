@@ -94,9 +94,9 @@ class DynamicRouter:
         # 延迟导入 settings 避免循环依赖（虽然 config 无循环风险，保持一致）
         from app.config import settings
 
-        # 1. Feature Flag 检查
-        if not getattr(settings, "V4_DYNAMIC_ROUTING_ENABLED", False):
-            logger.debug("V4_DYNAMIC_ROUTING_ENABLED=false，跳过 Dynamic Router")
+        # 1. Feature Flag 检查（铁律：flag=false 不执行）
+        if not settings.effective_v4_dynamic_routing_enabled():
+            logger.debug("V4_DYNAMIC_ROUTING_ENABLED effective=false，跳过 Dynamic Router")
             return {}
 
         try:
@@ -198,11 +198,11 @@ class DynamicRouter:
             plan.append("crosstalk_coordinator")
 
         # 3. 条件 Agent（按 Feature Flag）
-        if getattr(settings, "V4_SBML_GROUNDER_ENABLED", False):
+        if settings.effective_v4_sbml_grounder_enabled():
             plan.append("sbml_grounder")
-        if getattr(settings, "V4_CALIBRATION_AGENT_ENABLED", False):
+        if settings.effective_v4_calibration_agent_enabled():
             plan.append("calibration")
-        if getattr(settings, "V4_HYPOTHESIS_AGENT_ENABLED", False):
+        if settings.effective_v4_hypothesis_enabled():
             plan.append("hypothesis")
 
         # 4. P6/Task 6.6 未实现的 Agent（始终包含，execute_agent 处理 ImportError）
@@ -432,8 +432,8 @@ def dynamic_router_hook_node(state: dict) -> dict:
     from app.config import settings
 
     # Feature Flag 检查：默认 false，跳过所有逻辑
-    if not getattr(settings, "V4_DYNAMIC_ROUTING_ENABLED", False):
-        logger.debug("V4_DYNAMIC_ROUTING_ENABLED=false，跳过 Dynamic Router hook")
+    if not settings.effective_v4_dynamic_routing_enabled():
+        logger.debug("V4_DYNAMIC_ROUTING_ENABLED effective=false，跳过 Dynamic Router hook")
         return {}
 
     try:
