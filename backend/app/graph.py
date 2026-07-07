@@ -1,3 +1,8 @@
+# LEGACY BRIDGE — scheduled for removal in v4.1
+# 此文件为 v2-era 工作流组装模块（compiled_workflow / compiled_workflow_v2）。
+# Task B.1 审计结论：runtime 未引用（main.py 仅使用 graph_v3.compiled_workflow_v3，
+# 无 v1/v2 路由分支），仅被 debug 脚本与 tests 引用。
+# 保守策略：RC 阶段不删除，仅在 v4.1 清理阶段移除。
 # BioDynamics Agent - LangGraph 状态图组装
 # 将机制解析、RAG 检索、方程生成、代码执行、审计纠错与报告生成节点连接为完整工作流。
 # v2 升级：额外提供 12 节点编译工作流（compiled_workflow_v2），由 WORKFLOW_VERSION=v2 启用。

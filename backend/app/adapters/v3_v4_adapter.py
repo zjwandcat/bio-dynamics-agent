@@ -1,3 +1,8 @@
+# LEGACY BRIDGE — scheduled for removal in v4.1
+# 此模块为 v3↔v4 双向兼容层（v3 network_json → v4 ReactionIRv2）。
+# Task B.1 审计结论：确认 runtime 依赖（V4_REACTION_IR_ADAPTER_ENABLED=true 时被调用），
+# 但属于 v3/v4 过渡期的 legacy bridge，v4.1 完成 v4 原生流水线后移除。
+# 保守策略：RC 阶段保留并标注，不做任何逻辑改动。
 # BioDynamics Agent v4 - v3 → v4 Adapter
 # 对应 v4 Migration Plan §2.4 的 V3V4Adapter 核心逻辑。
 #
