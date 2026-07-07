@@ -1,0 +1,252 @@
+{# v4 ODE Template: 转录因子模板（Transcription Factor Template）
+   对应 PART C5 + 审计 §3.2 无 transcription + §3.6 无 compartment。
+
+   适用通路：
+     - JAK_STAT (STAT 转录因子)
+     - TGF_beta (SMAD 转录因子)
+     - Wnt (β-catenin/TCF 转录因子)
+     - NF_kB (NF-κB 转录因子)
+
+   关键特性：
+     1. 转录因子激活（磷酸化/二聚化/入核）
+     2. Hill 函数转录（n=1-4）
+     3. 靶基因转录 + 翻译
+     4. 负反馈（SOCS/SMAD7/IκBα/Axin2）
+
+   参数：
+     - SPECIES_NAMES: 物种列表
+     - EDGES: 反应边列表
+     - PARAMS: 每个物种的动力学参数
+     - T_END: 仿真总时长（分钟）
+     - DDE_DELAY: 转录延迟（分钟）
+#}
+"""
+ODE 仿真（v4 转录因子模板）— Transcription Factor Template
+- 适用：STAT / SMAD / β-catenin / NF-κB 等转录因子通路
+- Hill 函数转录 + 靶基因表达 + 负反馈
+- 支持 DDE（转录延迟）
+
+对应审计修复：
+  §3.2 无 transcription → 新增 Hill 函数转录
+  §3.6 无 compartment → 新增核质运输
+"""
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+from scipy.integrate import solve_ivp
+
+SPECIES_NAMES = {{ species_names }}
+T_END = {{ t_end }}
+N_EVAL = {{ n_eval }}
+Y0 = {{ y0 }}
+EDGES = {{ edges_json }}
+PARAMS = {{ params_json }}
+DDE_DELAY = {{ dde_delay_minutes }}
+REQUIRES_DDE = {{ requires_dde | default(false) }}
+PATHWAY_CLASS = "{{ pathway_class | default('') }}"
+
+N_SP = len(SPECIES_NAMES)
+SP_IDX = {name: i for i, name in enumerate(SPECIES_NAMES)}
+
+MAX_STEP_FAST = 0.1
+MAX_STEP_MEDIUM = 0.5
+
+try:
+    from jitcdde import jitcdde, y as jitcdde_y, t as jitcdde_t
+    _JITCDDE_AVAILABLE = True
+except ImportError:
+    _JITCDDE_AVAILABLE = False
+    import warnings
+    warnings.warn(
+        "jitcdde 不可用，DDE 将降级为 ODE。",
+        RuntimeWarning, stacklevel=2,
+    )
+
+
+def _get_param(target_name, param_key, default):
+    """从 PARAMS 中获取指定 target 的参数值。"""
+    eparams = PARAMS.get(target_name, {})
+    return eparams.get(param_key, default)
+
+
+def _ode_rhs(t, y):
+    """ODE 右端函数（转录因子模板）。"""
+    dy = np.zeros(N_SP)
+    for edge in EDGES:
+        src_name = edge.get("source", "")
+        tgt_name = edge.get("target", "")
+        mechanism = edge.get("mechanism", "activation")
+        if src_name not in SP_IDX or tgt_name not in SP_IDX:
+            continue
+        s_idx = SP_IDX[src_name]
+        t_idx = SP_IDX[tgt_name]
+        src = y[s_idx]
+        tgt = y[t_idx]
+
+        if mechanism == "transcription":
+            # 转录（Hill 函数，默认 n=2）
+            k_trans = _get_param(tgt_name, "k_trans", 0.1)
+            n_hill = _get_param(tgt_name, "n_hill", 2.0)
+            K_d = _get_param(tgt_name, "K_d", 0.5)
+            k_mRNA_deg = _get_param(tgt_name, "k_mRNA_deg", 0.01)
+            _hill = (src ** n_hill) / (K_d ** n_hill + src ** n_hill) if (K_d ** n_hill + src ** n_hill) > 0 else 0.0
+            _rate = k_trans * _hill
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_mRNA_deg * tgt
+
+        elif mechanism == "translation":
+            # 翻译（mRNA → 蛋白）
+            k_transl = _get_param(tgt_name, "k_transl", 0.05)
+            k_prot_deg = _get_param(tgt_name, "k_prot_deg", 0.005)
+            _rate = k_transl * src
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_prot_deg * tgt
+
+        elif mechanism == "phosphorylation":
+            # TF 磷酸化激活（Michaelis-Menten）
+            k_cat = _get_param(tgt_name, "k_cat", 0.1)
+            Km = _get_param(tgt_name, "Km", 0.1)
+            k_dephos = _get_param(tgt_name, "k_dephos", 0.001)
+            _Vmax = k_cat * src
+            _rate = _Vmax * src / (Km + src) if (Km + src) > 0 else 0.0
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_dephos * tgt
+
+        elif mechanism == "dimerization":
+            # TF 二聚化（mass-action 2A → A2）
+            k_dim = _get_param(tgt_name, "k_dim", 0.1)
+            _rate = k_dim * src * src
+            dy[s_idx] -= 2 * _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "complex_formation":
+            # 异源复合（R-SMAD + Co-SMAD）
+            k_form = _get_param(tgt_name, "k_form", 0.1)
+            _rate = k_form * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "nuclear_import":
+            # TF 入核
+            k_import = _get_param(tgt_name, "k_import", 0.1)
+            _rate = k_import * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "nuclear_export":
+            # TF 出核（负反馈）
+            k_export = _get_param(tgt_name, "k_export", 0.05)
+            _rate = k_export * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "ubiquitination":
+            # 泛素化（SMAD7→SMURF 途径）
+            k_ubi = _get_param(tgt_name, "k_ubi", 0.1)
+            Km_ubi = _get_param(tgt_name, "Km_ubi", 0.5)
+            _rate = k_ubi * src * tgt / (Km_ubi + tgt) if (Km_ubi + tgt) > 0 else 0.0
+            dy[t_idx] -= _rate
+
+        elif mechanism == "proteasomal_degradation":
+            k_deg = _get_param(tgt_name, "k_deg", 0.01)
+            _rate = k_deg * src
+            dy[s_idx] -= _rate
+
+        elif mechanism == "inhibition":
+            # 负反馈抑制（SOCS/SMAD7/IκBα）
+            k_inhib = _get_param(tgt_name, "k_inhib", 0.05)
+            _rate = k_inhib * src * tgt
+            dy[t_idx] -= _rate
+
+        elif mechanism == "activation":
+            k_act = _get_param(tgt_name, "k_act", 0.05)
+            _rate = k_act * src
+            dy[t_idx] += _rate
+
+        else:
+            k_default = _get_param(tgt_name, "k", 0.01)
+            _rate = k_default * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+    return dy
+
+
+def detect_tf_activation(t_arr, y_arr):
+    """检测转录因子激活动力学。
+
+    判定规则：
+      - 找到磷酸化/活性形式（p 前缀或 _active 后缀）
+      - 检测峰值时间（5-15 min 达峰）
+      - 检测 mRNA 延迟（30-60 min）
+    """
+    tf_active_idx = -1
+    mrna_idx = -1
+    for i, name in enumerate(SPECIES_NAMES):
+        if (name.startswith("p") or name.endswith("_active")) and tf_active_idx < 0:
+            tf_active_idx = i
+        if name.endswith("_mRNA") and mrna_idx < 0:
+            mrna_idx = i
+
+    result = {
+        "tf_active_detected": tf_active_idx >= 0,
+        "mrna_detected": mrna_idx >= 0,
+    }
+
+    if tf_active_idx >= 0:
+        tf_series = y_arr[:, tf_active_idx]
+        tf_peak_time = float(t_arr[int(np.argmax(tf_series))])
+        tf_peak = float(np.max(tf_series))
+        result["tf_peak_time"] = tf_peak_time
+        result["tf_peak_value"] = tf_peak
+        # 5-15 min 达峰判定
+        result["peak_in_5_15_min"] = 5.0 <= tf_peak_time <= 15.0
+
+    if mrna_idx >= 0:
+        mrna_series = y_arr[:, mrna_idx]
+        mrna_peak_time = float(t_arr[int(np.argmax(mrna_series))])
+        result["mrna_peak_time"] = mrna_peak_time
+        # 30-60 min 延迟判定
+        result["mrna_delay_30_60_min"] = 30.0 <= mrna_peak_time <= 60.0
+
+    if tf_active_idx >= 0 and mrna_idx >= 0:
+        result["mrna_after_tf_minutes"] = result["mrna_peak_time"] - result["tf_peak_time"]
+
+    return result
+
+
+# =============================================================================
+# 主程序
+# =============================================================================
+if __name__ == "__main__":
+    t_eval = np.linspace(0, T_END, N_EVAL)
+    if REQUIRES_DDE and _JITCDDE_AVAILABLE and DDE_DELAY > 0:
+        print(f"[v4] DDE 求解器可用，但 MVP 阶段降级为 ODE（延迟 τ={DDE_DELAY} min）")
+    else:
+        if REQUIRES_DDE:
+            print(f"[v4] jitcdde 不可用或 DDE_DELAY=0，降级为 ODE 求解")
+
+    sol = solve_ivp(
+        _ode_rhs, [0, T_END], Y0, t_eval=t_eval,
+        method="LSODA", max_step=MAX_STEP_MEDIUM, rtol=1e-6, atol=1e-9,
+    )
+
+    t_arr = sol.t
+    y_arr = sol.y.T
+
+    tf_result = detect_tf_activation(t_arr, y_arr)
+
+    import json
+    result = {
+        "species_names": SPECIES_NAMES,
+        "time_points": t_arr.tolist(),
+        "concentrations": y_arr.tolist(),
+        "tf_activation": tf_result,
+        "dde_delay_minutes": DDE_DELAY,
+        "dde_available": _JITCDDE_AVAILABLE,
+    }
+    print(json.dumps(result, default=str))

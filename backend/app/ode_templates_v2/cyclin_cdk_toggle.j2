@@ -1,0 +1,251 @@
+{# v4 ODE Template: Cyclin-CDK Toggle 模板（Cyclin-CDK Toggle Template）
+   对应 PART C5 + 审计 §3.2 无 bistable + §3.2 无 oscillatory。
+
+   适用通路：
+     - Cell_Cycle (Cyclin B-APC/C 延迟负反馈振子 + Rb-E2F G1/S toggle)
+
+   关键特性：
+     1. 双稳态 toggle（Rb-E2F G1/S switch）
+     2. 延迟负反馈振子（Cyclin B-APC/C）
+     3. CDK 抑制（p21/p27）
+     4. 多时间尺度：MEDIUM (Cyclin) + SLOW (APC/C)
+
+   参数：
+     - SPECIES_NAMES: 物种列表
+     - EDGES: 反应边列表
+     - PARAMS: 每个物种的动力学参数
+     - T_END: 仿真总时长（分钟）
+     - DDE_DELAY: APC/C 延迟（分钟，默认 30）
+#}
+"""
+ODE 仿真（v4 Cyclin-CDK Toggle 模板）— Cyclin-CDK Toggle Template
+- 适用：Cell Cycle（Cyclin-CDK toggle + APC/C 振子）
+- 双稳态 toggle（Rb-E2F）+ 延迟负反馈振子（Cyclin B-APC/C）
+- 多时间尺度：MEDIUM + SLOW
+
+对应审计修复：
+  §3.2 无 bistable → 新增 Rb-E2F toggle
+  §3.2 无 oscillatory → 新增 Cyclin B-APC/C 振子
+"""
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+from scipy.integrate import solve_ivp
+
+SPECIES_NAMES = {{ species_names }}
+T_END = {{ t_end }}
+N_EVAL = {{ n_eval }}
+Y0 = {{ y0 }}
+EDGES = {{ edges_json }}
+PARAMS = {{ params_json }}
+DDE_DELAY = {{ dde_delay_minutes }}
+REQUIRES_DDE = {{ requires_dde | default(false) }}
+PATHWAY_CLASS = "{{ pathway_class | default('') }}"
+
+N_SP = len(SPECIES_NAMES)
+SP_IDX = {name: i for i, name in enumerate(SPECIES_NAMES)}
+
+MAX_STEP_MEDIUM = 0.5
+MAX_STEP_SLOW = 1.0
+
+try:
+    from jitcdde import jitcdde, y as jitcdde_y, t as jitcdde_t
+    _JITCDDE_AVAILABLE = True
+except ImportError:
+    _JITCDDE_AVAILABLE = False
+    import warnings
+    warnings.warn(
+        "jitcdde 不可用，DDE 将降级为 ODE。",
+        RuntimeWarning, stacklevel=2,
+    )
+
+
+def _get_param(target_name, param_key, default):
+    """从 PARAMS 中获取指定 target 的参数值。"""
+    eparams = PARAMS.get(target_name, {})
+    return eparams.get(param_key, default)
+
+
+def _ode_rhs(t, y):
+    """ODE 右端函数（Cyclin-CDK Toggle 模板）。"""
+    dy = np.zeros(N_SP)
+    for edge in EDGES:
+        src_name = edge.get("source", "")
+        tgt_name = edge.get("target", "")
+        mechanism = edge.get("mechanism", "activation")
+        if src_name not in SP_IDX or tgt_name not in SP_IDX:
+            continue
+        s_idx = SP_IDX[src_name]
+        t_idx = SP_IDX[tgt_name]
+        src = y[s_idx]
+        tgt = y[t_idx]
+
+        if mechanism == "phosphorylation":
+            # CDK 磷酸化 Rb（Michaelis-Menten）
+            k_cat = _get_param(tgt_name, "k_cat", 0.1)
+            Km = _get_param(tgt_name, "Km", 0.1)
+            k_dephos = _get_param(tgt_name, "k_dephos", 0.001)
+            _Vmax = k_cat * src
+            _rate = _Vmax * src / (Km + src) if (Km + src) > 0 else 0.0
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_dephos * tgt
+
+        elif mechanism == "binding":
+            # Cyclin-CDK 结合（mass-action）
+            k_bind = _get_param(tgt_name, "k_bind", 0.1)
+            _rate = k_bind * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "dissociation":
+            # CDK 抑制剂解离（p21/p27）
+            k_diss = _get_param(tgt_name, "k_diss", 0.01)
+            _rate = k_diss * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "ubiquitination":
+            # APC/C 泛素化 Cyclin B
+            k_ubi = _get_param(tgt_name, "k_ubi", 0.1)
+            Km_ubi = _get_param(tgt_name, "Km_ubi", 0.5)
+            _rate = k_ubi * src * tgt / (Km_ubi + tgt) if (Km_ubi + tgt) > 0 else 0.0
+            dy[t_idx] -= _rate
+
+        elif mechanism == "proteasomal_degradation":
+            # Cyclin 降解
+            k_deg = _get_param(tgt_name, "k_deg", 0.01)
+            _rate = k_deg * src
+            dy[s_idx] -= _rate
+
+        elif mechanism == "transcription":
+            # E2F → Cyclin E/D1 转录（Hill）
+            k_trans = _get_param(tgt_name, "k_trans", 0.1)
+            n_hill = _get_param(tgt_name, "n_hill", 2.0)
+            K_d = _get_param(tgt_name, "K_d", 0.5)
+            k_mRNA_deg = _get_param(tgt_name, "k_mRNA_deg", 0.01)
+            _hill = (src ** n_hill) / (K_d ** n_hill + src ** n_hill) if (K_d ** n_hill + src ** n_hill) > 0 else 0.0
+            _rate = k_trans * _hill
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_mRNA_deg * tgt
+
+        elif mechanism == "translation":
+            k_transl = _get_param(tgt_name, "k_transl", 0.05)
+            k_prot_deg = _get_param(tgt_name, "k_prot_deg", 0.005)
+            _rate = k_transl * src
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_prot_deg * tgt
+
+        elif mechanism == "inhibition":
+            # p21/p27 抑制 Cyclin-CDK
+            k_inhib = _get_param(tgt_name, "k_inhib", 0.05)
+            _rate = k_inhib * src * tgt
+            dy[t_idx] -= _rate
+
+        elif mechanism == "activation":
+            # APC/C 激活（Cdc20）
+            k_act = _get_param(tgt_name, "k_act", 0.05)
+            _rate = k_act * src
+            dy[t_idx] += _rate
+
+        else:
+            k_default = _get_param(tgt_name, "k", 0.01)
+            _rate = k_default * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+    return dy
+
+
+def detect_toggle_and_oscillation(t_arr, y_arr, threshold_ratio=0.5):
+    """检测 Rb-E2F toggle 与 Cyclin B-APC/C 振荡。
+
+    判定规则：
+      - 找到 E2F 物种（toggle 标志）
+      - 找到 Cyclin B 物种（振荡标志）
+      - E2F 最终状态判定 ON/OFF（toggle）
+      - Cyclin B 检测振荡（峰值数 ≥ 2）
+    """
+    e2f_idx = -1
+    cyclinb_idx = -1
+    for i, name in enumerate(SPECIES_NAMES):
+        lower = name.lower()
+        if "e2f" in lower:
+            e2f_idx = i
+        if "cyclinb" in lower or "cyclin_b" in lower:
+            cyclinb_idx = i
+
+    result = {
+        "toggle_detected": e2f_idx >= 0,
+        "oscillation_detected": False,
+    }
+
+    if e2f_idx >= 0:
+        e2f_series = y_arr[:, e2f_idx]
+        e2f_max = float(np.max(e2f_series))
+        e2f_final = float(e2f_series[-1])
+        threshold = e2f_max * threshold_ratio
+        if e2f_final >= threshold and e2f_max > 0:
+            result["e2f_state"] = "ON"
+        elif e2f_final < threshold * 0.1:
+            result["e2f_state"] = "OFF"
+        else:
+            result["e2f_state"] = "TRANSIENT"
+        result["e2f_max"] = e2f_max
+        result["e2f_final"] = e2f_final
+
+    if cyclinb_idx >= 0:
+        cyclinb_series = y_arr[:, cyclinb_idx]
+        # 简单振荡检测：找峰值数
+        from scipy.signal import find_peaks
+        try:
+            peaks, _ = find_peaks(cyclinb_series, height=float(np.max(cyclinb_series)) * 0.3)
+            n_peaks = len(peaks)
+            result["oscillation_detected"] = n_peaks >= 2
+            result["cyclinb_peak_count"] = n_peaks
+            if n_peaks >= 2:
+                # 估算周期
+                peak_times = [float(t_arr[p]) for p in peaks]
+                periods = [peak_times[i+1] - peak_times[i] for i in range(len(peak_times)-1)]
+                result["oscillation_period_minutes"] = float(np.mean(periods))
+        except Exception:
+            result["oscillation_detected"] = False
+
+    return result
+
+
+# =============================================================================
+# 主程序
+# =============================================================================
+if __name__ == "__main__":
+    t_eval = np.linspace(0, T_END, N_EVAL)
+    if REQUIRES_DDE and _JITCDDE_AVAILABLE and DDE_DELAY > 0:
+        print(f"[v4] DDE 求解器可用，但 MVP 阶段降级为 ODE（延迟 τ={DDE_DELAY} min）")
+    else:
+        if REQUIRES_DDE:
+            print(f"[v4] jitcdde 不可用或 DDE_DELAY=0，降级为 ODE 求解")
+
+    sol = solve_ivp(
+        _ode_rhs, [0, T_END], Y0, t_eval=t_eval,
+        method="LSODA", max_step=MAX_STEP_SLOW if T_END > 1000 else MAX_STEP_MEDIUM,
+        rtol=1e-6, atol=1e-9,
+    )
+
+    t_arr = sol.t
+    y_arr = sol.y.T
+
+    toggle_result = detect_toggle_and_oscillation(t_arr, y_arr)
+
+    import json
+    result = {
+        "species_names": SPECIES_NAMES,
+        "time_points": t_arr.tolist(),
+        "concentrations": y_arr.tolist(),
+        "toggle_oscillation": toggle_result,
+        "dde_delay_minutes": DDE_DELAY,
+        "dde_available": _JITCDDE_AVAILABLE,
+    }
+    print(json.dumps(result, default=str))

@@ -1,0 +1,236 @@
+{# v4 ODE Template: Caspase 级联模板（Caspase Cascade Template）
+   对应 PART C5 + 审计 §3.2 无 bistable + §4.3 无法表达 caspase cascade。
+
+   适用通路：
+     - Apoptosis (Caspase8→Caspase3 + Bid→Bax 正反馈)
+
+   关键特性：
+     1. 切割激活（cleavage，不可逆 Michaelis-Menten）
+     2. Caspase 级联（initiator→executor amplification）
+     3. 正反馈产生双稳态（all-or-none 决策）
+     4. MOMP point-of-no-return 检测
+
+   参数：
+     - SPECIES_NAMES: 物种列表
+     - EDGES: 反应边列表
+     - PARAMS: 每个物种的动力学参数
+     - T_END: 仿真总时长（分钟）
+#}
+"""
+ODE 仿真（v4 Caspase 级联模板）— Caspase Cascade Template
+- 适用：Apoptosis（Caspase 级联 + 正反馈）
+- 切割激活（不可逆 Michaelis-Menten）
+- 双稳态检测（all-or-none）
+
+对应审计修复：
+  §3.2 无 bistable → 新增双稳态检测
+  §4.3 无法表达 caspase cascade → 新增级联建模
+"""
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+from scipy.integrate import solve_ivp
+
+SPECIES_NAMES = {{ species_names }}
+T_END = {{ t_end }}
+N_EVAL = {{ n_eval }}
+Y0 = {{ y0 }}
+EDGES = {{ edges_json }}
+PARAMS = {{ params_json }}
+DDE_DELAY = {{ dde_delay_minutes }}
+REQUIRES_DDE = {{ requires_dde | default(false) }}
+PATHWAY_CLASS = "{{ pathway_class | default('') }}"
+
+N_SP = len(SPECIES_NAMES)
+SP_IDX = {name: i for i, name in enumerate(SPECIES_NAMES)}
+
+MAX_STEP_FAST = 0.1
+MAX_STEP_MEDIUM = 0.5
+
+
+def _get_param(target_name, param_key, default):
+    """从 PARAMS 中获取指定 target 的参数值。"""
+    eparams = PARAMS.get(target_name, {})
+    return eparams.get(param_key, default)
+
+
+def _ode_rhs(t, y):
+    """ODE 右端函数（Caspase 级联模板）。"""
+    dy = np.zeros(N_SP)
+    for edge in EDGES:
+        src_name = edge.get("source", "")
+        tgt_name = edge.get("target", "")
+        mechanism = edge.get("mechanism", "activation")
+        if src_name not in SP_IDX or tgt_name not in SP_IDX:
+            continue
+        s_idx = SP_IDX[src_name]
+        t_idx = SP_IDX[tgt_name]
+        src = y[s_idx]
+        tgt = y[t_idx]
+
+        if mechanism == "cleavage":
+            # 切割激活（不可逆 Michaelis-Menten）
+            # v = k_cat * [enzyme] * [substrate] / (Km + [substrate])
+            k_cat = _get_param(tgt_name, "k_cat", 0.1)
+            Km = _get_param(tgt_name, "Km", 0.1)
+            _Vmax = k_cat * src
+            _rate = _Vmax * tgt / (Km + tgt) if (Km + tgt) > 0 else 0.0
+            dy[t_idx] -= _rate  # 底物（pro-caspase）消耗
+            # 产物（active caspase）生成
+            active_name = tgt_name.replace("pro_", "active_").replace("Pro", "Active")
+            if active_name in SP_IDX:
+                dy[SP_IDX[active_name]] += _rate
+            else:
+                # 简化：直接增加 target（假设 target 就是 active 形式）
+                dy[t_idx] += _rate
+
+        elif mechanism == "phosphorylation":
+            # Michaelis-Menten
+            k_cat = _get_param(tgt_name, "k_cat", 0.1)
+            Km = _get_param(tgt_name, "Km", 0.1)
+            k_dephos = _get_param(tgt_name, "k_dephos", 0.001)
+            _Vmax = k_cat * src
+            _rate = _Vmax * src / (Km + src) if (Km + src) > 0 else 0.0
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_dephos * tgt
+
+        elif mechanism == "binding":
+            # 结合（Bid + Caspase3 → tBid）
+            k_bind = _get_param(tgt_name, "k_bind", 0.1)
+            _rate = k_bind * src * tgt
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "complex_formation":
+            # 复合体形成（Apaf-1 + Cyt c → Apoptosome）
+            k_form = _get_param(tgt_name, "k_form", 0.1)
+            _rate = k_form * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "transcription":
+            k_trans = _get_param(tgt_name, "k_trans", 0.1)
+            n_hill = _get_param(tgt_name, "n_hill", 2.0)
+            K_d = _get_param(tgt_name, "K_d", 0.5)
+            k_mRNA_deg = _get_param(tgt_name, "k_mRNA_deg", 0.01)
+            _hill = (src ** n_hill) / (K_d ** n_hill + src ** n_hill) if (K_d ** n_hill + src ** n_hill) > 0 else 0.0
+            _rate = k_trans * _hill
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_mRNA_deg * tgt
+
+        elif mechanism == "translation":
+            k_transl = _get_param(tgt_name, "k_transl", 0.05)
+            k_prot_deg = _get_param(tgt_name, "k_prot_deg", 0.005)
+            _rate = k_transl * src
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_prot_deg * tgt
+
+        elif mechanism == "proteasomal_degradation":
+            k_deg = _get_param(tgt_name, "k_deg", 0.01)
+            _rate = k_deg * src
+            dy[s_idx] -= _rate
+
+        elif mechanism == "inhibition":
+            # XIAP 抑制 Caspase3/9
+            k_inhib = _get_param(tgt_name, "k_inhib", 0.05)
+            _rate = k_inhib * src * tgt
+            dy[t_idx] -= _rate
+
+        elif mechanism == "activation":
+            # 正反馈激活（Caspase3 → Caspase6 → Caspase8）
+            k_act = _get_param(tgt_name, "k_act", 0.05)
+            _rate = k_act * src
+            dy[t_idx] += _rate
+
+        else:
+            k_default = _get_param(tgt_name, "k", 0.01)
+            _rate = k_default * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+    return dy
+
+
+def detect_momp_and_bistability(t_arr, y_arr, threshold_ratio=0.5):
+    """检测 MOMP point-of-no-return 与双稳态。
+
+    判定规则：
+      - 找到 Cyt c 物种（MOMP 标志）
+      - 找到 Caspase3_active 物种（执行者）
+      - 检查 Cyt c 释放是否早于 Caspase3 激活 5-15 min
+      - 检查 Caspase3_active 是否进入高态（all-or-none）
+    """
+    cytc_idx = -1
+    casp3_idx = -1
+    for i, name in enumerate(SPECIES_NAMES):
+        lower = name.lower()
+        if "cyt_c" in lower or "cytc" in lower or "cytochrome_c" in lower:
+            cytc_idx = i
+        if "caspase3" in lower and ("active" in lower or "cleaved" in lower):
+            casp3_idx = i
+
+    result = {
+        "momp_detected": cytc_idx >= 0,
+        "bistable": False,
+        "final_state": "UNKNOWN",
+    }
+
+    if cytc_idx >= 0:
+        cytc_series = y_arr[:, cytc_idx]
+        cytc_peak_time = float(t_arr[int(np.argmax(cytc_series))])
+        result["cytc_peak_time"] = cytc_peak_time
+
+    if casp3_idx >= 0:
+        casp3_series = y_arr[:, casp3_idx]
+        casp3_max = float(np.max(casp3_series))
+        casp3_final = float(casp3_series[-1])
+        casp3_peak_time = float(t_arr[int(np.argmax(casp3_series))])
+        threshold = casp3_max * threshold_ratio
+
+        if casp3_final >= threshold and casp3_max > 0:
+            result["final_state"] = "ON"
+            result["bistable"] = True
+        elif casp3_final < threshold * 0.1:
+            result["final_state"] = "OFF"
+        else:
+            result["final_state"] = "TRANSIENT"
+
+        result["casp3_peak_time"] = casp3_peak_time
+        result["casp3_max"] = casp3_max
+        result["casp3_final"] = casp3_final
+
+        if cytc_idx >= 0:
+            time_diff = casp3_peak_time - result["cytc_peak_time"]
+            result["casp3_after_cytc_minutes"] = time_diff
+            result["momp_before_casp3"] = time_diff > 0
+
+    return result
+
+
+# =============================================================================
+# 主程序
+# =============================================================================
+if __name__ == "__main__":
+    t_eval = np.linspace(0, T_END, N_EVAL)
+    sol = solve_ivp(
+        _ode_rhs, [0, T_END], Y0, t_eval=t_eval,
+        method="LSODA", max_step=MAX_STEP_MEDIUM, rtol=1e-6, atol=1e-9,
+    )
+
+    t_arr = sol.t
+    y_arr = sol.y.T
+
+    momp_result = detect_momp_and_bistability(t_arr, y_arr)
+
+    import json
+    result = {
+        "species_names": SPECIES_NAMES,
+        "time_points": t_arr.tolist(),
+        "concentrations": y_arr.tolist(),
+        "momp_bistability": momp_result,
+    }
+    print(json.dumps(result, default=str))

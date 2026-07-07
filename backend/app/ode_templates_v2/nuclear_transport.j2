@@ -1,0 +1,202 @@
+{# v4 ODE Template: 核质运输模板（Nuclear Transport Template）
+   对应 PART C5 + 审计 §3.6 无 compartment。
+
+   适用通路：
+     - JAK_STAT (STAT 二聚体入核)
+     - NF_kB (NF-κB 释放入核)
+     - TGF_beta (SMAD 复合体入核)
+     - Wnt (β-catenin 入核)
+     - p53_signaling (p53 四聚体入核)
+
+   关键特性：
+     1. 双 compartment 建模（cytoplasm / nucleus）
+     2. nuclear_import / nuclear_export 双向运输
+     3. 核质比（nuclear/cytoplasmic ratio）检测
+
+   参数：
+     - SPECIES_NAMES: 物种列表（建议命名含 _cyto / _nuc 后缀）
+     - EDGES: 反应边列表
+     - PARAMS: 每个物种的动力学参数
+     - T_END: 仿真总时长（分钟）
+#}
+"""
+ODE 仿真（v4 核质运输模板）— Nuclear Transport Template
+- 适用：STAT / NF-κB / SMAD / β-catenin / p53 等入核通路
+- 双 compartment 建模（cytoplasm / nucleus）
+- 核质比检测
+
+对应审计修复：
+  §3.6 无 compartment → 新增双 compartment 建模
+"""
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+from scipy.integrate import solve_ivp
+
+SPECIES_NAMES = {{ species_names }}
+T_END = {{ t_end }}
+N_EVAL = {{ n_eval }}
+Y0 = {{ y0 }}
+EDGES = {{ edges_json }}
+PARAMS = {{ params_json }}
+DDE_DELAY = {{ dde_delay_minutes }}
+REQUIRES_DDE = {{ requires_dde | default(false) }}
+PATHWAY_CLASS = "{{ pathway_class | default('') }}"
+
+N_SP = len(SPECIES_NAMES)
+SP_IDX = {name: i for i, name in enumerate(SPECIES_NAMES)}
+
+MAX_STEP_FAST = 0.1
+MAX_STEP_MEDIUM = 0.5
+
+
+def _get_param(target_name, param_key, default):
+    """从 PARAMS 中获取指定 target 的参数值。"""
+    eparams = PARAMS.get(target_name, {})
+    return eparams.get(param_key, default)
+
+
+def _ode_rhs(t, y):
+    """ODE 右端函数（核质运输模板）。"""
+    dy = np.zeros(N_SP)
+    for edge in EDGES:
+        src_name = edge.get("source", "")
+        tgt_name = edge.get("target", "")
+        mechanism = edge.get("mechanism", "activation")
+        if src_name not in SP_IDX or tgt_name not in SP_IDX:
+            continue
+        s_idx = SP_IDX[src_name]
+        t_idx = SP_IDX[tgt_name]
+        src = y[s_idx]
+        tgt = y[t_idx]
+
+        if mechanism == "nuclear_import":
+            # 核质→核（一级动力学）
+            k_import = _get_param(tgt_name, "k_import", 0.1)
+            _rate = k_import * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "nuclear_export":
+            # 核→核质（一级动力学）
+            k_export = _get_param(tgt_name, "k_export", 0.05)
+            _rate = k_export * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "dimerization":
+            # 二聚化（mass-action 2A → A2）
+            k_dim = _get_param(tgt_name, "k_dim", 0.1)
+            _rate = k_dim * src * src
+            dy[s_idx] -= 2 * _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "phosphorylation":
+            # Michaelis-Menten（v4 恢复）
+            k_cat = _get_param(tgt_name, "k_cat", 0.1)
+            Km = _get_param(tgt_name, "Km", 0.1)
+            k_dephos = _get_param(tgt_name, "k_dephos", 0.001)
+            _Vmax = k_cat * src
+            _rate = _Vmax * src / (Km + src) if (Km + src) > 0 else 0.0
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_dephos * tgt
+
+        elif mechanism == "transcription":
+            # 转录（Hill 函数，TF 通常是核内形式）
+            k_trans = _get_param(tgt_name, "k_trans", 0.1)
+            n_hill = _get_param(tgt_name, "n_hill", 2.0)
+            K_d = _get_param(tgt_name, "K_d", 0.5)
+            k_mRNA_deg = _get_param(tgt_name, "k_mRNA_deg", 0.01)
+            _hill = (src ** n_hill) / (K_d ** n_hill + src ** n_hill) if (K_d ** n_hill + src ** n_hill) > 0 else 0.0
+            _rate = k_trans * _hill
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_mRNA_deg * tgt
+
+        elif mechanism == "translation":
+            k_transl = _get_param(tgt_name, "k_transl", 0.05)
+            k_prot_deg = _get_param(tgt_name, "k_prot_deg", 0.005)
+            _rate = k_transl * src
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_prot_deg * tgt
+
+        elif mechanism == "inhibition":
+            k_inhib = _get_param(tgt_name, "k_inhib", 0.05)
+            _rate = k_inhib * src * tgt
+            dy[t_idx] -= _rate
+
+        elif mechanism == "activation":
+            k_act = _get_param(tgt_name, "k_act", 0.05)
+            _rate = k_act * src
+            dy[t_idx] += _rate
+
+        else:
+            k_default = _get_param(tgt_name, "k", 0.01)
+            _rate = k_default * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+    return dy
+
+
+def detect_nuclear_ratio(t_arr, y_arr):
+    """检测核质比（nuclear/cytoplasmic ratio）。
+
+    判定规则：
+      - 找到 _nuc 和 _cyto 后缀的物种对
+      - 计算最终核质比
+      - 比值 > 1 → 主要核定位
+    """
+    nuc_indices = [i for i, name in enumerate(SPECIES_NAMES) if name.endswith("_nuc")]
+    cyto_indices = [i for i, name in enumerate(SPECIES_NAMES) if name.endswith("_cyto")]
+
+    ratios = {}
+    for nuc_idx in nuc_indices:
+        nuc_name = SPECIES_NAMES[nuc_idx]
+        base_name = nuc_name[:-4]  # 去掉 _nuc
+        for cyto_idx in cyto_indices:
+            cyto_name = SPECIES_NAMES[cyto_idx]
+            if cyto_name[:-5] == base_name:
+                nuc_final = float(y_arr[-1, nuc_idx])
+                cyto_final = float(y_arr[-1, cyto_idx])
+                ratio = nuc_final / cyto_final if cyto_final > 0 else float('inf')
+                ratios[base_name] = {
+                    "nuclear": nuc_final,
+                    "cytoplasmic": cyto_final,
+                    "ratio": ratio,
+                    "nuclear_dominant": ratio > 1.0,
+                }
+                break
+
+    return {
+        "has_nuclear_transport": len(ratios) > 0,
+        "ratios": ratios,
+    }
+
+
+# =============================================================================
+# 主程序
+# =============================================================================
+if __name__ == "__main__":
+    t_eval = np.linspace(0, T_END, N_EVAL)
+    sol = solve_ivp(
+        _ode_rhs, [0, T_END], Y0, t_eval=t_eval,
+        method="LSODA", max_step=MAX_STEP_MEDIUM, rtol=1e-6, atol=1e-9,
+    )
+
+    t_arr = sol.t
+    y_arr = sol.y.T
+
+    ratio_result = detect_nuclear_ratio(t_arr, y_arr)
+
+    import json
+    result = {
+        "species_names": SPECIES_NAMES,
+        "time_points": t_arr.tolist(),
+        "concentrations": y_arr.tolist(),
+        "nuclear_ratio": ratio_result,
+    }
+    print(json.dumps(result, default=str))

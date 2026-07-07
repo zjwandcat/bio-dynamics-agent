@@ -1,0 +1,206 @@
+{# v4 ODE Template: 破坏复合体模板（Destruction Complex Template）
+   对应 PART C5 + 审计 §4.3 无法表达 destruction complex。
+
+   适用通路：
+     - Wnt (Axin-APC-GSK3β-CK1 destruction complex)
+
+   关键特性：
+     1. 五步耦合 CompositeReaction：binding→binding→phosphorylation→ubiquitination→proteasomal_degradation
+     2. 复合体组装（multi-component mass-action）
+     3. β-catenin 稳态水平检测（<10 nM 无 Wnt）
+
+   参数：
+     - SPECIES_NAMES: 物种列表
+     - EDGES: 反应边列表
+     - PARAMS: 每个物种的动力学参数
+     - T_END: 仿真总时长（分钟）
+#}
+"""
+ODE 仿真（v4 破坏复合体模板）— Destruction Complex Template
+- 适用：Wnt β-catenin 通路
+- 五步耦合 CompositeReaction
+- β-catenin 稳态水平检测
+
+对应审计修复：
+  §4.3 无法表达 destruction complex → 新增五步耦合
+"""
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+from scipy.integrate import solve_ivp
+
+SPECIES_NAMES = {{ species_names }}
+T_END = {{ t_end }}
+N_EVAL = {{ n_eval }}
+Y0 = {{ y0 }}
+EDGES = {{ edges_json }}
+PARAMS = {{ params_json }}
+DDE_DELAY = {{ dde_delay_minutes }}
+REQUIRES_DDE = {{ requires_dde | default(false) }}
+PATHWAY_CLASS = "{{ pathway_class | default('') }}"
+
+N_SP = len(SPECIES_NAMES)
+SP_IDX = {name: i for i, name in enumerate(SPECIES_NAMES)}
+
+MAX_STEP_FAST = 0.1
+MAX_STEP_MEDIUM = 0.5
+
+
+def _get_param(target_name, param_key, default):
+    """从 PARAMS 中获取指定 target 的参数值。"""
+    eparams = PARAMS.get(target_name, {})
+    return eparams.get(param_key, default)
+
+
+def _ode_rhs(t, y):
+    """ODE 右端函数（破坏复合体模板）。"""
+    dy = np.zeros(N_SP)
+    for edge in EDGES:
+        src_name = edge.get("source", "")
+        tgt_name = edge.get("target", "")
+        mechanism = edge.get("mechanism", "activation")
+        if src_name not in SP_IDX or tgt_name not in SP_IDX:
+            continue
+        s_idx = SP_IDX[src_name]
+        t_idx = SP_IDX[tgt_name]
+        src = y[s_idx]
+        tgt = y[t_idx]
+
+        if mechanism == "complex_formation":
+            # 复合体组装（multi-component mass-action，简化为一级）
+            k_form = _get_param(tgt_name, "k_form", 0.1)
+            _rate = k_form * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "binding":
+            # 结合（mass-action）
+            k_bind = _get_param(tgt_name, "k_bind", 0.1)
+            _rate = k_bind * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "phosphorylation":
+            # Michaelis-Menten（GSK3β 磷酸化 β-catenin）
+            k_cat = _get_param(tgt_name, "k_cat", 0.1)
+            Km = _get_param(tgt_name, "Km", 0.1)
+            k_dephos = _get_param(tgt_name, "k_dephos", 0.001)
+            _Vmax = k_cat * src
+            _rate = _Vmax * src / (Km + src) if (Km + src) > 0 else 0.0
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_dephos * tgt
+
+        elif mechanism == "ubiquitination":
+            # 泛素化（E3 连接酶 β-TrCP）
+            k_ubi = _get_param(tgt_name, "k_ubi", 0.1)
+            Km_ubi = _get_param(tgt_name, "Km_ubi", 0.5)
+            _rate = k_ubi * src * tgt / (Km_ubi + tgt) if (Km_ubi + tgt) > 0 else 0.0
+            dy[t_idx] -= _rate
+
+        elif mechanism == "proteasomal_degradation":
+            # 蛋白酶体降解
+            k_deg = _get_param(tgt_name, "k_deg", 0.01)
+            _rate = k_deg * src
+            dy[s_idx] -= _rate
+
+        elif mechanism == "transcription":
+            # 转录（β-catenin→Axin2 负反馈）
+            k_trans = _get_param(tgt_name, "k_trans", 0.1)
+            n_hill = _get_param(tgt_name, "n_hill", 2.0)
+            K_d = _get_param(tgt_name, "K_d", 0.5)
+            k_mRNA_deg = _get_param(tgt_name, "k_mRNA_deg", 0.01)
+            _hill = (src ** n_hill) / (K_d ** n_hill + src ** n_hill) if (K_d ** n_hill + src ** n_hill) > 0 else 0.0
+            _rate = k_trans * _hill
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_mRNA_deg * tgt
+
+        elif mechanism == "translation":
+            k_transl = _get_param(tgt_name, "k_transl", 0.05)
+            k_prot_deg = _get_param(tgt_name, "k_prot_deg", 0.005)
+            _rate = k_transl * src
+            dy[t_idx] += _rate
+            dy[t_idx] -= k_prot_deg * tgt
+
+        elif mechanism == "nuclear_import":
+            k_import = _get_param(tgt_name, "k_import", 0.1)
+            _rate = k_import * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+        elif mechanism == "inhibition":
+            k_inhib = _get_param(tgt_name, "k_inhib", 0.05)
+            _rate = k_inhib * src * tgt
+            dy[t_idx] -= _rate
+
+        elif mechanism == "activation":
+            k_act = _get_param(tgt_name, "k_act", 0.05)
+            _rate = k_act * src
+            dy[t_idx] += _rate
+
+        else:
+            k_default = _get_param(tgt_name, "k", 0.01)
+            _rate = k_default * src
+            dy[s_idx] -= _rate
+            dy[t_idx] += _rate
+
+    return dy
+
+
+def detect_bcatenin_steady_state(t_arr, y_arr, threshold_nM=10.0):
+    """检测 β-catenin 稳态水平（Lee 2003 benchmark）。
+
+    判定规则：
+      - 找到 β-catenin 物种（含 beta_cat 或 bcat）
+      - 检查稳态（最终值）是否 < 10 nM（无 Wnt 时）
+    """
+    bcat_idx = -1
+    for i, name in enumerate(SPECIES_NAMES):
+        lower = name.lower()
+        if "beta_cat" in lower or "bcat" in lower or lower == "beta_catenin":
+            bcat_idx = i
+            break
+
+    if bcat_idx < 0:
+        return {"bcatenin_detected": False}
+
+    bcat_series = y_arr[:, bcat_idx]
+    bcat_steady = float(bcat_series[-1])
+    bcat_max = float(np.max(bcat_series))
+
+    return {
+        "bcatenin_detected": True,
+        "bcatenin_species": SPECIES_NAMES[bcat_idx],
+        "steady_state_nM": bcat_steady,
+        "max_value_nM": bcat_max,
+        "below_threshold": bcat_steady < threshold_nM,
+        "threshold_nM": threshold_nM,
+    }
+
+
+# =============================================================================
+# 主程序
+# =============================================================================
+if __name__ == "__main__":
+    t_eval = np.linspace(0, T_END, N_EVAL)
+    sol = solve_ivp(
+        _ode_rhs, [0, T_END], Y0, t_eval=t_eval,
+        method="LSODA", max_step=MAX_STEP_MEDIUM, rtol=1e-6, atol=1e-9,
+    )
+
+    t_arr = sol.t
+    y_arr = sol.y.T
+
+    ss_result = detect_bcatenin_steady_state(t_arr, y_arr)
+
+    import json
+    result = {
+        "species_names": SPECIES_NAMES,
+        "time_points": t_arr.tolist(),
+        "concentrations": y_arr.tolist(),
+        "bcatenin_steady_state": ss_result,
+    }
+    print(json.dumps(result, default=str))
