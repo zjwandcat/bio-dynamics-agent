@@ -276,3 +276,16 @@ class BioDynamicsState(TypedDict, total=False):
     # V4_VALIDATION_PYRAMID_ENABLED=false 时保持空，不影响 v3 流程
     # 铁律：不修改 v3 任何字段；仅消费 P1/P2/P3 产出
     v4_validation_report: dict
+
+    # =============================================================================
+    # v4 迁移字段（Phase 5 / Task 5.7 - Calibration Agent）
+    # 详见 spec.md Part 4 Calibration Agent（第 335-340 行）
+    # 共存策略：v4_calibration_result 与 v3 parameters 共存，不同步
+    # =============================================================================
+    # v4 Calibration Agent 输出（Phase 5 / Task 5.7）
+    # 结构：{calibrated_params: dict, confidence_intervals: dict,
+    #   uncalifiable: list, method: "lmfit"|"least_squares",
+    #   agent_version: str, warnings: list}
+    # V4_CALIBRATION_AGENT_ENABLED=false 时保持空，不影响 v3 流程
+    # 铁律：不修改 v3 任何字段；仅消费 v4_ode_system / parameters
+    v4_calibration_result: dict
