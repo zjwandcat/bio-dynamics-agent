@@ -22,10 +22,12 @@ from app.hypothesis.hypothesis_generator import (
     HypothesisGenerator,
     HypothesisStrategy,
 )
+from app.hypothesis.experiment_designer import ExperimentDesigner
 
 __all__ = [
     "HypothesisAgent",
     "hypothesis_agent_hook_node",
     "HypothesisGenerator",
     "HypothesisStrategy",
+    "ExperimentDesigner",
 ]
