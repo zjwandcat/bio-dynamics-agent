@@ -289,3 +289,15 @@ class BioDynamicsState(TypedDict, total=False):
     # V4_CALIBRATION_AGENT_ENABLED=false 时保持空，不影响 v3 流程
     # 铁律：不修改 v3 任何字段；仅消费 v4_ode_system / parameters
     v4_calibration_result: dict
+
+    # =============================================================================
+    # v4 迁移字段（Phase 5 / Task 5.8 - Sensitivity Analysis）
+    # 详见 spec.md Part 4 Sensitivity Analysis（第 342-346 行）
+    # 共存策略：v4_sensitivity_report 与 v3 parameters 共存，不同步
+    # =============================================================================
+    # v4 Sensitivity Analysis 输出（Phase 5 / Task 5.8）
+    # 结构：{local_sensitivity: dict, sobol: dict|None, morris: dict|None,
+    #   method: "full"|"local_only", salib_available: bool, warnings: list}
+    # V4_CALIBRATION_AGENT_ENABLED=false 时保持空，不影响 v3 流程
+    # 铁律：不修改 v3 任何字段；仅消费 v4_ode_system / v4_calibration_result / parameters
+    v4_sensitivity_report: dict
