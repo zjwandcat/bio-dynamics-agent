@@ -24,6 +24,13 @@ from app.hypothesis.hypothesis_generator import (
 )
 from app.hypothesis.experiment_designer import ExperimentDesigner
 from app.hypothesis.falsifiability_checker import FalsificationChecker
+from app.hypothesis.parameter_explorer import ParameterExplorer
+from app.hypothesis.sensitivity_planner import (
+    SensitivityPlanner,
+    METHOD_LOCAL,
+    METHOD_MORRIS,
+    METHOD_SOBOL,
+)
 
 __all__ = [
     "HypothesisAgent",
@@ -32,4 +39,9 @@ __all__ = [
     "HypothesisStrategy",
     "ExperimentDesigner",
     "FalsificationChecker",
+    "ParameterExplorer",
+    "SensitivityPlanner",
+    "METHOD_LOCAL",
+    "METHOD_MORRIS",
+    "METHOD_SOBOL",
 ]
