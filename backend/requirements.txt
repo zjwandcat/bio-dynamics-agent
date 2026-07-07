@@ -1,3 +1,15 @@
+# =============================================================================
+# BioDynamics Agent - Python dependencies
+# =============================================================================
+# System-level build dependencies (NOT pip-installable; install via apt/yum
+# before `pip install -r requirements.txt` if wheels are unavailable for your
+# platform). The Dockerfile already installs these in the backend stage:
+#   Debian/Ubuntu: apt-get install -y build-essential gcc libssl-dev libffi-dev
+# These are needed to compile C extensions for numpy / scipy / pillow /
+# chromadb / sentence-transformers when no prebuilt wheel matches the
+# platform (e.g. linux/arm64, alpine musl).
+# =============================================================================
+
 annotated-doc==0.0.4
 
 annotated-types==0.7.0

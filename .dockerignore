@@ -1,0 +1,64 @@
+# =============================================================================
+# BioDynamics Agent v4 - .dockerignore
+# Task G.3: Docker containerization
+# =============================================================================
+# Keep build context lean: excludes VCS, caches, build artifacts, local data,
+# and secrets so they never leak into image layers or get sent to the builder.
+# =============================================================================
+
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# Python caches / artifacts
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.egg-info
+.venv
+venv/
+env/
+
+# Node caches / artifacts (frontend)
+node_modules
+.next
+frontend/node_modules
+frontend/.next
+frontend/.vitest
+frontend/coverage
+frontend/.next/cache
+
+# Local data — mounted as a volume at runtime, never baked into the image
+backend/data/
+backend/sandbox_logs/
+backend/_test_*/
+
+# Docs / meta (not needed at runtime)
+*.md
+docs/
+LICENSE
+audit_report_*.json
+
+# Secrets — must be injected via env_file / environment at runtime
+.env
+.env.local
+.env.*.local
+backend/.env
+backend/.env.local
+
+# IDE / OS noise
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Docker meta (avoid recursive context surprises)
+Dockerfile
+docker-compose.yml
+.dockerignore
+docker/

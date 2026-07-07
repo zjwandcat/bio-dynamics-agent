@@ -1,0 +1,60 @@
+# =============================================================================
+# BioDynamics Agent v4 - docker-compose
+# Task G.3: Docker containerization
+# =============================================================================
+# Brings up backend (FastAPI/uvicorn :8000) + frontend (Next.js :3000).
+#
+# Usage:
+#   1. cp backend/.env.example backend/.env  # fill in OPENAI_API_KEY etc.
+#   2. docker compose up --build
+#
+# Notes:
+#   - ChromaDB / Qdrant are NOT separate services: the backend uses local
+#     file-based persistence (data/vector_db, data/qdrant_local) mounted via
+#     the ./backend/data volume, matching the no-Docker default in config.py.
+#   - All LLM / embedding / rerank keys come from backend/.env (env_file).
+#   - v4 feature flags are off by default; flip to true to enable layers.
+# =============================================================================
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend
+    container_name: biodynamics-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      # Service
+      - HOST=0.0.0.0
+      - PORT=8000
+      - FRONTEND_URL=http://localhost:3000
+      # Logging / degradation (defaults already in config.py, made explicit here)
+      - LOG_LEVEL=INFO
+      - DEGRADATION_MODE=full
+      # v4 coarse-grained feature flags (all off → v3 behavior)
+      - V4_SCIENTIFIC_LAYER_ENABLED=false
+      - V4_VALIDATION_ENABLED=false
+      - V4_HYPOTHESIS_ENABLED=false
+    volumes:
+      # Persist ChromaDB / qdrant_local / sandbox_logs / metrics / raw SBML
+      - ./backend/data:/app/backend/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frontend
+    container_name: biodynamics-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      # Browser-side API base — points to the host's published backend port.
+      - NEXT_PUBLIC_API_BASE=http://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
