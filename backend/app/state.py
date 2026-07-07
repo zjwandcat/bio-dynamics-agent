@@ -301,3 +301,23 @@ class BioDynamicsState(TypedDict, total=False):
     # V4_CALIBRATION_AGENT_ENABLED=false 时保持空，不影响 v3 流程
     # 铁律：不修改 v3 任何字段；仅消费 v4_ode_system / v4_calibration_result / parameters
     v4_sensitivity_report: dict
+
+    # =============================================================================
+    # Phase 6: Hypothesis Layer + Dynamic Routing
+    # 详见 spec.md Part 5（第 350-398 行）
+    # 共存策略：v4_hypothesis_list 与 v3 metrics/feature_metadata 共存，不同步
+    # =============================================================================
+    # v4 Hypothesis Agent 输出（Phase 6 / Task 6.1）
+    # 结构：list[dict]，每个假设含：
+    #   {id, statement, prediction, experiment_design, validation_method,
+    #    expected_result, falsifiable: bool, supporting_pmids: list,
+    #    contradicting_pmids: list, strategy: str}
+    # V4_HYPOTHESIS_AGENT_ENABLED=false 时保持空，不影响 v3 流程
+    # 铁律：不修改 v3 任何字段；仅消费 metrics / feature_metadata / v4_validation_report /
+    #       v4_grounding_ledger / v4_sensitivity_report / v4_pathway_class
+    v4_hypothesis_list: list[dict]
+
+    # v4 Hypothesis 生成标志位（Phase 6 / Task 6.7 SSE 事件消费）
+    # True 表示 Hypothesis Agent 已执行（即使列表为空）
+    # 用于 Task 6.7 SSE 事件 v4_hypothesis_generated 触发判断
+    v4_hypothesis_generated: bool
