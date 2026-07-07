@@ -28,7 +28,7 @@ USER_INPUT = (
     "请基于 BIOMD0000000205 模型的参数，仿真 EGF 刺激下 EGFR 磷酸化的动力学过程。"
     "初始条件：EGF=0.008 nM，EGFR=0.3 nM。"
 )
-OUT_DIR = Path(__file__).resolve().parent / "test_outputs_egf"
+OUT_DIR = Path(__file__).resolve().parent.parent / "test_outputs_egf"
 OUT_DIR.mkdir(exist_ok=True)
 
 

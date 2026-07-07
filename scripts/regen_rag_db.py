@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 from collections import Counter
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "backend"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from scripts.fetch_rag_data import parse_sbml_to_records
 
-records = parse_sbml_to_records(Path("backend/data/raw/BIOMD0000000205.xml"))
+records = parse_sbml_to_records(Path(__file__).resolve().parent.parent / "backend" / "data" / "raw" / "BIOMD0000000205.xml")
 print(f"Total records: {len(records)}")
 
 type_counts = Counter(r.get("type", "unknown") for r in records)

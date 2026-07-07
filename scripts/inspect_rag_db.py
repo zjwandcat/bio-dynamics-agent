@@ -3,11 +3,11 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "backend"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 import chromadb
 
-client = chromadb.PersistentClient(path=str(Path(__file__).resolve().parent / "backend" / "data" / "vector_db"))
+client = chromadb.PersistentClient(path=str(Path(__file__).resolve().parent.parent / "backend" / "data" / "vector_db"))
 collections = client.list_collections()
 print(f"Collections: {[c.name for c in collections]}")
 

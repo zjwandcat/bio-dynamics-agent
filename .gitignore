@@ -8,6 +8,7 @@ __pycache__/
 venv/
 env/
 ENV/
+.pytest_cache/
 
 # Environment / secrets
 .env
@@ -23,6 +24,10 @@ backend/test_bigmodel_keys.py
 debug_*.txt
 e2e_response*.txt
 backend/server.log
+
+# Stray root-level data dir (generated when backend is run from repo root
+# instead of backend/; the real data lives in backend/data/)
+/data/
 
 # Frontend
 node_modules/

@@ -8,10 +8,10 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from collections import Counter, defaultdict
 
-BACKEND = Path(__file__).resolve().parent / "backend"
+BACKEND = Path(__file__).resolve().parent.parent / "backend"
 SBML_PATH = BACKEND / "data" / "raw" / "BIOMD0000000205.xml"
 PROCESSED_JSON = BACKEND / "data" / "processed" / "BIOMD0000000205.json"
-TEST_OUTPUT = Path(__file__).resolve().parent / "test_outputs_egf"
+TEST_OUTPUT = Path(__file__).resolve().parent.parent / "test_outputs_egf"
 
 # =============================================================================
 # 1. 解析 SBML：提取物种、反应、参数
@@ -438,7 +438,7 @@ def main():
         "audit_2_parameter_ontology": audit2,
         "audit_3_rag_semantic": audit3,
     }
-    output_path = Path(__file__).resolve().parent / "audit_report_biomd205.json"
+    output_path = Path(__file__).resolve().parent.parent / "audit_report_biomd205.json"
     output_path.write_text(json.dumps(full_report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n完整审计报告已保存: {output_path}")
 

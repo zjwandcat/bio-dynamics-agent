@@ -1,4 +1,4 @@
-﻿﻿﻿﻿@echo off
+﻿﻿﻿@echo off
 setlocal enabledelayedexpansion
 
 chcp 65001 >nul
@@ -6,7 +6,7 @@ chcp 65001 >nul
 echo [BioDynamics Agent] One-click dev startup
 echo.
 
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
 if not exist "backend\venv\Scripts\uvicorn.exe" (
     echo [ERROR] backend\venv\Scripts\uvicorn.exe not found.

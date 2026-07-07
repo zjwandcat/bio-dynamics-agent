@@ -119,3 +119,24 @@ xxhash==3.8.0
 
 zstandard==0.25.0
 
+# =============================================================================
+# Optional scientific dependencies
+# These are NOT installed by default. They are try-imported in app/config.py
+# (see the "依赖隔离策略" matrix there): if missing, the pipeline degrades
+# gracefully to a stdlib / simplified fallback and logs a warning. Uncomment
+# the corresponding line (or `pip install` it) to enable the v4 feature that
+# needs it.
+#   roadrunner  -> Level 2 SBML Validation Track A (else structural similarity)
+#                  install: pip install python-roadrunner
+#   lmfit       -> Calibration Agent (else scipy.optimize.least_squares)
+#                  install: pip install lmfit
+#   SALib       -> Sobol/Morris global sensitivity (else local sensitivity only)
+#                  install: pip install SALib
+#   lxml        -> Faster SBML XML parsing in sbml_parser_v2 (else xml.etree)
+#                  install: pip install lxml
+# =============================================================================
+# roadrunner
+# lmfit
+# SALib
+# lxml
+
