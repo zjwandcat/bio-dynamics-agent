@@ -779,12 +779,39 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
         break;
       }
 
-      // ---- v4 events (forwarded by the v3→v4 adapter; handled in C.7–C.8) ----
-      case "v4_hypothesis_generated":
+      // ---- v4 events (forwarded by the v3→v4 adapter) ----
+      case "v4_hypothesis_list": {
+        if (Array.isArray(eventData)) {
+          set({ hypothesisList: eventData });
+        }
+        break;
+      }
+      case "v4_hypothesis_generated": {
+        // Payload may be the full list, a single hypothesis, or a wrapper.
+        if (Array.isArray(eventData)) {
+          set({ hypothesisList: eventData });
+        } else if (eventData && typeof eventData === "object") {
+          const data = eventData as {
+            hypotheses?: unknown[];
+            hypothesis?: unknown;
+            v4_hypothesis_list?: unknown[];
+          };
+          if (Array.isArray(data.v4_hypothesis_list)) {
+            set({ hypothesisList: data.v4_hypothesis_list });
+          } else if (Array.isArray(data.hypotheses)) {
+            set({ hypothesisList: data.hypotheses });
+          } else if (data.hypothesis) {
+            set((s) => ({
+              hypothesisList: [...s.hypothesisList, data.hypothesis],
+            }));
+          }
+        }
+        break;
+      }
       case "v4_validation_report":
       case "v4_pathway_graph":
       case "v4_simulation_result":
-        // TODO(C.7/C.8): hydrate validationReport / hypothesisList / pathwayGraph.
+        // TODO(C.7/C.4): hydrate validationReport / pathwayGraph / simulationResult.
         break;
 
       default:
