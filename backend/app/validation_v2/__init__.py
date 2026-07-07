@@ -20,6 +20,10 @@ from app.validation_v2.level2_sbml import (
     Level2SBMLValidator,
     level2_hook_node,
 )
+from app.validation_v2.level3_crosstalk import (
+    Level3CrossPathwayValidator,
+    level3_hook_node,
+)
 from app.validation_v2.thresholds import PathwayThresholds
 
 __all__ = [
@@ -27,5 +31,7 @@ __all__ = [
     "level1_hook_node",
     "Level2SBMLValidator",
     "level2_hook_node",
+    "Level3CrossPathwayValidator",
+    "level3_hook_node",
     "PathwayThresholds",
 ]
