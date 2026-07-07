@@ -23,6 +23,7 @@ from app.hypothesis.hypothesis_generator import (
     HypothesisStrategy,
 )
 from app.hypothesis.experiment_designer import ExperimentDesigner
+from app.hypothesis.falsifiability_checker import FalsificationChecker
 
 __all__ = [
     "HypothesisAgent",
@@ -30,4 +31,5 @@ __all__ = [
     "HypothesisGenerator",
     "HypothesisStrategy",
     "ExperimentDesigner",
+    "FalsificationChecker",
 ]
