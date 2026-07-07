@@ -156,20 +156,29 @@ class DynamicRouter:
     def build_dispatch_plan(self, state: dict) -> list[str]:
         """根据 state 与 Feature Flags 构建调度计划。
 
-        调度规则（spec.md Part 6 + Feature Flag 矩阵）：
-        1. 始终包含核心 Agent：
-           - ontology（P1 本体标准化）
-           - pathway_planner（P4 通路识别）
-           - pathway_specialist_group（P4 10 Specialist 组入口）
-           - reaction_builder（P2 反应构建）
-           - validation（P5 五层验证）
-        2. 多通路场景：追加 crosstalk_coordinator
-        3. 条件 Agent（按 Feature Flag）：
-           - V4_SBML_GROUNDER_ENABLED → sbml_grounder
-           - V4_CALIBRATION_AGENT_ENABLED → calibration
-           - V4_HYPOTHESIS_AGENT_ENABLED → hypothesis
+        调度规则（spec.md Part 6 + Feature Flag 矩阵 + Task D.2/G3 去重）：
+        1. 核心 Agent（仅在对应 graph hook flag=OFF 时包含，Dynamic Router 填补空隙）：
+           - ontology（P1 本体标准化）       — flag ON → graph hook 已处理，跳过
+           - pathway_planner（P4 通路识别）   — flag ON → graph hook 已处理，跳过
+           - pathway_specialist_group（P4）   — flag ON → graph hook 已处理，跳过
+           - reaction_builder（P2 反应构建）  — flag ON → graph hook 已处理，跳过
+           - validation（P5 五层验证）        — flag ON → graph hook 已处理，跳过
+        2. 多通路场景：追加 crosstalk_coordinator（flag ON → graph hook 已处理，跳过）
+        3. 条件 Agent（仅在对应 graph hook flag=OFF 时包含）：
+           - sbml_grounder   — V4_SBML_GROUNDER_ENABLED=ON → graph hook 已处理，跳过
+           - calibration     — V4_CALIBRATION_AGENT_ENABLED=ON → graph hook 已处理，跳过
+           - hypothesis      — V4_HYPOTHESIS_AGENT_ENABLED=ON → graph hook 已处理，跳过
         4. P6/Task 6.6 未实现的 Agent（始终包含，execute_agent 会处理 ImportError）：
            - mechanism_builder / ode_builder / simulation_planner / parameter_agent
+
+        Task D.2 / G3 去重逻辑：
+        主图 build_workflow_v3() 已将 8 个 Agent 作为 hook 节点串联注入（ontology /
+        pathway_planner / pathway_specialist_group / crosstalk_coordinator /
+        reaction_builder / validation / sbml_grounder / hypothesis），加上 G2 新增的
+        calibration hook。当对应 effective_v4_* flag=ON 时，graph hook 已执行该 Agent，
+        Dynamic Router 不再重复调度（避免 ontology API 双倍调用、P5 验证金字塔重跑等）。
+        仅当 flag=OFF（graph hook 为 no-op）时，Dynamic Router 才将该 Agent 纳入调度
+        计划以填补空隙。
 
         Args:
             state: LangGraph 全局状态，读取 v4_pathway_class 判断多通路
@@ -181,31 +190,36 @@ class DynamicRouter:
 
         plan: list[str] = []
 
-        # 1. 核心 Agent（始终包含）
-        plan.extend(
-            [
-                "ontology",
-                "pathway_planner",
-                "pathway_specialist_group",
-                "reaction_builder",
-                "validation",
-            ]
-        )
+        # 1. 核心 Agent — 仅在对应 graph hook flag=OFF 时包含（G3 去重）
+        #    flag=ON 时 graph hook 已处理，Dynamic Router 跳过避免重复调度
+        if not settings.effective_v4_ontology_enabled():
+            plan.append("ontology")
+        if not settings.effective_v4_pathway_planner_enabled():
+            plan.append("pathway_planner")
+        if not settings.effective_v4_pathway_specialist_enabled():
+            plan.append("pathway_specialist_group")
+        if not settings.effective_v4_reaction_ir_enabled():
+            plan.append("reaction_builder")
+        if not settings.effective_v4_validation_pyramid_enabled():
+            plan.append("validation")
 
-        # 2. 多通路场景：追加 crosstalk_coordinator
+        # 2. 多通路场景：追加 crosstalk_coordinator（G3 去重：flag=ON 时跳过）
         pathway_class = state.get("v4_pathway_class", "") or ""
         if self._pathway_dispatcher.is_multi_pathway(pathway_class):
-            plan.append("crosstalk_coordinator")
+            if not settings.effective_v4_crosstalk_coordinator_enabled():
+                plan.append("crosstalk_coordinator")
 
-        # 3. 条件 Agent（按 Feature Flag）
-        if settings.effective_v4_sbml_grounder_enabled():
+        # 3. 条件 Agent — 仅在对应 graph hook flag=OFF 时包含（G3 去重）
+        #    sbml_grounder / calibration / hypothesis 在 flag=ON 时由 graph hook 处理
+        if not settings.effective_v4_sbml_grounder_enabled():
             plan.append("sbml_grounder")
-        if settings.effective_v4_calibration_agent_enabled():
+        if not settings.effective_v4_calibration_agent_enabled():
             plan.append("calibration")
-        if settings.effective_v4_hypothesis_enabled():
+        if not settings.effective_v4_hypothesis_enabled():
             plan.append("hypothesis")
 
         # 4. P6/Task 6.6 未实现的 Agent（始终包含，execute_agent 处理 ImportError）
+        #    这 4 个 Agent 无 graph hook 对应物，不存在去重问题
         plan.extend(
             [
                 "mechanism_builder",

@@ -62,6 +62,12 @@ from app.validation_v2.validation_agent import validation_pyramid_hook_node
 # flag=false 时 hook 返回 {}，行为同 v3
 from app.hypothesis.hypothesis_agent import hypothesis_agent_hook_node
 from app.agent_orchestration.dynamic_router import dynamic_router_hook_node
+# v4 迁移 Phase 5：Calibration Agent + Sensitivity Analyzer hooks（Task D.2 / G2）
+# _calibration_hook: 在 _validation_pyramid_hook 后注入，参数校准 + 置信区间
+# _sensitivity_hook: 在 _calibration_hook 后注入，local + sobol + morris 灵敏度分析
+# V4_CALIBRATION_AGENT_ENABLED=false 时两个 hook 均返回 {}，行为同 v3
+from app.calibration.calibration_agent import calibration_hook_node
+from app.sensitivity.sensitivity_analyzer import sensitivity_hook_node
 # v4 迁移 Phase 2：Reaction IR v2 + Adapter hook
 # V4_REACTION_IR_ENABLED=false 时 hook 直接返回空 dict，行为同 v3
 # V4_REACTION_IR_ADAPTER_ENABLED=true 时通过 Adapter 同步 network_json
@@ -1474,6 +1480,14 @@ def build_workflow_v3() -> StateGraph:
     workflow.add_node("_sbml_grounder_hook", sbml_grounder_hook_node)
     workflow.add_node("_validation_pyramid_hook", validation_pyramid_hook_node)
 
+    # v4 Phase 5 / Task D.2 (G2)：Calibration + Sensitivity hooks
+    # _calibration_hook: 在 _validation_pyramid_hook 后注入，参数校准 + 置信区间
+    # _sensitivity_hook: 在 _calibration_hook 后注入，local + sobol + morris 灵敏度分析
+    # V4_CALIBRATION_AGENT_ENABLED=false 时两个 hook 均返回 {}（no-op pass-through），
+    # state 不被修改，行为与 v3 完全一致
+    workflow.add_node("_calibration_hook", calibration_hook_node)
+    workflow.add_node("_sensitivity_hook", sensitivity_hook_node)
+
     # v4 Phase 6：P6 hook 节点
     # _dynamic_router_hook: 路由层注入，记录 13 Agent 调度（V4_DYNAMIC_ROUTING_ENABLED=false 时返回 {}）
     # _hypothesis_agent_hook: 在 worker_report 前注入，生成假设列表（V4_HYPOTHESIS_AGENT_ENABLED=false 时返回 {}）
@@ -1519,12 +1533,18 @@ def build_workflow_v3() -> StateGraph:
             workflow.add_edge("_specialist_hook", "_crosstalk_coordinator_hook")
             workflow.add_edge("_crosstalk_coordinator_hook", "supervisor")
         elif worker == "worker_ode":
-            # worker_ode → _sbml_grounder_hook → _validation_pyramid_hook → supervisor
-            # P5 hook 链：建立五级映射链 + 编排五层验证
+            # worker_ode → _sbml_grounder_hook → _validation_pyramid_hook
+            # → _calibration_hook → _sensitivity_hook → supervisor
+            # P5 hook 链：建立五级映射链 + 编排五层验证 + 参数校准 + 灵敏度分析
             # flag=false 时 hook 返回 {}，等价于 worker_ode → supervisor
             workflow.add_edge(worker, "_sbml_grounder_hook")
             workflow.add_edge("_sbml_grounder_hook", "_validation_pyramid_hook")
-            workflow.add_edge("_validation_pyramid_hook", "supervisor")
+            # Task D.2 (G2): calibration → sensitivity 在 validation_pyramid 后、
+            # hypothesis_agent_hook 前注入（hypothesis 在 worker_report 分支由
+            # supervisor 条件边触发，此处 calibration/sensitivity 先回 supervisor）
+            workflow.add_edge("_validation_pyramid_hook", "_calibration_hook")
+            workflow.add_edge("_calibration_hook", "_sensitivity_hook")
+            workflow.add_edge("_sensitivity_hook", "supervisor")
         else:
             workflow.add_edge(worker, "supervisor")
 

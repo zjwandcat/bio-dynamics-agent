@@ -660,12 +660,17 @@ class TestDynamicRouter:
     @patch("app.config.settings.V4_CALIBRATION_AGENT_ENABLED", True)
     @patch("app.config.settings.V4_HYPOTHESIS_AGENT_ENABLED", True)
     def test_build_dispatch_plan_respects_feature_flags(self):
-        """build_dispatch_plan 应按 Feature Flag 追加条件 Agent。"""
+        """build_dispatch_plan 应按 Feature Flag 跳过已由 graph hook 处理的 Agent（G3 去重）。
+
+        Task D.2 / G3：当 effective flag=ON 时，graph hook 已处理该 Agent，
+        Dynamic Router 跳过避免重复调度。
+        """
         router = DynamicRouter()
         plan = router.build_dispatch_plan({"v4_pathway_class": "EGFR_RTK"})
-        assert "sbml_grounder" in plan
-        assert "calibration" in plan
-        assert "hypothesis" in plan
+        # flag=true 时 graph hook 已处理，Dynamic Router 跳过
+        assert "sbml_grounder" not in plan
+        assert "calibration" not in plan
+        assert "hypothesis" not in plan
 
     @patch("app.config.settings.V4_DYNAMIC_ROUTING_ENABLED", False)
     def test_execute_agent_unknown_returns_empty(self):
