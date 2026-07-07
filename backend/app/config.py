@@ -292,6 +292,19 @@ class Settings:
         "V4_HYPOTHESIS_AGENT_ENABLED", "false"
     ).lower() == "true"
 
+    # V4_DYNAMIC_ROUTING_ENABLED: 控制 v4 Dynamic Router（P6）的执行
+    # 职责：基于 v4_pathway_class 动态编排 13 Agent（Ontology/Planner/Specialist/
+    #   Coordinator/ReactionBuilder/MechanismBuilder/ODEBuilder/SBMLGrounder/
+    #   Calibration/SimulationPlanner/Validation/Hypothesis/ParameterAgent）
+    # 铁律：flag=false 时走 v3 固定流水线（nodes_v2.py 路由不变）
+    #       flag=true 时按通路类别动态分派 Specialist（单通路→1 / 多通路→N+Coordinator）
+    # 依赖关系：V4_DYNAMIC_ROUTING_ENABLED=true 隐含 V4_PATHWAY_PLANNER_ENABLED=true
+    #           （Router 依赖 v4_pathway_class 输出）
+    # fail_safe：超时 30s 回退 v3 / 最大调度深度 10 / visited set 防环
+    V4_DYNAMIC_ROUTING_ENABLED: bool = os.getenv(
+        "V4_DYNAMIC_ROUTING_ENABLED", "false"
+    ).lower() == "true"
+
 
 # =============================================================================
 # 依赖隔离策略（try-import 模板）—— Phase 5 前置（SubTask 5.0.2）

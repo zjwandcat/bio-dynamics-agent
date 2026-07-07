@@ -321,3 +321,12 @@ class BioDynamicsState(TypedDict, total=False):
     # True 表示 Hypothesis Agent 已执行（即使列表为空）
     # 用于 Task 6.7 SSE 事件 v4_hypothesis_generated 触发判断
     v4_hypothesis_generated: bool
+
+    # v4 Dynamic Router 调度记录（Phase 6 / Task 6.5）
+    # 结构：list[dict]，每条记录含：
+    #   {agent_id, agent_name, status: "in_progress"|"success"|"failed"|"timeout",
+    #    latency_ms: float, fallback_used: bool, error: str|None,
+    #    depth: int, timestamp: str}
+    # V4_DYNAMIC_ROUTING_ENABLED=false 时保持空，不影响 v3 流程
+    # 铁律：不修改 v3 任何字段；仅消费 v4_pathway_class / v4_pathway_graph
+    v4_agent_dispatches: list[dict]
