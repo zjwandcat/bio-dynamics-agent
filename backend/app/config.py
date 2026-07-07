@@ -283,6 +283,15 @@ class Settings:
         "V4_CALIBRATION_AGENT_ENABLED", "false"
     ).lower() == "true"
 
+    # V4_HYPOTHESIS_AGENT_ENABLED: 控制 v4 Hypothesis Agent（P6）的执行
+    # 职责：基于 pathway graph + Reaction IR 生成假设列表（v4_hypothesis_list）
+    # 铁律：flag=false 时 P6 不执行，state.v4_hypothesis_list 保持空
+    #       Level 5 Hypothesis Validation 自动 skipped（pass=True，不阻塞）
+    # 依赖关系：被 Level 5 Hypothesis Validation 消费（validation_v2/level5_hypothesis.py）
+    V4_HYPOTHESIS_AGENT_ENABLED: bool = os.getenv(
+        "V4_HYPOTHESIS_AGENT_ENABLED", "false"
+    ).lower() == "true"
+
 
 # =============================================================================
 # 依赖隔离策略（try-import 模板）—— Phase 5 前置（SubTask 5.0.2）

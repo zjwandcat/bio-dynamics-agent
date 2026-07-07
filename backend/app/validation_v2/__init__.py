@@ -29,6 +29,10 @@ from app.validation_v2.level4_benchmark import (
     Level4BenchmarkValidator,
     level4_hook_node,
 )
+from app.validation_v2.level5_hypothesis import (
+    Level5HypothesisValidator,
+    level5_hook_node,
+)
 from app.validation_v2.thresholds import PathwayThresholds
 
 __all__ = [
@@ -41,5 +45,7 @@ __all__ = [
     "Level4BenchmarkValidator",
     "level4_hook_node",
     "BENCHMARK_REGISTRY",
+    "Level5HypothesisValidator",
+    "level5_hook_node",
     "PathwayThresholds",
 ]
