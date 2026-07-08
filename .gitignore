@@ -55,18 +55,22 @@ backend/data/qdrant_local/
 # Release exclusions (per upload requirements)
 # =============================================================================
 
-# --- Test modules (do not upload) ---
+# --- Test modules / configs / fixtures (do not upload) ---
 backend/tests/
 backend/test_*.py
 backend/test_*.bat
 backend/_test_*/
 backend/scripts/test_*.py
+backend/debug_e2e.py
+backend/e2e_request.json
+backend/verify_llm.py
 scripts/test_*.py
 verification/
 frontend/__tests__/
 frontend/coverage/
 frontend/e2e/
 test_outputs_egf/
+pytest.ini
 
 # Test files containing hardcoded credentials (kept local-only)
 backend/test_api.py
@@ -75,6 +79,10 @@ backend/test_bigmodel_keys.py
 # --- Markdown reports (keep only README.md) ---
 *.md
 !README.md
+
+# --- Generated JSON reports ---
+audit_report_*.json
+validation_report_*.json
 
 # --- Text files (keep only requirements.txt) ---
 *.txt
