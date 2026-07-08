@@ -1,0 +1,120 @@
+# BioDynamics v4 CI/CD 流水线
+# Phase 8：定义从单元测试到发布门禁的完整质量管线
+name: BioDynamics v4 CI/CD
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  # 阶段 1：单元测试（基础门禁，所有后续阶段依赖它）
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - run: cd backend && python -m pytest tests/ -v --tb=short --maxfail=5
+
+  # 阶段 2：集成与端到端测试
+  integration-tests:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - run: cd backend && python -m pytest tests/ -k "integration or e2e" -v --tb=short
+
+  # 阶段 3：科学基准测试
+  scientific-benchmarks:
+    needs: integration-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - run: cd verification && python -m pytest benchmark/ -v --tb=short
+
+  # 阶段 4：BioModels 回归测试
+  biomodels-regression:
+    needs: scientific-benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - run: cd verification && python -m pytest biomodels_regression/ -v --tb=short
+
+  # 阶段 5：参数压力测试
+  parameter-stress:
+    needs: biomodels-regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - run: cd verification && python -m pytest parameter_stress/ -v --tb=short
+
+  # 阶段 6：Playwright 前端 UI 测试
+  playwright-ui:
+    needs: parameter-stress
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: cd frontend && npm ci
+      - run: cd frontend && npx playwright install --with-deps
+      - run: cd frontend && npx playwright test
+
+  # 阶段 7：性能基准测试
+  performance-benchmark:
+    needs: playwright-ui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - run: cd verification && python -m pytest benchmark/ -k "performance" -v --tb=short
+
+  # 阶段 8：覆盖率报告（与性能基准并行触发，仅依赖单测+集成测试）
+  coverage-report:
+    needs: [unit-tests, integration-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt pytest-cov
+      - run: cd backend && python -m pytest tests/ --cov=app --cov-report=xml --cov-report=html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: backend/htmlcov/
+
+  # 阶段 9：发布门禁（全部阶段通过后方可发布）
+  release-gate:
+    needs: [unit-tests, integration-tests, scientific-benchmarks, biomodels-regression, parameter-stress, playwright-ui, performance-benchmark]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release Gate
+        run: |
+          echo "All gates passed. Release approved."
+          echo "BioDynamics v4.1 is ready for release."
