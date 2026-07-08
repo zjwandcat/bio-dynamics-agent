@@ -69,6 +69,9 @@ verification/
 frontend/__tests__/
 frontend/coverage/
 frontend/e2e/
+frontend/playwright.config.ts
+frontend/vitest.config.ts
+frontend/vitest.setup.ts
 test_outputs_egf/
 pytest.ini
 
