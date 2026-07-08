@@ -2,7 +2,7 @@
 
 > **Task H.1** — Final release report for the v4.0 Release Candidate sprint.
 > Documentation only; no source code modified.
-> Report date: 2026-07-07. Repository: `bio-dynamics-agent/`.
+> Report date: 2026-07-08 (updated post-RC fix). Repository: `bio-dynamics-agent/`.
 
 This report consolidates the eight sprint phases (A–H) into a single release
 summary. Commit hashes are short SHAs from `git log --oneline`. Source of truth
@@ -151,9 +151,8 @@ and one Playwright E2E spec (`frontend/e2e/smoke.spec.ts`). Dev dependencies
 (`vitest`, `@playwright/test`, `@testing-library/react`, `jsdom`) are declared
 in `package.json`. **The standalone `d251fef` commit listed in the sprint plan
 was not found as a separate commit in `git log`; the test files were committed
-within the B.3 commit window.** Additionally, `package.json` does not yet
-define `test` / `test:e2e` npm scripts — tests are run by invoking `vitest` and
-`playwright` directly.
+within the B.3 commit window.** `package.json` now defines `test` (vitest) and
+`test:e2e` (playwright) scripts — added in the post-RC fix commit `9f6bfbd`.
 
 ---
 
@@ -253,7 +252,7 @@ Nine docs now live under `docs/`: `README.md`, `ARCHITECTURE.md`,
 | Task | Commit | Summary |
 |---|---|---|
 | **G.1** | `bedd680` | Unify directory structure + naming audit + config consolidation. |
-| **G.2** | _not committed_ | Unified JSON logging + error handling (partial — see notes). |
+| **G.2** | `2903bb1` | Unified JSON logging + error handling middleware + exception recovery docs. |
 | **G.3** | `fd3cdc1` | Docker containerization (multi-stage Dockerfile + docker-compose + .dockerignore). |
 | **G.4** | `6fa5114` | Demo scripts (`demo.sh` single pathway + `demo_benchmark.sh` all 10 benchmarks). |
 
@@ -266,16 +265,17 @@ filenames are dictated by the shadcn CLI registry contract and must not be
 renamed), and consolidated configuration. The 3 coarse feature flags are
 exposed in `backend/.env.example` with full documentation; all default `false`.
 
-### G.2 (partial — not committed)
+### G.2 (committed — `2903bb1`)
 
-A `backend/app/logging_config.py` module exists in the working tree
-(**untracked / not committed**) providing a `JSONFormatter` (serializes each
-log record to single-line JSON: `timestamp / level / logger / message / module
-/ line` + `exception` stack trace) and an idempotent `setup_logging(level,
-json_output)` entry point. Corresponding uncommitted edits to `backend/app/main.py`
-and `backend/app/config.py` and a draft `docs/ERROR_HANDLING.md` are present in
-the working tree but **not staged or committed**. This work is incomplete and
-not part of the committed RC.
+A `backend/app/logging_config.py` module provides a `JSONFormatter` (serializes
+each log record to single-line JSON: `timestamp / level / logger / message /
+module / line` + `exception` stack trace) and an idempotent `setup_logging(level,
+json_output)` entry point. `main.py` calls `setup_logging` at import time and
+registers a global `@app.exception_handler(Exception)` returning structured
+500 JSON. SSE error emissions are standardized to `{"event":"error","data":{...}}`.
+`LOG_LEVEL` and `LOG_JSON` env vars control the configuration. 18 tests pass.
+`docs/ERROR_HANDLING.md` documents 5 recovery strategies (sandbox/LLM/RAG/SBML/
+unhandled).
 
 ### G.3 (committed — `fd3cdc1`)
 
@@ -309,14 +309,14 @@ lines).
 
 ### 8.3 Remaining risks
 
-| Risk | Detail |
-|---|---|
-| **G1 — Hypothesis refinement loop** | Not implemented (deferred to v4.1). Hypotheses are one-shot; no back-edge to `worker_ode`. |
-| **Playwright browsers in CI** | E2E browsers are not installed in CI; `smoke.spec.ts` runs locally only. |
-| **v4 SSE store no-ops** | `ingestSSEEvent` has TODOs for `v4_validation_report` / `v4_pathway_graph` / `v4_simulation_result` — received but discarded, so the Validation Pyramid and Pathway Graph panels cannot hydrate from SSE yet. |
-| **3 center-pane placeholders** | `WorkbenchShell.tsx` still renders `PlaceholderPanel` for Pathway Graph (C.3), Simulation Tabs (C.4), and Parameter Editor (C.5) in the center pane — the components exist but are not wired into the shell. The simulation image currently lands only in the AI Assistant chat via `image_ready`. |
-| **G.2 incomplete** | Unified JSON logging module exists but is uncommitted and not wired into `main.py`; no `ERROR_HANDLING.md` committed (see Chapter 7). G.3 (Docker) and G.4 (demo scripts) are committed. |
-| **Lower-severity UX gaps** | G4–G10 (literature PMID import, structured-hypothesis → pathway-class seeding, v4 fields missing from `pre_router` reset list, experiment planner stubs, no PDF/DOCX export) remain open. |
+| Risk | Detail | Status |
+|---|---|---|
+| **G1 — Hypothesis refinement loop** | Not implemented (deferred to v4.1). Hypotheses are one-shot; no back-edge to `worker_ode`. | Open |
+| **Playwright browsers in CI** | E2E browsers are not installed in CI; `smoke.spec.ts` runs locally only. | Open |
+| ~~**v4 SSE store no-ops**~~ | ~~`ingestSSEEvent` discarded `v4_validation_report` / `v4_pathway_graph` / `v4_simulation_result`.~~ **RESOLVED** in `9f6bfbd` — all three events now hydrate `validationReport` / `pathwayGraph` / `simulationResult` in the Zustand store. | **Fixed** |
+| ~~**3 center-pane placeholders**~~ | ~~`WorkbenchShell.tsx` rendered `PlaceholderPanel` for C.3/C.4/C.5.~~ **RESOLVED** in `9f6bfbd` — PathwayGraph, SimulationPanel, ParameterExplorer (center); PathwayTree, BenchmarkList, SimulationHistory (left); ValidationPyramid, HypothesisPanel (right) are now wired. | **Fixed** |
+| ~~**G.2 incomplete**~~ | ~~Unified JSON logging uncommitted.~~ **RESOLVED** — G.2 committed as `2903bb1` (see Chapter 7). | **Fixed** |
+| **Lower-severity UX gaps** | G4–G10 (literature PMID import, structured-hypothesis → pathway-class seeding, v4 fields missing from `pre_router` reset list, experiment planner stubs, no PDF/DOCX export) remain open. | Open |
 
 ### 8.4 Feature flags
 
@@ -324,6 +324,22 @@ All 3 coarse flags default **OFF** (`V4_SCIENTIFIC_LAYER_ENABLED=false`,
 `V4_VALIDATION_ENABLED=false`, `V4_HYPOTHESIS_ENABLED=false` in
 `.env.example`). With all three off, no v4 hook fires and the system behaves
 bit-for-bit as v3. v4 features are opt-in for production.
+
+---
+
+## Post-RC Fix — Commit `9f6bfbd`
+
+A single post-RC fix commit addressed three blocking risks identified in the
+original Chapter 8.3:
+
+| Fix | Files | Detail |
+|---|---|---|
+| **Center-pane wiring** | `WorkbenchShell.tsx` | Replaced all `PlaceholderPanel` instances with actual components: PathwayGraph (C.3), SimulationPanel (C.4), ParameterExplorer (C.5) in center; PathwayTree, BenchmarkList, SimulationHistory (C.2) in left; ValidationPyramid (C.7), HypothesisPanel (C.8) in right. |
+| **SSE event hydration** | `store.ts` | `ingestSSEEvent` now hydrates `v4_validation_report` → `validationReport`, `v4_pathway_graph` → `pathwayGraph`, `v4_simulation_result` → `simulationResult` (previously no-op). |
+| **Test scripts** | `package.json` | Added `"test": "vitest"` and `"test:e2e": "playwright test"` to npm scripts. |
+
+**Verification**: `npx tsc --noEmit` passes (0 errors). `npx vitest run` passes
+(52/52 tests). TypeScript compilation and frontend tests confirmed no regressions.
 
 ---
 
