@@ -808,11 +808,24 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
         }
         break;
       }
-      case "v4_validation_report":
-      case "v4_pathway_graph":
-      case "v4_simulation_result":
-        // TODO(C.7/C.4): hydrate validationReport / pathwayGraph / simulationResult.
+      case "v4_validation_report": {
+        if (eventData && typeof eventData === "object") {
+          set({ validationReport: eventData });
+        }
         break;
+      }
+      case "v4_pathway_graph": {
+        if (eventData && typeof eventData === "object") {
+          set({ pathwayGraph: eventData as PathwayGraphData });
+        }
+        break;
+      }
+      case "v4_simulation_result": {
+        if (eventData && typeof eventData === "object") {
+          set({ simulationResult: eventData as SimulationResult });
+        }
+        break;
+      }
 
       default:
         break;

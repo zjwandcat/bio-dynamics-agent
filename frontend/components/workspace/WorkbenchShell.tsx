@@ -1,23 +1,24 @@
 "use client";
 
 import React, { useEffect } from "react";
-import {
-  Network,
-  BarChart3,
-  History,
-  GitBranch,
-  FlaskConical,
-  Sliders,
-  ShieldCheck,
-  Lightbulb,
-  AlertTriangle,
-} from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useWorkbenchStore } from "@/lib/store";
 import { WorkbenchHeader } from "@/components/workspace/WorkbenchHeader";
 import { RunControls } from "@/components/workspace/RunControls";
 import { PlaceholderPanel } from "@/components/workspace/PlaceholderPanel";
 import { AIAssistantPanel } from "@/components/ai_assistant/AIAssistantPanel";
+import { PathwayTree } from "@/components/pathway/PathwayTree";
+import { BenchmarkList } from "@/components/pathway/BenchmarkList";
+import { SimulationHistory } from "@/components/pathway/SimulationHistory";
+import { PathwayGraph, type PathwayGraphProps } from "@/components/pathway/PathwayGraph";
+import { SimulationPanel } from "@/components/simulation/SimulationPanel";
+import { ParameterExplorer } from "@/components/parameter/ParameterExplorer";
+import {
+  ValidationPyramid,
+  type ValidationReport,
+} from "@/components/validation/ValidationPyramid";
+import { HypothesisPanel } from "@/components/hypothesis/HypothesisPanel";
 
 /**
  * Scientific Modeling IDE four-pane workbench shell.
@@ -38,6 +39,8 @@ export function WorkbenchShell() {
   const updateDbStatus = useWorkbenchStore((s) => s.updateDbStatus);
   const refreshRagStatus = useWorkbenchStore((s) => s.refreshRagStatus);
   const refreshModelStatus = useWorkbenchStore((s) => s.refreshModelStatus);
+  const pathwayGraph = useWorkbenchStore((s) => s.pathwayGraph);
+  const validationReport = useWorkbenchStore((s) => s.validationReport);
 
   // Hydrate admin status once on mount (RAG + model providers).
   useEffect(() => {
@@ -73,24 +76,9 @@ export function WorkbenchShell() {
           <ScrollArea className="min-h-0 flex-1">
             <div className="space-y-3 p-2.5">
               <RunControls />
-              <PlaceholderPanel
-                title="Pathway Tree"
-                description="通路类层级树与模块选择"
-                taskRef="C.2"
-                icon={<Network className="h-3.5 w-3.5" />}
-              />
-              <PlaceholderPanel
-                title="Benchmarks"
-                description="BioModels 基准对照"
-                taskRef="C.12"
-                icon={<BarChart3 className="h-3.5 w-3.5" />}
-              />
-              <PlaceholderPanel
-                title="History"
-                description="实验与仿真历史记录"
-                taskRef="C.11"
-                icon={<History className="h-3.5 w-3.5" />}
-              />
+              <PathwayTree />
+              <BenchmarkList />
+              <SimulationHistory />
             </div>
           </ScrollArea>
         </div>
@@ -103,27 +91,14 @@ export function WorkbenchShell() {
             </span>
           </div>
           <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2.5">
-            <PlaceholderPanel
-              title="Pathway Graph"
-              description="交互式通路机制图谱"
-              taskRef="C.3"
-              icon={<GitBranch className="h-3.5 w-3.5" />}
+            <PathwayGraph
+              graph={pathwayGraph as PathwayGraphProps["graph"]}
               className="min-h-0 flex-1"
             />
-            <PlaceholderPanel
-              title="Simulation Tabs"
-              description="仿真结果时序图 / 相图 / 剂量响应"
-              taskRef="C.4"
-              icon={<FlaskConical className="h-3.5 w-3.5" />}
-              className="h-44 shrink-0"
-            />
-            <PlaceholderPanel
-              title="Parameter Editor"
-              description="动力学参数与初始条件编辑"
-              taskRef="C.5"
-              icon={<Sliders className="h-3.5 w-3.5" />}
-              className="h-36 shrink-0"
-            />
+            <SimulationPanel />
+            <div className="h-80 shrink-0 overflow-hidden">
+              <ParameterExplorer />
+            </div>
           </div>
         </div>
 
@@ -136,18 +111,10 @@ export function WorkbenchShell() {
           </div>
           <ScrollArea className="min-h-0 flex-1">
             <div className="space-y-3 p-2.5">
-              <PlaceholderPanel
-                title="Validation Pyramid"
-                description="五级验证金字塔（内部 / SBML / 串扰 / 基准 / 假说）"
-                taskRef="C.7"
-                icon={<ShieldCheck className="h-3.5 w-3.5" />}
+              <ValidationPyramid
+                report={(validationReport as ValidationReport) ?? {}}
               />
-              <PlaceholderPanel
-                title="Hypothesis Panel"
-                description="可证伪假说与实验设计"
-                taskRef="C.8"
-                icon={<Lightbulb className="h-3.5 w-3.5" />}
-              />
+              <HypothesisPanel />
               <PlaceholderPanel
                 title="Evidence & Warnings"
                 description="文献证据与一致性告警"
