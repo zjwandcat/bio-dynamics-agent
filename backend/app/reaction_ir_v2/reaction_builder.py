@@ -156,41 +156,12 @@ def build_from_network_json(
         # 参数上下文：source → target + mechanism
         parameter_context = f"{source_name} → {target_name} ({mechanism.value})"
 
-        # 构建 reactants / products
-        # 通用策略：source 为 substrate，target 为 product
-        # inhibition 特殊处理：source 为 inhibitor（modifier），target 为 substrate
-        reactants: list[SpeciesRef] = []
-        products: list[SpeciesRef] = []
-        modifiers: list[Any] = []  # Modifier 类型
-
-        if mechanism == MechanismType.INHIBITION:
-            # 抑制：target 是被抑制的底物，source 是 inhibitor
-            reactants.append(SpeciesRef(species_id=target_id, role="substrate"))
-            products.append(SpeciesRef(species_id=target_id, role="product"))
-            modifiers.append(_make_modifier(source_id, "inhibitory"))
-        elif mechanism == MechanismType.DEGRADATION or mechanism == MechanismType.PROTEASOMAL_DEGRADATION:
-            # 降解：source 为 substrate，无 product
-            reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
-        elif mechanism == MechanismType.PHOSPHORYLATION:
-            # B3 修复：区分自磷酸化与异磷酸化（按 source/target 名称前缀推断）
-            if _is_autophosphorylation(source_name, target_name):
-                # 自磷酸化（target = p+source，如 EGFR → pEGFR）：
-                # source 作 substrate，target (p-source 形式) 作 product，无 modifier
-                reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
-                products.append(SpeciesRef(species_id=target_id, role="product"))
-            else:
-                # 异磷酸化（source 是激酶，target 是底物磷酸化形式，如 AKT → pTSC2）：
-                # 未磷酸化形式作 substrate，target (p-form) 作 product，source 作 catalytic modifier
-                substrate_id = _derive_substrate_id(
-                    target_name, target_id, name_to_species_id
-                )
-                reactants.append(SpeciesRef(species_id=substrate_id, role="substrate"))
-                products.append(SpeciesRef(species_id=target_id, role="product"))
-                modifiers.append(_make_modifier(source_id, "catalytic"))
-        else:
-            # 默认：source → target
-            reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
-            products.append(SpeciesRef(species_id=target_id, role="product"))
+        # 接线强制（纪律1）：调用统一的 _build_reaction_for_mechanism，
+        # 禁止 inline if/elif/else 兜底，禁止"默认：source → target"1:1 兜底。
+        # 19 种机制各自体现生物学语义（见 _build_reaction_for_mechanism 注释）。
+        reactants, products, modifiers = _build_reaction_for_mechanism(
+            mechanism, source_id, target_id, source_name, target_name, name_to_species_id
+        )
 
         # compartments：从 species 查询
         sp_source = next((s for s in species_list if s.id == source_id), None)
@@ -200,6 +171,12 @@ def build_from_network_json(
             compartments_set.add(sp_source.compartment)
         if sp_target:
             compartments_set.add(sp_target.compartment)
+
+        # TD-020 (IB-035) 修复：从 edge 元数据与 sbml_model_id 填充 Provenance，避免恒为 None
+        # 优先取 edge 顶层字段，再回退到 edge 内嵌的 provenance dict
+        _edge_prov = edge.get("provenance") or {}
+        _pmid = edge.get("pmid") or _edge_prov.get("pmid")
+        _kegg = edge.get("kegg_id") or _edge_prov.get("kegg_id")
 
         reactions.append(ReactionV2(
             id=f"RXN_{i+1:03d}",
@@ -212,9 +189,9 @@ def build_from_network_json(
             parameter_context=parameter_context,
             pathway_tag=pathway_tag,
             provenance=Provenance(
-                source_sbml_reaction=None,
-                source_pmid=None,
-                source_kegg=None,
+                source_sbml_reaction=sbml_model_id,  # SBML model ID 作为溯源来源
+                source_pmid=str(_pmid) if _pmid is not None else None,
+                source_kegg=str(_kegg) if _kegg is not None else None,
             ),
         ))
 
@@ -268,6 +245,237 @@ _DEFAULT_COMPARTMENT_SIZE: dict[str, float] = {
     "nucleus": 0.1,         # 核体积约 10%
     "mitochondria": 0.1,    # 线粒体约 10%
 }
+
+
+# =============================================================================
+# IB-009 修复：逐机制构建 reactants/products/modifiers（替代 else 分支 1:1 兜底）
+# =============================================================================
+# 审计报告 TD-004：原 else 分支将 transcription/translation/GTP_GDP/cleavage/
+# dissociation/sequestration/activation/dimerization 等 8+ 种机制统一当作
+# "source(substrate, stoich=1) → target(product, stoich=1)"，丢失各自特定语义。
+#
+# 本函数为统一的机制语义构建器，被 build_from_network_json 和
+# build_from_pathway_graph 两个入口共同调用（接线强制，禁止 else 兜底）。
+# 每种机制体现其生物学语义：
+#   - transcription: TF 作 modifier，产物为 mRNA（不被消耗）
+#   - translation: mRNA 作 modifier（模板），产物为 protein（不被消耗）
+#   - gtp_gdp_exchange: source 作 substrate（GDP-form→GTP-form），应有 GEF/GAP modifier
+#   - cleavage: enzyme 作 modifier（MM 催化），target 为切割产物
+#   - dissociation: complex → components 方向（1 reactant → 多 products）
+#   - sequestration: sequesterer 作 modifier（扣押者不消耗）
+#   - dimerization: 2*monomer → 1*dimer（stoichiometry=2，IB-005 同步修复）
+#   - dephosphorylation: 磷酸酶作 modifier（catalytic），target 为去磷酸化产物
+#   - ubiquitination: E3 ligase 作 modifier（catalytic），target 为泛素化产物
+#   - binding/complex_formation: source+target → complex（双底物）
+#   - nuclear_import/export/translocation: source → target（区室变更）
+#   - activation: source → target（通用调控，保留 1:1 语义）
+# =============================================================================
+def _build_reaction_for_mechanism(
+    mechanism: MechanismType,
+    source_id: str,
+    target_id: str,
+    source_name: str,
+    target_name: str,
+    name_to_species_id: dict[str, str],
+) -> tuple[list, list, list]:
+    """根据机制类型构建 (reactants, products, modifiers)。
+
+    Args:
+        mechanism: 机制枚举值
+        source_id: source 的 species_id
+        target_id: target 的 species_id
+        source_name: source 的规范名（用于自磷酸化判定等）
+        target_name: target 的规范名
+        name_to_species_id: 名称→species_id 映射（用于推导未磷酸化形式等）
+
+    Returns:
+        (reactants, products, modifiers) 三个列表
+    """
+    reactants: list[SpeciesRef] = []
+    products: list[SpeciesRef] = []
+    modifiers: list[Any] = []
+
+    if mechanism == MechanismType.INHIBITION:
+        # 抑制：target 是被抑制的底物，source 是 inhibitor
+        reactants.append(SpeciesRef(species_id=target_id, role="substrate"))
+        products.append(SpeciesRef(species_id=target_id, role="product"))
+        modifiers.append(_make_modifier(source_id, "inhibitory"))
+
+    elif mechanism in (MechanismType.DEGRADATION, MechanismType.PROTEASOMAL_DEGRADATION):
+        # 降解：source 为 substrate，无 product
+        reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
+
+    elif mechanism == MechanismType.PHOSPHORYLATION:
+        # B3 修复：区分自磷酸化与异磷酸化
+        if _is_autophosphorylation(source_name, target_name):
+            # 自磷酸化：source 作 substrate，target (p-source) 作 product，无 modifier
+            reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
+            products.append(SpeciesRef(species_id=target_id, role="product"))
+        else:
+            # 异磷酸化：未磷酸化形式作 substrate，target (p-form) 作 product，source 作 catalytic modifier
+            substrate_id = _derive_substrate_id(
+                target_name, target_id, name_to_species_id
+            )
+            reactants.append(SpeciesRef(species_id=substrate_id, role="substrate"))
+            products.append(SpeciesRef(species_id=target_id, role="product"))
+            modifiers.append(_make_modifier(source_id, "catalytic"))
+
+    elif mechanism == MechanismType.DEPHOSPHORYLATION:
+        # 去磷酸化：磷酸酶（source）作 catalytic modifier，target 为去磷酸化产物
+        # 底物应为 target 的磷酸化前体（如 pTSC2 → TSC2，底物为 pTSC2）
+        substrate_id = _derive_phosphorylated_substrate_id(
+            target_name, target_id, name_to_species_id
+        )
+        reactants.append(SpeciesRef(species_id=substrate_id, role="substrate"))
+        products.append(SpeciesRef(species_id=target_id, role="product"))
+        modifiers.append(_make_modifier(source_id, "catalytic"))
+
+    elif mechanism == MechanismType.UBIQUITINATION:
+        # 泛素化：E3 ligase（source）作 catalytic modifier，target 为泛素化产物
+        # 底物应为 target 的非泛素化前体
+        substrate_id = _derive_unmodified_substrate_id(
+            target_name, target_id, name_to_species_id, prefix="ub"
+        )
+        reactants.append(SpeciesRef(species_id=substrate_id, role="substrate"))
+        products.append(SpeciesRef(species_id=target_id, role="product"))
+        modifiers.append(_make_modifier(source_id, "catalytic"))
+
+    elif mechanism == MechanismType.DIMERIZATION:
+        # IB-005 修复：2*monomer → 1*dimer（化学计量 2:1）
+        reactants.append(SpeciesRef(species_id=source_id, stoichiometry=2, role="substrate"))
+        products.append(SpeciesRef(species_id=target_id, stoichiometry=1, role="product"))
+
+    elif mechanism == MechanismType.BINDING:
+        # 结合：source + target → complex（双底物，产物为复合物）
+        # target 在 binding 中既是底物也是产物的一部分（保留 1:1 语义但标记为结合）
+        reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
+        reactants.append(SpeciesRef(species_id=target_id, role="substrate"))
+        products.append(SpeciesRef(species_id=target_id, role="product"))
+
+    elif mechanism == MechanismType.COMPLEX_FORMATION:
+        # 复合物组装：source + target → complex（双底物，与 binding 类似）
+        reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
+        reactants.append(SpeciesRef(species_id=target_id, role="substrate"))
+        products.append(SpeciesRef(species_id=target_id, role="product"))
+
+    elif mechanism == MechanismType.DISSOCIATION:
+        # 解离：complex → components（source 为 complex，target 为 component）
+        reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
+        products.append(SpeciesRef(species_id=target_id, role="product"))
+
+    elif mechanism == MechanismType.SEQUESTRATION:
+        # 扣押：sequesterer（source）作 modifier（不消耗），target 为被扣押物
+        # 生物学：Bcl2 扣押 BAX，Bcl2 不被消耗，BAX 被抑制
+        reactants.append(SpeciesRef(species_id=target_id, role="substrate"))
+        products.append(SpeciesRef(species_id=target_id, role="product"))
+        modifiers.append(_make_modifier(source_id, "inhibitory"))
+
+    elif mechanism == MechanismType.CLEAVAGE:
+        # 切割：enzyme（source）作 catalytic modifier（MM 动力学），target 为切割产物
+        # 底物应为 target 的前体（如 pro-Caspase3 → Caspase3_active，底物为 pro-Caspase3）
+        substrate_id = _derive_precursor_substrate_id(
+            target_name, target_id, name_to_species_id
+        )
+        reactants.append(SpeciesRef(species_id=substrate_id, role="substrate"))
+        products.append(SpeciesRef(species_id=target_id, role="product"))
+        modifiers.append(_make_modifier(source_id, "catalytic"))
+
+    elif mechanism == MechanismType.GTP_GDP_EXCHANGE:
+        # GTP/GDP 交换：source（GDP-form）→ target（GTP-form），GEF/GAP 作 modifier
+        # edge 通常只提供 source/target，GEF/GAP 未显式提供。
+        # 为保持酶催化语义（供 ODE 模板按 MM 渲染），将 source 作为 placeholder modifier，
+        # 并由 ODE 模板层识别 reaction_type=gtp_gdp_exchange 填入真实 GEF/GAP 浓度。
+        reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
+        products.append(SpeciesRef(species_id=target_id, role="product"))
+        modifiers.append(_make_modifier(source_id, "catalytic"))
+
+    elif mechanism == MechanismType.TRANSCRIPTION:
+        # 转录：TF（source）作 modifier（不消耗），产物为 mRNA（target）
+        # 无 reactant 消耗（基因模板不消耗）
+        products.append(SpeciesRef(species_id=target_id, role="product"))
+        modifiers.append(_make_modifier(source_id, "activating"))
+
+    elif mechanism == MechanismType.TRANSLATION:
+        # 翻译：mRNA（source）作 modifier（模板，不消耗），产物为 protein（target）
+        products.append(SpeciesRef(species_id=target_id, role="product"))
+        modifiers.append(_make_modifier(source_id, "catalytic"))
+
+    elif mechanism in (MechanismType.NUCLEAR_IMPORT,
+                       MechanismType.NUCLEAR_EXPORT,
+                       MechanismType.CYTOPLASM_TRANSLOCATION):
+        # 转运：source → target（区室变更，1:1 语义合理）
+        reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
+        products.append(SpeciesRef(species_id=target_id, role="product"))
+
+    else:
+        # ACTIVATION 及其他调控类：source → target（通用调控，1:1 语义合理）
+        # 这是唯一的 1:1 兜底，仅用于 activation 机制
+        reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
+        products.append(SpeciesRef(species_id=target_id, role="product"))
+
+    return reactants, products, modifiers
+
+
+def _derive_phosphorylated_substrate_id(
+    target_name: str,
+    target_id: str,
+    name_to_species_id: dict[str, str],
+) -> str:
+    """从去磷酸化产物名推导磷酸化底物的 species_id。
+
+    用于 dephosphorylation：edge `pTSC2_phosphatase → TSC2` 中 target=TSC2 是产物，
+    底物应为 pTSC2（加 "p" 前缀的磷酸化形式）。
+    """
+    if target_name and target_name not in name_to_species_id:
+        # target 未在 species 列表中，可能本身就是磷酸化形式
+        return target_id
+    # 尝试 "p" + target_name
+    phospho_name = "p" + target_name
+    if phospho_name in name_to_species_id:
+        return name_to_species_id[phospho_name]
+    return target_id
+
+
+def _derive_unmodified_substrate_id(
+    target_name: str,
+    target_id: str,
+    name_to_species_id: dict[str, str],
+    prefix: str = "ub",
+) -> str:
+    """从修饰产物名推导未修饰底物的 species_id。
+
+    用于 ubiquitination 等：edge `E3 → ubSubstrate` 中 target=ubSubstrate 是产物，
+    底物应为 Substrate（去掉 "ub" 前缀的未修饰形式）。
+    """
+    if (
+        len(target_name) >= len(prefix) + 1
+        and target_name[:len(prefix)].lower() == prefix.lower()
+        and target_name[len(prefix)].isupper()
+    ):
+        unmodified_name = target_name[len(prefix):]
+        if unmodified_name in name_to_species_id:
+            return name_to_species_id[unmodified_name]
+    return target_id
+
+
+def _derive_precursor_substrate_id(
+    target_name: str,
+    target_id: str,
+    name_to_species_id: dict[str, str],
+) -> str:
+    """从切割产物名推导前体底物的 species_id。
+
+    用于 cleavage：edge `Caspase3 → Caspase3_active` 中 target=Caspase3_active 是产物，
+    底物应为 pro-Caspase3 或 Caspase3（前体形式）。
+    """
+    # 尝试 "pro-" + target_name（如 pro-Caspase3）
+    pro_name = "pro-" + target_name
+    if pro_name in name_to_species_id:
+        return name_to_species_id[pro_name]
+    # 尝试 target_name 自身（如 Caspase3 → Caspase3_active，底物为 Caspase3）
+    if target_name in name_to_species_id:
+        return name_to_species_id[target_name]
+    return target_id
 
 
 # =============================================================================
@@ -420,39 +628,12 @@ def build_from_pathway_graph(
         kinetics_type = mechanism.default_kinetics
         parameter_context = f"{source_name} → {target_name} ({mechanism.value})"
 
-        # 构建 reactants / products / modifiers（复用 B3 修复后的逻辑）
-        reactants: list[SpeciesRef] = []
-        products: list[SpeciesRef] = []
-        modifiers: list[Any] = []
-
-        if mechanism == MechanismType.INHIBITION:
-            # 抑制：target 是被抑制的底物，source 是 inhibitor
-            reactants.append(SpeciesRef(species_id=target_id, role="substrate"))
-            products.append(SpeciesRef(species_id=target_id, role="product"))
-            modifiers.append(_make_modifier(source_id, "inhibitory"))
-        elif mechanism == MechanismType.DEGRADATION or mechanism == MechanismType.PROTEASOMAL_DEGRADATION:
-            # 降解：source 为 substrate，无 product
-            reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
-        elif mechanism == MechanismType.PHOSPHORYLATION:
-            # B3 修复：区分自磷酸化与异磷酸化（与 build_from_network_json 一致）
-            if _is_autophosphorylation(source_name, target_name):
-                # 自磷酸化（target = p+source，如 EGFR → pEGFR）：
-                # source 作 substrate，target (p-source 形式) 作 product，无 modifier
-                reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
-                products.append(SpeciesRef(species_id=target_id, role="product"))
-            else:
-                # 异磷酸化（source 是激酶，target 是底物磷酸化形式，如 AKT → pTSC2）：
-                # 未磷酸化形式作 substrate，target (p-form) 作 product，source 作 catalytic modifier
-                substrate_id = _derive_substrate_id(
-                    target_name, target_id, name_to_species_id
-                )
-                reactants.append(SpeciesRef(species_id=substrate_id, role="substrate"))
-                products.append(SpeciesRef(species_id=target_id, role="product"))
-                modifiers.append(_make_modifier(source_id, "catalytic"))
-        else:
-            # 默认：source → target
-            reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
-            products.append(SpeciesRef(species_id=target_id, role="product"))
+        # 接线强制（纪律1）：调用统一的 _build_reaction_for_mechanism，
+        # 禁止 inline if/elif/else 兜底，禁止"默认：source → target"1:1 兜底。
+        # 19 种机制各自体现生物学语义（见 _build_reaction_for_mechanism 注释）。
+        reactants, products, modifiers = _build_reaction_for_mechanism(
+            mechanism, source_id, target_id, source_name, target_name, name_to_species_id
+        )
 
         # compartments：从 species 查询
         sp_source = next((s for s in species_list if s.id == source_id), None)
@@ -462,6 +643,12 @@ def build_from_pathway_graph(
             compartments_set.add(sp_source.compartment)
         if sp_target:
             compartments_set.add(sp_target.compartment)
+
+        # TD-020 (IB-035) 修复：从 edge.provenance 与 sbml_model_id 填充 Provenance，避免恒为 None
+        # pathway_graph 的 edge 含 provenance dict（见 docstring），优先从中取 pmid/kegg_id
+        _edge_prov = edge.get("provenance") or {}
+        _pmid = _edge_prov.get("pmid") or edge.get("pmid")
+        _kegg = _edge_prov.get("kegg_id") or edge.get("kegg_id")
 
         reactions.append(ReactionV2(
             id=f"RXN_{i+1:03d}",
@@ -474,9 +661,9 @@ def build_from_pathway_graph(
             parameter_context=parameter_context,
             pathway_tag=pathway_tag,
             provenance=Provenance(
-                source_sbml_reaction=None,
-                source_pmid=None,
-                source_kegg=None,
+                source_sbml_reaction=sbml_model_id,  # SBML model ID 作为溯源来源
+                source_pmid=str(_pmid) if _pmid is not None else None,
+                source_kegg=str(_kegg) if _kegg is not None else None,
             ),
         ))
 

@@ -16,6 +16,7 @@ import {
 import { useWorkbenchStore } from "@/lib/store";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "@/lib/i18n";
 
 import type { SimulationResultExtras } from "./shared";
 import { TimeSeriesChart } from "./TimeSeriesChart";
@@ -37,14 +38,16 @@ interface SimulationTabsProps {
   className?: string;
 }
 
-const TABS = [
-  { value: "time_series", label: "Time Series", icon: Activity },
-  { value: "dose_response", label: "Dose Response", icon: TrendingUp },
-  { value: "sensitivity", label: "Sensitivity", icon: BarChart3 },
-  { value: "phase_portrait", label: "Phase Portrait", icon: GitCompare },
-  { value: "steady_state", label: "Steady State", icon: Equal },
-  { value: "oscillation", label: "Oscillation", icon: Waves },
-] as const;
+function useTabs(t: (key: string) => string) {
+  return [
+    { value: "time_series" as const, label: t("sim.tab.timeSeries"), icon: Activity },
+    { value: "dose_response" as const, label: t("sim.tab.doseResponse"), icon: TrendingUp },
+    { value: "sensitivity" as const, label: t("sim.tab.sensitivity"), icon: BarChart3 },
+    { value: "phase_portrait" as const, label: t("sim.tab.phasePortrait"), icon: GitCompare },
+    { value: "steady_state" as const, label: t("sim.tab.steadyState"), icon: Equal },
+    { value: "oscillation" as const, label: t("sim.tab.oscillation"), icon: Waves },
+  ];
+}
 
 /**
  * Six-tab multi-view over a single shared simulation result.
@@ -60,6 +63,8 @@ export function SimulationTabs({
   onRun,
   className,
 }: SimulationTabsProps) {
+  const { t } = useTranslation();
+  const TABS = useTabs(t);
   const result = useWorkbenchStore((s) => s.simulationResult);
 
   // ── Loading: spinner while a simulation is running ──
@@ -72,7 +77,7 @@ export function SimulationTabs({
         }
       >
         <Loader2 className="h-6 w-6 animate-spin text-emerald-400" />
-        <p className="text-xs">Running simulation…</p>
+        <p className="text-xs">{t("sim.running")}</p>
       </div>
     );
   }
@@ -88,11 +93,11 @@ export function SimulationTabs({
       >
         <AlertCircle className="h-6 w-6 text-red-400" />
         <p className="max-w-sm text-xs text-zinc-400">
-          {errorMessage || "Simulation failed."}
+          {errorMessage || t("sim.error")}
         </p>
         <Button size="sm" variant="outline" onClick={onRun}>
           <Play className="h-3.5 w-3.5" />
-          Retry
+          {t("sim.retry")}
         </Button>
       </div>
     );
@@ -108,10 +113,10 @@ export function SimulationTabs({
         }
       >
         <FlaskConical className="h-6 w-6 text-zinc-600" />
-        <p className="text-xs text-zinc-400">Run a simulation to see results</p>
+        <p className="text-xs text-zinc-400">{t("sim.empty")}</p>
         <Button size="sm" onClick={onRun}>
           <Play className="h-3.5 w-3.5" />
-          Run Simulation
+          {t("sim.run")}
         </Button>
       </div>
     );

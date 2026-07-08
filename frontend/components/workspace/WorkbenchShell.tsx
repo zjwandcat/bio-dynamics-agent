@@ -4,6 +4,7 @@ import React, { useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useWorkbenchStore } from "@/lib/store";
+import { useTranslation } from "@/lib/i18n";
 import { WorkbenchHeader } from "@/components/workspace/WorkbenchHeader";
 import { RunControls } from "@/components/workspace/RunControls";
 import { PlaceholderPanel } from "@/components/workspace/PlaceholderPanel";
@@ -27,14 +28,20 @@ import { HypothesisPanel } from "@/components/hypothesis/HypothesisPanel";
  *   ┌─────────────┬──────────────────────┬──────────────┬──────────────┐
  *   │ Project /   │ Scientific Workspace │ Validation   │ AI Assistant │
  *   │ Pathway     │ (Pathway Graph +     │ (Pyramid +   │ (collapsible │
- *   │ (250px)     │  Sim Tabs + Params)  │  Hypothesis) │  360px → 0)  │
+ *   │ (250px)     │  Sim Tabs + Params)  │  Hypothesis) │  320px → 0)  │
  *   └─────────────┴──────────────────────┴──────────────┴──────────────┘
  *
- * The AI Assistant pane is collapsible (collapsed by default) and is NOT the
- * primary UI — the center Scientific Workspace is. Placeholder slots are
- * filled in C.2–C.8.
+ * The AI Assistant pane is collapsible (默认展开，开源用户进入即可见 AI 输入框)
+ * and is NOT the primary UI — the center Scientific Workspace is.
+ *
+ * Scroll / responsive notes:
+ *   • Center pane scrolls vertically as a whole so users on 100% zoom / small
+ *     screens can always reach the parameter controls and the AI input.
+ *   • ParameterExplorer is capped at 35vh min+max to avoid eating the graph.
+ *   • Right panes use ScrollArea for independent vertical scrolling.
  */
 export function WorkbenchShell() {
+  const { t } = useTranslation();
   const aiOpen = useWorkbenchStore((s) => s.uiState.aiAssistantOpen);
   const updateDbStatus = useWorkbenchStore((s) => s.updateDbStatus);
   const refreshRagStatus = useWorkbenchStore((s) => s.refreshRagStatus);
@@ -49,8 +56,8 @@ export function WorkbenchShell() {
   }, [refreshRagStatus, refreshModelStatus]);
 
   const gridTemplateColumns = aiOpen
-    ? "250px minmax(0, 1fr) 320px 360px"
-    : "250px minmax(0, 1fr) 320px";
+    ? "minmax(200px, 250px) minmax(0, 1fr) 300px minmax(280px, 320px)"
+    : "minmax(200px, 250px) minmax(0, 1fr) 300px";
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
@@ -70,7 +77,7 @@ export function WorkbenchShell() {
         <div className="flex h-full min-w-0 flex-col border-r border-zinc-800 bg-zinc-950">
           <div className="shrink-0 border-b border-zinc-800 px-3 py-2">
             <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-              Project / Pathway
+              {t("pane.project")}
             </span>
           </div>
           <ScrollArea className="min-h-0 flex-1">
@@ -84,20 +91,36 @@ export function WorkbenchShell() {
         </div>
 
         {/* ── Center pane: Scientific Workspace ── */}
-        <div className="flex h-full min-w-0 flex-col bg-zinc-950">
+        <div className="flex h-full min-w-0 flex-col overflow-hidden bg-zinc-950">
           <div className="shrink-0 border-b border-zinc-800 px-3 py-2">
             <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-              Scientific Workspace
+              {t("pane.workspace")}
             </span>
           </div>
-          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2.5">
-            <PathwayGraph
-              graph={pathwayGraph as PathwayGraphProps["graph"]}
-              className="min-h-0 flex-1"
-            />
-            <SimulationPanel />
-            <div className="h-80 shrink-0 overflow-hidden">
-              <ParameterExplorer />
+          {/* 使用浏览器原生滚动条（overflow-y-scroll），确保在 Edge / Chrome 中滚动条始终可见 */}
+          <div
+            data-testid="center-scroll"
+            className="min-h-0 flex-1 overflow-y-scroll overscroll-contain pr-1"
+            style={{ scrollbarGutter: "stable" }}
+          >
+            <div className="flex flex-col gap-2 p-2.5">
+              <PathwayGraph
+                graph={pathwayGraph as PathwayGraphProps["graph"]}
+                className="shrink-0"
+                style={{ height: "clamp(140px, 22vh, 260px)", minHeight: 140 }}
+              />
+              <div
+                className="min-h-[120px] shrink-0"
+                style={{ height: "clamp(140px, 20vh, 220px)" }}
+              >
+                <SimulationPanel />
+              </div>
+              <div
+                className="min-h-[180px] shrink-0"
+                style={{ height: "clamp(200px, 36vh, 420px)" }}
+              >
+                <ParameterExplorer />
+              </div>
             </div>
           </div>
         </div>
@@ -106,7 +129,7 @@ export function WorkbenchShell() {
         <div className="flex h-full min-w-0 flex-col border-l border-zinc-800 bg-zinc-950">
           <div className="shrink-0 border-b border-zinc-800 px-3 py-2">
             <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-              Validation
+              {t("pane.validation")}
             </span>
           </div>
           <ScrollArea className="min-h-0 flex-1">

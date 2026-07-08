@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import random
@@ -216,7 +217,10 @@ class ConfidenceIntervalEstimator:
                 # bootstrap：重采样 n_samples 次
                 samples: list[float] = []
                 # 使用固定 seed 保证可复现（生产可注入外部 random_state）
-                rng = random.Random(hash(name) & 0xFFFFFFFF)
+                # TD-045 (IB-076) 修复：原 hash(name) 受 PYTHONHASHSEED 随机化影响，
+                # 跨进程/跨运行结果不可复现。改用 md5 摘要生成确定性 32-bit seed。
+                seed = int(hashlib.md5(name.encode("utf-8")).hexdigest(), 16) & 0xFFFFFFFF
+                rng = random.Random(seed)
 
                 if std_res > 0:
                     for _ in range(n_samples):

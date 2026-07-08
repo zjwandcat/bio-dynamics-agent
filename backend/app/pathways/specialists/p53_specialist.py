@@ -105,11 +105,22 @@ _P53_CORE_SPECIES: list[dict[str, Any]] = [
     {"name": "p21_mRNA", "species_type": "mrna", "compartment": "nucleus"},
     {"name": "p21", "species_type": "protein", "compartment": "nucleus",
      "shared": True},
+    # TD-033 (IB-064) 修复：补充 p300/CBP 乙酰化辅因子（p53 乙酰化的关键辅因子）
+    # p300 与 CBP 是旁系同源物（paralogues），均具有 HAT（组蛋白乙酰转移酶）活性，
+    # 乙酰化 p53 C 端 Lys382 等位点，稳定 p53 并增强其转录活性。
+    {"name": "p300", "species_type": "protein", "compartment": "nucleus"},
+    {"name": "CBP", "species_type": "protein", "compartment": "nucleus"},
+    # TD-033 (IB-064) 修复：补充 p53_ac（乙酰化 p53，p300/CBP 催化产物）
+    {"name": "p53_ac", "species_type": "protein", "compartment": "nucleus"},
+    # TD-033 (IB-064) 修复：补充 MDM4/MDMX（p53 转录活性抑制因子，与 MDM2 协同）
+    # MDM4 (又称 MDMX) 与 MDM2 同源但缺失 E3 连接酶活性，主要通过结合 p53 N 端
+    # 转录激活域抑制 p53 转录活性，并增强 MDM2 介导的 p53 泛素化。
+    {"name": "MDM4", "species_type": "protein", "compartment": "nucleus"},
 ]
 
 
 # =============================================================================
-# p53 核心反应（10 条）
+# p53 核心反应（12 条）
 # =============================================================================
 # 每条反应含：source / target / mechanism / kinetics_type / pathway_tag /
 #             substrate / product / modifier / modifier_type / autophosphorylation
@@ -294,6 +305,43 @@ _P53_CORE_REACTIONS: list[dict[str, Any]] = [
         "modifier_type": "catalytic",
         "autophosphorylation": False,
         "description": "p21 mRNA 翻译为 p21 蛋白（p21_mRNA 作 substrate，p21 作 product，CDK2/CDK4 抑制剂）",
+    },
+    # 11. TD-033 (IB-064) 修复：p53 → p53_ac（acetylation，p300/CBP 作 HAT 辅因子）
+    #     原通路缺失 p300/CBP 乙酰化辅因子，导致 p53 C 端 Lys382 乙酰化这一关键
+    #     稳定化修饰无法体现。p300/CBP 乙酰化 p53 增强 DNA 结合与转录活性。
+    #     p53 作 substrate，p53_ac 作 product，p300（或 CBP）作 catalytic modifier。
+    {
+        "source": "p53",
+        "target": "p53_ac",
+        "mechanism": "acetylation",
+        "kinetics_type": "Michaelis_Menten",
+        "pathway_tag": PATHWAY_TAG,
+        # p53 作 substrate，p53_ac（乙酰化形式）作 product，p300/CBP 作 catalytic modifier
+        "substrate": "p53",
+        "product": "p53_ac",
+        "modifier": "p300",
+        "modifier_type": "catalytic",
+        "autophosphorylation": False,
+        "site": "Lys382",
+        "description": "p300/CBP 乙酰化 p53 Lys382（p53 作 substrate，p53_ac 作 product，p300/CBP 作 HAT 辅因子，稳定 p53 并增强转录活性）",
+    },
+    # 12. TD-033 (IB-064) 修复：MDM4 → p53（inhibition，MDM4/MDMX 结合 p53 抑制转录活性）
+    #     原通路缺失 MDM4/MDMX 调控因子，导致 p53-MDM2 双负反馈外另一关键抑制分支缺失。
+    #     MDM4 与 MDM2 协同抑制 p53：MDM4 结合 p53 N 端转录激活域抑制其转录活性，
+    #     并增强 MDM2 介导的泛素化。此处用 inhibition 机制表示 MDM4 对 p53 的抑制。
+    {
+        "source": "MDM4",
+        "target": "p53",
+        "mechanism": "inhibition",
+        "kinetics_type": "mass_action",
+        "pathway_tag": PATHWAY_TAG,
+        # MDM4 作 modifier（抑制因子），p53 作 substrate（被抑制），产物为 p53_inhibited（用 p53 表示活性降低）
+        "substrate": "p53",
+        "product": "p53",
+        "modifier": "MDM4",
+        "modifier_type": "allosteric",
+        "autophosphorylation": False,
+        "description": "MDM4/MDMX 结合 p53 N 端转录激活域抑制 p53 转录活性（MDM4 作 allosteric inhibitor，与 MDM2 协同调控 p53）",
     },
 ]
 

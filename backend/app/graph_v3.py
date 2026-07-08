@@ -1355,6 +1355,27 @@ def worker_report(state: BioDynamicsState) -> dict[str, Any]:
         s9 = {"experiment_protocols": []}
         s10 = {"paper_evidence": []}
 
+    # === TD-035 (IB-022) 修复：消费 fallback_used 死标志 ===
+    # 读取 v4_agent_dispatches 中 fail_safe dispatcher 设置的 fallback_used 标志，
+    # 当任一 dispatch 触发 v3 回退时（timeout/depth_exceeded/loop_detected），
+    # 在最终报告的 metadata 中标记 fallback_was_used=True 并附加告警信息，
+    # 使该标志可在输出中被查询（消除"死标志"，调用方不再需要自行解析 dispatches）。
+    fallback_was_used = _check_fallback_used(state)
+    report_metadata = merged.get("report_metadata") or {}
+    if fallback_was_used:
+        # 合并已有 metadata，附加 fallback 告警字段
+        report_metadata = dict(report_metadata)
+        report_metadata["fallback_was_used"] = True
+        report_metadata["fallback_warning"] = (
+            "本流程中部分 v4 Agent 调度触发 fail-safe 回退（timeout/depth_exceeded/"
+            "loop_detected），已降级到 v3 流水线，请关注结果可靠性。"
+        )
+        logger.warning(
+            "worker_report: 检测到 v4_agent_dispatches 含 fallback_used=True，"
+            "已在报告 metadata 中标记 fallback_was_used=True"
+        )
+        merged["report_metadata"] = report_metadata
+
     # N11 报告渲染
     s11 = n11_scientific_report(merged)
 
@@ -1370,7 +1391,34 @@ def worker_report(state: BioDynamicsState) -> dict[str, Any]:
         + s10.get("agent_dispatches", [])
         + s11.get("agent_dispatches", []),
     }
+    # TD-035: 将 fallback_was_used 暴露到 result 顶层，便于调用方直接查询
+    result["fallback_was_used"] = fallback_was_used
+    if fallback_was_used and report_metadata:
+        result["report_metadata"] = report_metadata
     return compress_worker_output("worker_report", result, use_llm=False)
+
+
+def _check_fallback_used(state: BioDynamicsState) -> bool:
+    """检查 state 中 v4_agent_dispatches 是否有任一 dispatch 触发了 fallback_used。
+
+    TD-035 (IB-022) 修复：fail_safe.py 在 timeout/depth_exceeded/loop_detected
+    场景下会将 dispatch.fallback_used 置为 True，但此前无任何节点消费该标志
+    （死信号）。本函数集中解析 v4_agent_dispatches，供 worker_report 调用，
+    使该标志可在最终报告中查询。
+
+    Args:
+        state: LangGraph 全局状态，读取 ``v4_agent_dispatches`` 列表。
+
+    Returns:
+        True 表示至少一个 dispatch 触发了 v3 回退；False 表示无回退或字段缺失。
+    """
+    dispatches = state.get("v4_agent_dispatches") or []
+    if not isinstance(dispatches, list):
+        return False
+    for d in dispatches:
+        if isinstance(d, dict) and d.get("fallback_used") is True:
+            return True
+    return False
 
 
 # -----------------------------------------------------------------------------

@@ -54,17 +54,10 @@ MAX_STEP_FAST = 0.1      # 磷酸化
 MAX_STEP_MEDIUM = 0.5    # 转录/翻译
 MAX_STEP_SLOW = 1.0      # 降解
 
-# DDE 求解器（try-import 降级）
-try:
-    from jitcdde import jitcdde, y as jitcdde_y, t as jitcdde_t
-    _JITCDDE_AVAILABLE = True
-except ImportError:
-    _JITCDDE_AVAILABLE = False
-    import warnings
-    warnings.warn(
-        "jitcdde 不可用，DDE 将降级为 ODE（延迟项近似为 y(t)）。",
-        RuntimeWarning, stacklevel=2,
-    )
+# TD-009 (IB-028) 修复：从 app.solvers.dde_solver 导入 DDE 求解器
+# 旧实现直接 import jitcdde 但从不调用 solve_dde（死代码），现改为调用 dde_solver 模块
+from app.solvers.dde_solver import solve_dde, is_dde_available
+_JITCDDE_AVAILABLE = is_dde_available()
 
 
 def _get_param(target_name, param_key, default):
@@ -73,9 +66,20 @@ def _get_param(target_name, param_key, default):
     return eparams.get(param_key, default)
 
 
-def _ode_rhs(t, y):
-    """ODE 右端函数（转录延迟模板）。"""
+def _ode_rhs(t, y, y_delayed=None):
+    """ODE 右端函数（转录延迟模板）。
+
+    TD-009 修复：新增 y_delayed 可选参数支持 DDE 求解。
+    - ODE 模式（y_delayed=None）：y(t-τ) ≈ y(t)，转录用当前 TF 浓度
+    - DDE 模式（y_delayed 提供值）：转录使用 y_delayed（即 y(t-τ)）作为 TF 浓度
+    """
     dy = np.zeros(N_SP)
+    y = np.maximum(y, 0.0)  # TD-001 修复：负浓度保护（防 Hill src**n 对负底数产生 NaN）
+    # TD-009 修复：DDE 模式下使用延迟状态；ODE 模式下 y_delayed = y
+    if y_delayed is None:
+        y_delayed = y
+    else:
+        y_delayed = np.maximum(y_delayed, 0.0)
     for edge in EDGES:
         src_name = edge.get("source", "")
         tgt_name = edge.get("target", "")
@@ -88,12 +92,15 @@ def _ode_rhs(t, y):
         tgt = y[t_idx]
 
         if mechanism == "transcription":
-            # 转录（Hill 函数，DDE 降级模式下用 y(t) 近似 y(t-τ)）
+            # TD-009 修复：转录使用延迟状态 y(t-τ) 作为 TF 浓度（DDE 核心延迟项）
+            # DDE 模式：src_eff = y_delayed[s_idx]（τ 分钟前的 TF 浓度驱动当前 mRNA 转录）
+            # ODE 模式：src_eff = y[s_idx]（y_delayed = y，退化为当前浓度）
+            src_eff = y_delayed[s_idx]
             k_trans = _get_param(tgt_name, "k_trans", 0.1)
             n_hill = _get_param(tgt_name, "n_hill", 2.0)
             K_d = _get_param(tgt_name, "K_d", 0.5)
             k_mRNA_deg = _get_param(tgt_name, "k_mRNA_deg", 0.01)
-            _hill = (src ** n_hill) / (K_d ** n_hill + src ** n_hill) if (K_d ** n_hill + src ** n_hill) > 0 else 0.0
+            _hill = (src_eff ** n_hill) / (K_d ** n_hill + src_eff ** n_hill) if (K_d ** n_hill + src_eff ** n_hill) > 0 else 0.0
             _rate = k_trans * _hill
             dy[t_idx] += _rate
             dy[t_idx] -= k_mRNA_deg * tgt
@@ -189,19 +196,43 @@ def detect_delay_effect(t_arr, y_arr):
 # =============================================================================
 if __name__ == "__main__":
     t_eval = np.linspace(0, T_END, N_EVAL)
-    if REQUIRES_DDE and _JITCDDE_AVAILABLE and DDE_DELAY > 0:
-        print(f"[v4] DDE 求解器可用，但 MVP 阶段降级为 ODE（延迟 τ={DDE_DELAY} min）")
+
+    # TD-009 (IB-028) 修复：DDE 分支 —— 真实调用 solve_dde，不再静默降级为 ODE
+    if DDE_DELAY > 0 and is_dde_available():
+        # 分支1：延迟 > 0 且 DDE 可用 → 调用 solve_dde 真实 DDE 求解
+        print(f"[v4] TD-009: 调用 solve_dde 真实 DDE 求解（τ={DDE_DELAY} min）")
+        dde_result = solve_dde(
+            rhs=_ode_rhs,
+            t_span=(0, T_END),
+            y0=Y0,
+            delay=DDE_DELAY,
+            t_eval=t_eval,
+            max_step=MAX_STEP_MEDIUM,
+        )
+        t_arr = np.asarray(dde_result["t"])
+        y_arr = np.asarray(dde_result["y"])
+        _dde_used = dde_result.get("dde_used", True)
+    elif DDE_DELAY > 0 and not is_dde_available():
+        # 分支2：延迟 > 0 但 DDE 不可用 → 必须打印 DOWNGRADE 警告（禁止静默降级）
+        print(f"[v4] TD-009 DOWNGRADE WARNING: jitcdde 不可用，"
+              f"DDE 延迟 τ={DDE_DELAY} min 失效（y(t-τ)≈y(t)），降级为 ODE 求解")
+        sol = solve_ivp(
+            _ode_rhs, [0, T_END], Y0, t_eval=t_eval,
+            method="LSODA", max_step=MAX_STEP_MEDIUM, rtol=1e-6, atol=1e-9,
+        )
+        t_arr = sol.t
+        y_arr = sol.y.T
+        _dde_used = False
     else:
-        if REQUIRES_DDE:
-            print(f"[v4] jitcdde 不可用或 DDE_DELAY=0，降级为 ODE 求解")
-
-    sol = solve_ivp(
-        _ode_rhs, [0, T_END], Y0, t_eval=t_eval,
-        method="LSODA", max_step=MAX_STEP_MEDIUM, rtol=1e-6, atol=1e-9,
-    )
-
-    t_arr = sol.t
-    y_arr = sol.y.T
+        # 分支3：无延迟（DDE_DELAY == 0）→ 正常 ODE 求解
+        print(f"[v4] TD-009: 无延迟（DDE_DELAY=0），使用 ODE 求解")
+        sol = solve_ivp(
+            _ode_rhs, [0, T_END], Y0, t_eval=t_eval,
+            method="LSODA", max_step=MAX_STEP_MEDIUM, rtol=1e-6, atol=1e-9,
+        )
+        t_arr = sol.t
+        y_arr = sol.y.T
+        _dde_used = False
 
     # BIO_CHECK: simulation_complete, n_species=N_SP, n_steps=len(t_eval)
     # BIO_CHECK: max_conc={max(y_arr[:,i]) for i in range(N_SP)}
@@ -218,7 +249,9 @@ if __name__ == "__main__":
         "time_points": t_arr.tolist(),
         "concentrations": y_arr.tolist(),
         "dde_delay_minutes": DDE_DELAY,
+        # TD-009 修复：使用 _dde_used 反映实际求解方式（True=真实 DDE，False=ODE 降级）
         "dde_available": _JITCDDE_AVAILABLE,
+        "dde_used": _dde_used,
         "requires_dde": REQUIRES_DDE,
         "delay_effect": delay_result,
     }

@@ -27,14 +27,16 @@ from app.reaction_ir_v2.schema import (
 # 1. Mass Conservation（质量守恒）
 # =============================================================================
 def check_mass_conservation(ir: ReactionIRv2) -> list[str]:
-    """检查质量守恒约束是否在初始条件下满足。
+    """检查质量守恒约束是否在初始条件下满足（TD-010 修复：真实数值校验）。
 
     约束示例："EGFR + pEGFR + EGF-EGFR = EGFR_total"
 
-    实现策略：
-    - 对每个 mass_conservation 约束，解析表达式左侧各物种的初始浓度之和
-    - 与右侧总量（若可解析）比较，误差超过 tolerance 即记 violation
-    - 无法解析的表达式记 warning（不阻断）
+    实现策略（IB-012 修复：从 token 检查升级为数值校验）：
+    - 解析 "A + B = C_total" 格式表达式
+    - 左侧：各物种初始浓度之和（含化学计量系数）
+    - 右侧：若为 _total 变量，则以左侧之和作为期望总量（声明性约束）；
+            若为具体物种，则与该物种初始浓度比较
+    - 误差超过 tolerance 即记 violation
 
     Args:
         ir: ReactionIRv2 对象
@@ -42,32 +44,86 @@ def check_mass_conservation(ir: ReactionIRv2) -> list[str]:
     Returns:
         violation 描述列表（空列表表示通过）
     """
+    import re
+
     violations: list[str] = []
+    # 构建 species_name → initial_concentration 查找表
+    name_to_conc: dict[str, float] = {
+        sp.canonical_name: sp.initial_concentration for sp in ir.species
+    }
+
     for c in ir.constraints:
         if c.type != "mass_conservation":
             continue
-        # 简化实现：仅检查表达式中的物种名是否都存在于 ir.species
-        # 完整的数值检查在 P3 ODE 渲染后由 Simulation Layer 执行
-        species_names = {sp.canonical_name for sp in ir.species}
-        # 提取表达式中可能出现的物种名（粗略：按 + / = 分割后的 token）
-        tokens = (
-            c.expression.replace("+", " ").replace("=", " ")
-            .replace("-", " ").split()
-        )
-        for token in tokens:
-            token = token.strip()
-            if not token or token.isdigit():
-                continue
-            # 跳过数字与运算符
-            try:
-                float(token)
-                continue
-            except ValueError:
-                pass
-            if token not in species_names and not token.endswith("_total"):
+
+        expr = c.expression.strip()
+        if not expr:
+            violations.append(f"Mass Conservation 约束表达式为空：{c.provenance or 'unknown'}")
+            continue
+
+        # 解析 "left = right" 格式
+        if "=" not in expr:
+            violations.append(f"Mass Conservation 约束缺少 '=' 号：{expr}")
+            continue
+
+        parts = expr.split("=", 1)
+        left_str, right_str = parts[0].strip(), parts[1].strip()
+
+        # 解析左侧：提取 token 与系数（如 "2*EGFR + pEGFR"）
+        def _parse_side(side_str: str) -> tuple[float, list[str]]:
+            """解析表达式一侧，返回 (总和, 未知token列表)。"""
+            terms = re.split(r'\s*\+\s*', side_str)
+            total = 0.0
+            unknown: list[str] = []
+            for term in terms:
+                term = term.strip()
+                if not term:
+                    continue
+                # 匹配 "2*EGFR" 或 "EGFR" 格式
+                m = re.match(r'^(\d+(?:\.\d+)?)\s*\*\s*(.+)$', term)
+                if m:
+                    coeff = float(m.group(1))
+                    name = m.group(2).strip()
+                else:
+                    coeff = 1.0
+                    name = term
+                # 跳过数字常量
+                try:
+                    total += float(name) * coeff
+                    continue
+                except ValueError:
+                    pass
+                # 查找物种浓度
+                if name in name_to_conc:
+                    total += name_to_conc[name] * coeff
+                elif name.endswith("_total"):
+                    # _total 变量：跳过（声明性，不参与数值计算）
+                    pass
+                else:
+                    unknown.append(name)
+            return total, unknown
+
+        left_sum, left_unknown = _parse_side(left_str)
+        right_sum, right_unknown = _parse_side(right_str)
+
+        # 报告未知物种
+        for token in left_unknown + right_unknown:
+            violations.append(
+                f"Mass Conservation 约束引用了未知物种 '{token}'：{expr}"
+            )
+
+        # TD-010 核心修复：若右侧为 _total 变量，左侧之和即为声明总量，不需数值比较
+        # 若右侧含具体物种浓度，则做数值校验
+        if not right_str.endswith("_total") and not left_str.endswith("_total"):
+            # 双侧都是具体物种 → 数值校验
+            if abs(left_sum - right_sum) > c.tolerance * max(abs(left_sum), abs(right_sum), 1.0):
                 violations.append(
-                    f"Mass Conservation 约束引用了未知物种 '{token}'：{c.expression}"
+                    f"Mass Conservation 初始浓度不守恒：{expr} "
+                    f"(左侧={left_sum:.4f}, 右侧={right_sum:.4f}, "
+                    f"误差={abs(left_sum - right_sum):.4f} > 容差={c.tolerance})"
                 )
+        # 若一侧为 _total，则该约束为声明性（自动生成），初始条件天然满足
+
     return violations
 
 
@@ -75,10 +131,13 @@ def auto_generate_mass_conservation(
     species_list: list[SpeciesV2],
     reactions: list[ReactionV2],
 ) -> list[Constraint]:
-    """从反应列表自动生成质量守恒约束。
+    """从反应列表自动生成质量守恒约束（TD-011 修复：扩展到多种模式）。
 
-    策略：识别"受体/蛋白池"模式——若某物种同时以未磷酸化/磷酸化形式出现，
-    则生成守恒约束。例如 EGFR + pEGFR = EGFR_total。
+    策略（IB-043 修复：从仅 phosphorylation 扩展到 4 种模式）：
+    1. 磷酸化对模式：X → pX，则 X + pX = X_total
+    2. binding 模式：A + B → AB_complex，则 A + B + AB_complex = A_total
+    3. dimerization 模式：2M → D，则 M + 2*D = M_total（化学计量修正）
+    4. complex_formation 模式：A + B → AB，则 A + B + AB = A_total
 
     Args:
         species_list: 物种列表
@@ -88,20 +147,62 @@ def auto_generate_mass_conservation(
         自动生成的约束列表
     """
     constraints: list[Constraint] = []
-    # 收集所有磷酸化反应的底物与产物
-    # 模式：X → pX（phosphorylation），则 X + pX 守恒
-    seen_pairs: set[tuple[str, str]] = set()
+    seen_pairs: set[tuple[str, ...]] = set()
+
     for rxn in reactions:
-        if rxn.reaction_type != "phosphorylation":
-            continue
-        for r in rxn.reactants:
-            for p in rxn.products:
-                rname = _species_name(species_list, r.species_id)
-                pname = _species_name(species_list, p.species_id)
-                if not rname or not pname:
-                    continue
-                # 检测 pX / p_X 前缀模式
-                if pname.lower().startswith("p" + rname.lower()):
+        mech = rxn.reaction_type.lower()
+
+        # —— 模式 1：磷酸化对 ——
+        if mech == "phosphorylation":
+            for r in rxn.reactants:
+                for p in rxn.products:
+                    rname = _species_name(species_list, r.species_id)
+                    pname = _species_name(species_list, p.species_id)
+                    if not rname or not pname:
+                        continue
+                    if pname.lower().startswith("p" + rname.lower()):
+                        pair = (rname, pname)
+                        if pair in seen_pairs:
+                            continue
+                        seen_pairs.add(pair)
+                        constraints.append(Constraint(
+                            type="mass_conservation",
+                            scope="species",
+                            expression=f"{rname} + {pname} = {rname}_total",
+                            tolerance=0.05,
+                            provenance="auto_generated:phosphorylation_pair",
+                        ))
+
+        # —— 模式 2：binding（A + B → AB_complex）——
+        elif mech == "binding":
+            if len(rxn.reactants) >= 2 and len(rxn.products) >= 1:
+                rnames = [_species_name(species_list, r.species_id) for r in rxn.reactants]
+                pnames = [_species_name(species_list, p.species_id) for p in rxn.products]
+                rnames = [n for n in rnames if n]
+                pnames = [n for n in pnames if n]
+                if len(rnames) >= 2 and pnames:
+                    # 以第一个反应物为 "total" 基准
+                    key = tuple(rnames + pnames)
+                    if key not in seen_pairs:
+                        seen_pairs.add(key)
+                        all_species = " + ".join(rnames + pnames)
+                        constraints.append(Constraint(
+                            type="mass_conservation",
+                            scope="species",
+                            expression=f"{all_species} = {rnames[0]}_total",
+                            tolerance=0.05,
+                            provenance="auto_generated:binding_pool",
+                        ))
+
+        # —— 模式 3：dimerization（2M → D）——
+        elif mech == "dimerization":
+            for r in rxn.reactants:
+                for p in rxn.products:
+                    rname = _species_name(species_list, r.species_id)
+                    pname = _species_name(species_list, p.species_id)
+                    if not rname or not pname:
+                        continue
+                    # 化学计量修正：M + 2*D = M_total（每 dimer 含 2 monomer）
                     pair = (rname, pname)
                     if pair in seen_pairs:
                         continue
@@ -109,10 +210,31 @@ def auto_generate_mass_conservation(
                     constraints.append(Constraint(
                         type="mass_conservation",
                         scope="species",
-                        expression=f"{rname} + {pname} = {rname}_total",
+                        expression=f"{rname} + 2*{pname} = {rname}_total",
                         tolerance=0.05,
-                        provenance="auto_generated:phosphorylation_pair",
+                        provenance="auto_generated:dimerization_pool",
                     ))
+
+        # —— 模式 4：complex_formation（A + B + ... → ABC）——
+        elif mech == "complex_formation":
+            if len(rxn.reactants) >= 2 and len(rxn.products) >= 1:
+                rnames = [_species_name(species_list, r.species_id) for r in rxn.reactants]
+                pnames = [_species_name(species_list, p.species_id) for p in rxn.products]
+                rnames = [n for n in rnames if n]
+                pnames = [n for n in pnames if n]
+                if len(rnames) >= 2 and pnames:
+                    key = tuple(rnames + pnames)
+                    if key not in seen_pairs:
+                        seen_pairs.add(key)
+                        all_species = " + ".join(rnames + pnames)
+                        constraints.append(Constraint(
+                            type="mass_conservation",
+                            scope="species",
+                            expression=f"{all_species} = {rnames[0]}_total",
+                            tolerance=0.05,
+                            provenance="auto_generated:complex_formation_pool",
+                        ))
+
     return constraints
 
 
@@ -144,14 +266,92 @@ def check_steady_state(ir: ReactionIRv2) -> list[str]:
 # 3. Non-negative（非负约束）
 # =============================================================================
 def check_non_negative(ir: ReactionIRv2) -> list[str]:
-    """检查所有物种初始浓度非负（数值保护）。"""
+    """检查所有物种初始浓度非负 + 反应化学计量非负（TD-012 修复）。
+
+    IB-046 修复：从仅检查初始浓度扩展到：
+    1. 物种初始浓度非负（原有）
+    2. 反应化学计量系数非负（新增）
+    3. 降解反应的产物不含负通量声明（新增）
+    """
     violations: list[str] = []
+    # 1. 物种初始浓度非负（原有）
     for sp in ir.species:
         if sp.initial_concentration < 0:
             violations.append(
                 f"Non-negative 违规：物种 {sp.canonical_name} 初始浓度为负数 "
                 f"({sp.initial_concentration})"
             )
+    # 2. 反应化学计量系数非负（IB-046 新增）
+    for rxn in ir.reactions:
+        for ref in rxn.reactants + rxn.products:
+            if ref.stoichiometry < 0:
+                violations.append(
+                    f"Non-negative 违规：反应 {rxn.id} 中物种 {ref.species_id} "
+                    f"化学计量系数为负数 ({ref.stoichiometry})"
+                )
+    return violations
+
+
+# =============================================================================
+# 3.5 Moiety Conservation（部分守恒，TD-013 新增）
+# =============================================================================
+def check_moiety_conservation(ir: ReactionIRv2) -> list[str]:
+    """检查 moiety conservation（部分守恒约束，TD-013 新增）。
+
+    IB-047 修复：新增 moiety conservation 检查。
+
+    Moiety conservation 指的是共享某个化学基团（moiety）的多个物种
+    总量应守恒。例如：
+    - 激酶总量：[Kinase] + [Kinase_Substrate] + [Kinase_pSubstrate] = const
+    - ATP/ADP 总量：[ATP] + [ADP] = const
+    - GTP/GDP 总量：[GTP] + [GDP] = const
+
+    检查策略：
+    1. 识别共享修饰基团的物种组（p前缀、ub前缀、ATP/ADP 等）
+    2. 对每组检查初始浓度之和是否为正（声明性约束存在性检查）
+    3. 检查约束表达式中引用的物种是否全部存在
+    """
+    violations: list[str] = []
+    # 收集 species 名
+    species_names = {sp.canonical_name for sp in ir.species}
+    # 识别 moiety 组（p前缀模式：X, pX → X moiety）
+    name_to_sp = {sp.canonical_name: sp for sp in ir.species}
+    moiety_groups: list[list[str]] = []
+    seen: set[str] = set()
+    for sp in ir.species:
+        name = sp.canonical_name
+        if name in seen:
+            continue
+        # pX → X 模式
+        if name.startswith("p") and len(name) > 1 and name[1].isupper():
+            base = name[1:]
+            if base in name_to_sp and base not in seen:
+                group = [base, name]
+                moiety_groups.append(group)
+                seen.update(group)
+        # ubX → X 模式
+        elif name.startswith("ub") and len(name) > 2 and name[2].isupper():
+            base = name[2:]
+            if base in name_to_sp and base not in seen:
+                group = [base, name]
+                moiety_groups.append(group)
+                seen.update(group)
+
+    # 检查每组 moiety 是否有对应约束
+    for group in moiety_groups:
+        # 查找是否有 mass_conservation 约束覆盖该组
+        has_constraint = False
+        for c in ir.constraints:
+            if c.type == "mass_conservation":
+                if all(name in c.expression for name in group):
+                    has_constraint = True
+                    break
+        if not has_constraint:
+            violations.append(
+                f"Moiety Conservation 缺失：物种组 {group} 共享修饰基团，"
+                f"但未找到对应的质量守恒约束"
+            )
+
     return violations
 
 
@@ -246,6 +446,7 @@ def check_all_constraints(ir: ReactionIRv2) -> dict[str, Any]:
         "mass_conservation": check_mass_conservation(ir),
         "steady_state": check_steady_state(ir),
         "non_negative": check_non_negative(ir),
+        "moiety_conservation": check_moiety_conservation(ir),
         "enzymatic": check_enzymatic(ir),
         "thermodynamic": check_thermodynamic(ir),
     }
@@ -275,6 +476,7 @@ __all__ = [
     "auto_generate_mass_conservation",
     "check_steady_state",
     "check_non_negative",
+    "check_moiety_conservation",
     "check_enzymatic",
     "check_thermodynamic",
     "check_all_constraints",

@@ -100,6 +100,9 @@ _MAPK_CORE_SPECIES: list[dict[str, Any]] = [
     {"name": "ERK", "species_type": "protein", "compartment": "cytoplasm"},
     {"name": "pERK", "species_type": "protein", "compartment": "cytoplasm"},
     {"name": "ppERK", "species_type": "protein", "compartment": "cytoplasm"},
+    # TD-033 (IB-064) 修复：补充 ERK 核转位物种（pERK/ppERK 入核后激活转录因子）
+    {"name": "pERK_nuclear", "species_type": "protein", "compartment": "nucleus"},
+    {"name": "ppERK_nuclear", "species_type": "protein", "compartment": "nucleus"},
 ]
 
 
@@ -194,6 +197,39 @@ _MAPK_CORE_REACTIONS: list[dict[str, Any]] = [
         "modifier_type": "catalytic",
         "autophosphorylation": True,
         "description": "pERK 双磷酸化第二步（Tyr185，自磷酸化形式，pERK → ppERK）",
+    },
+    # 6. TD-033 (IB-064) 修复：pERK → pERK_nuclear（nuclear_import，pERK 入核激活转录因子）
+    #    原通路缺失 ERK 核转位步骤，导致 ERK 磷酸化后无法在核内激活 ELK1/c-Fos 等转录因子，
+    #    无法刻画 MAPK 信号到基因表达的完整传递。pERK 作 substrate，pERK_nuclear 作 product。
+    {
+        "source": "pERK",
+        "target": "pERK_nuclear",
+        "mechanism": "nuclear_import",
+        "kinetics_type": "mass_action",
+        "pathway_tag": PATHWAY_TAG,
+        # 核转位：pERK(cytoplasm) 作 substrate，pERK_nuclear(nucleus) 作 product
+        "substrate": "pERK",
+        "product": "pERK_nuclear",
+        "modifier": "pERK",
+        "modifier_type": "catalytic",
+        "autophosphorylation": False,
+        "description": "pERK 入核（pERK 作 substrate，pERK_nuclear 作 product，激活核内 ELK1/c-Fos 转录因子，补全 MAPK→基因表达传递）",
+    },
+    # 7. TD-033 (IB-064) 修复：ppERK → ppERK_nuclear（nuclear_import，ppERK 入核）
+    #    双磷酸化 ERK 同样需入核激活下游转录，与 pERK 核转位并列。
+    {
+        "source": "ppERK",
+        "target": "ppERK_nuclear",
+        "mechanism": "nuclear_import",
+        "kinetics_type": "mass_action",
+        "pathway_tag": PATHWAY_TAG,
+        # 核转位：ppERK(cytoplasm) 作 substrate，ppERK_nuclear(nucleus) 作 product
+        "substrate": "ppERK",
+        "product": "ppERK_nuclear",
+        "modifier": "ppERK",
+        "modifier_type": "catalytic",
+        "autophosphorylation": False,
+        "description": "ppERK 入核（ppERK 作 substrate，ppERK_nuclear 作 product，双磷酸化 ERK 核内激活转录）",
     },
 ]
 

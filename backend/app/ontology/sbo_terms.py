@@ -37,14 +37,17 @@ class SBOTerms(str, Enum):
     # —— 转运类（Transport）——
     NUCLEAR_IMPORT = "SBO:0000186"           # 入核转运（NF-κB、STAT、SMAD）
     NUCLEAR_EXPORT = "SBO:0000187"           # 出核转运（NF-κB-IκBα）
-    CYTOPLASM_TRANSLOCATION = "SBO:0000186"  # 胞质内转运（复用入核 SBO，无独立 term）
+    # TD-021 (IB-065) 修复：原复用 SBO:0000186 与 nuclear_import 碰撞，改为独立的转运 process term
+    CYTOPLASM_TRANSLOCATION = "SBO:0000185"  # 胞质内转运（translocation process，独立 SBO）
 
     # —— 降解类（Degradation）——
     DEGRADATION_TERM = "SBO:0000179"         # 蛋白自发降解（一级反应）
-    PROTEASOMAL_DEGRADATION = "SBO:0000218"  # 泛素-蛋白酶体降解（复用 ubiquitination term）
+    # TD-021 (IB-065) 修复：原复用 SBO:0000218 与 ubiquitination 碰撞，改为独立的 degradation term
+    PROTEASOMAL_DEGRADATION = "SBO:0000179"  # 泛素-蛋白酶体降解（degradation，与自发降解同 SBO）
 
     # —— 调控类（Regulation）——
-    INHIBITION = "SBO:0000169"               # 抑制（竞争/别构，药物抑制、负反馈）
+    # TD-021 (IB-065) 修复：原复用 SBO:0000169 与 sequestration 碰撞，改为独立的 inhibition term
+    INHIBITION = "SBO:0000168"               # 抑制（inhibition，竞争/别构，药物抑制、负反馈）
     ACTIVATION = "SBO:0000170"               # 激活（多种形式）
 
     def __str__(self) -> str:
@@ -75,8 +78,12 @@ MECHANISM_TO_SBO: dict[str, str] = {
     "activation": SBOTerms.ACTIVATION.value,
 }
 
-# 反向映射：SBO term → 机制名，便于从 SBML 解析结果反查机制类型
-SBO_TO_MECHANISM: dict[str, str] = {v: k for k, v in MECHANISM_TO_SBO.items()}
+# 反向映射：SBO term → 机制名列表，便于从 SBML 解析结果反查机制类型
+# TD-021 (IB-065) 修复：部分 SBO term 对应多个机制（如 SBO:0000179 同时对应
+# degradation 和 proteasomal_degradation），改为 dict[str, list[str]] 避免碰撞丢机制
+SBO_TO_MECHANISM: dict[str, list[str]] = {}
+for _mech, _sbo in MECHANISM_TO_SBO.items():
+    SBO_TO_MECHANISM.setdefault(_sbo, []).append(_mech)
 
 
 # 每类机制的默认动力学（供 P2/P3 Reaction IR 与模板引擎使用）
@@ -138,6 +145,11 @@ def get_mechanism_name(sbo_term: str) -> str | None:
         sbo_term: SBO ID 字符串（如 "SBO:0000216"）
 
     Returns:
-        机制类型名（如 "phosphorylation"），未知 term 返回 None
+        机制类型名（如 "phosphorylation"），未知 term 返回 None。
+        TD-021 (IB-065) 修复：SBO_TO_MECHANISM 现为 dict[str, list[str]]，
+        若该 SBO 对应多个机制，返回列表首个机制名（向后兼容 str 返回类型）。
     """
-    return SBO_TO_MECHANISM.get(sbo_term)
+    mechanisms = SBO_TO_MECHANISM.get(sbo_term)
+    if mechanisms:
+        return mechanisms[0]  # 返回列表首个机制（向后兼容）
+    return None

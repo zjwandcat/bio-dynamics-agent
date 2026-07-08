@@ -1,5 +1,6 @@
-# BioDynamics Agent v4 - 17 类机制枚举
-# 对应 v4 Scientific Architecture Part 4 §4.3 的 17 类机制 + SBO term + 默认动力学映射表。
+# BioDynamics Agent v4 - 19 类机制枚举
+# 对应 v4 Scientific Architecture Part 4 §4.3 的 19 类机制 + SBO term + 默认动力学映射表。
+# TD-042 (IB-042): 实际枚举值为 19（17 类基础机制 + INHIBITION/ACTIVATION 调控类），原注释误写为 17。
 #
 # 设计原则：
 # 1. 复用 P1 已定义的 app.ontology.sbo_terms 常量，不重复定义 SBO term
@@ -22,7 +23,7 @@ from app.ontology.sbo_terms import (
 
 
 class MechanismType(str, Enum):
-    """17 类机制枚举（对应架构 §4.3 表格）。
+    """19 类机制枚举（对应架构 §4.3 表格）。
 
     继承 str + Enum 使得既可作字符串使用（"phosphorylation"），
     又可通过 MechanismType.PHOSPHORYLATION 引用，兼顾可读性与类型安全。
@@ -128,18 +129,33 @@ def _normalize_kinetics_name(raw: str) -> str:
 # 这是降级映射：v3 的 activation 一律映射到 v4 的 activation 机制（不强制 phosphorylation），
 # 避免审计报告 §4.2 的"activation→phosphorylation 强制映射"语义错误。
 _V3_INTERACTION_TO_V4_MECHANISM: dict[str, MechanismType] = {
+    # 调控类
     "activation": MechanismType.ACTIVATION,
     "inhibition": MechanismType.INHIBITION,
+    # 修饰类
     "phosphorylation": MechanismType.PHOSPHORYLATION,
     "dephosphorylation": MechanismType.DEPHOSPHORYLATION,
+    "ubiquitination": MechanismType.UBIQUITINATION,
+    # 结合/组装类
     "binding": MechanismType.BINDING,
     "dissociation": MechanismType.DISSOCIATION,
-    "ubiquitination": MechanismType.UBIQUITINATION,
-    "degradation": MechanismType.DEGRADATION,
+    "dimerization": MechanismType.DIMERIZATION,
+    "complex_formation": MechanismType.COMPLEX_FORMATION,
+    "sequestration": MechanismType.SEQUESTRATION,
+    # 切割/交换类
+    "cleavage": MechanismType.CLEAVAGE,
+    "gtp_gdp_exchange": MechanismType.GTP_GDP_EXCHANGE,
+    # 基因表达类
     "transcription": MechanismType.TRANSCRIPTION,
     "translation": MechanismType.TRANSLATION,
+    # 转运类
+    "nuclear_import": MechanismType.NUCLEAR_IMPORT,
+    "nuclear_export": MechanismType.NUCLEAR_EXPORT,
+    "cytoplasm_translocation": MechanismType.CYTOPLASM_TRANSLOCATION,
     "transport": MechanismType.NUCLEAR_IMPORT,  # v3 transport 统一映射到 nuclear_import
-    "cleavage": MechanismType.CLEAVAGE,
+    # 降解类
+    "degradation": MechanismType.DEGRADATION,
+    "proteasomal_degradation": MechanismType.PROTEASOMAL_DEGRADATION,
 }
 
 

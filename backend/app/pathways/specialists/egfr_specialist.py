@@ -75,6 +75,10 @@ _EGFR_CORE_SPECIES: list[dict[str, Any]] = [
     {"name": "Ras", "species_type": "protein", "compartment": "membrane",
      "shared": True},
     {"name": "RasGTP", "species_type": "protein", "compartment": "membrane"},
+    # TD-033 (IB-064) 修复：补充 RasGDP 物种，与 RasGAP 共同构成 Ras 失活分支
+    {"name": "RasGDP", "species_type": "protein", "compartment": "membrane"},
+    # TD-033 (IB-064) 修复：补充 RasGAP（RasGTP→RasGDP 失活的关键负调控因子）
+    {"name": "RasGAP", "species_type": "protein", "compartment": "cytoplasm"},
     {"name": "Raf", "species_type": "protein", "compartment": "cytoplasm"},
     {"name": "pRaf", "species_type": "protein", "compartment": "cytoplasm"},
 ]
@@ -188,6 +192,23 @@ _EGFR_CORE_REACTIONS: list[dict[str, Any]] = [
         "modifier_type": "catalytic",
         "autophosphorylation": False,
         "description": "RasGTP 磷酸化 Raf（Raf 作 substrate，RasGTP 作 catalytic modifier）",
+    },
+    # 8. TD-033 (IB-064) 修复：RasGAP 介导 RasGTP→RasGDP 失活（GTP 水解）
+    #    原通路缺失 RasGAP 这条关键负调控分支，导致 RasGTP 持续激活无法回到 RasGDP，
+    #    无法正确刻画 Ras 信号的瞬态响应。RasGAP 作 catalytic modifier 催化 GTP 水解。
+    {
+        "source": "RasGTP",
+        "target": "RasGDP",
+        "mechanism": "gtp_gdp_exchange",
+        "kinetics_type": "Michaelis_Menten",
+        "pathway_tag": PATHWAY_TAG,
+        # RasGTP 作 substrate（被水解失活），RasGDP 作 product，RasGAP 作 catalytic modifier
+        "substrate": "RasGTP",
+        "product": "RasGDP",
+        "modifier": "RasGAP",
+        "modifier_type": "catalytic",
+        "autophosphorylation": False,
+        "description": "RasGAP 催化 RasGTP→RasGDP 失活（GTP 水解，RasGAP 作 GAP 负调控因子，补全 Ras 信号瞬态响应）",
     },
 ]
 

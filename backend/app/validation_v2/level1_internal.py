@@ -19,7 +19,9 @@
 
 from __future__ import annotations
 
+import csv
 import logging
+import math
 import re
 from typing import Any
 
@@ -56,6 +58,10 @@ class Level1InternalValidator:
     MASS_CONSERVATION_THRESHOLD: float = 0.05
     # Stiff system 判定：max_rate / min_rate > 1e6
     STIFF_SYSTEM_RATIO: float = 1e6
+    # 数值零保护：避免除零（TD-014/TD-032 共用）
+    _EPSILON: float = 1e-9
+    # TD-014: 浓度爆炸阈值（超出生物合理范围，max > 1e6 判定爆炸）
+    EXPLOSION_THRESHOLD: float = 1e6
 
     def validate(self, state: dict[str, Any]) -> dict[str, Any]:
         """主入口：执行 Level 1 全部 5 项检查。
@@ -84,13 +90,15 @@ class Level1InternalValidator:
                 ode_code = ode_system.get("ode_code", "") or ""
 
             # 执行 5 项检查
+            # TD-014/TD-032 修复：steady_state 与 numerical_stability 改为结果驱动检查，
+            # 优先消费仿真结果（NaN/Inf/末段方差），仅在无仿真结果时回退静态正则扫描。
             mass_error, _mass_violations = self._check_mass_conservation(
                 ode_code, reaction_ir
             )
             non_neg_violations = self._check_non_negative(ode_code)
-            steady_state_ok = self._check_steady_state(ode_code)
+            steady_state_ok = self._check_steady_state(ode_code, state)
             numerical_stable, _stability_violations = self._check_numerical_stability(
-                ode_code
+                ode_code, state
             )
             constraint_violations = self._check_constraint_satisfaction(reaction_ir)
 
@@ -267,8 +275,96 @@ class Level1InternalValidator:
     # =========================================================================
     # SubTask 5.2.4: Steady State 检查
     # =========================================================================
-    def _check_steady_state(self, ode_code: str) -> bool:
+    # TD-032 (IB-051) 修复：稳态检查不充分 —— 仅验证初始条件不够充分。
+    # 改为结果驱动：当仿真结果可用时，检查末段 10% 时间点是否在容差内趋于稳态；
+    # 无仿真结果时回退到初始条件（自降解项）启发式检查，并记录 warning。
+    # =========================================================================
+    # 稳态判定容差：末段 10% 时间点各物种浓度的相对波动上限
+    STEADY_STATE_TAIL_FRACTION: float = 0.10
+    STEADY_STATE_RELATIVE_TOLERANCE: float = 1e-3
+
+    def _check_steady_state(self, ode_code: str, state: dict | None = None) -> bool:
         """检查未刺激状态下（ligand=0）系统是否能达到稳态。
+
+        TD-032 (IB-051) 修复策略（结果驱动优先）：
+        1. 若 state 中存在仿真结果（v4_simulation_result / simulation_csv_path），
+           检查末段 10% 时间点各物种浓度的相对波动是否在容差内（稳态已达到）。
+           若波动超容差，则判定未达稳态（返回 False）。
+        2. 若无仿真结果，回退到初始条件启发式检查：检查每个 dX/dt 方程是否含
+           自降解项（-k*X 或 -X），并记录 warning（检查不充分）。
+
+        Args:
+            ode_code: ODE 代码字符串
+            state: LangGraph 全局状态（用于提取仿真结果）
+
+        Returns:
+            True 表示稳态检查通过
+        """
+        # TD-032 修复：优先使用仿真结果检查稳态
+        sim_series = self._extract_simulation_series(state)
+        if sim_series is not None:
+            times, species_values = sim_series
+            return self._check_steady_state_from_simulation(times, species_values)
+
+        # 回退：无仿真结果时使用初始条件启发式检查（不充分，记录 warning）
+        logger.warning(
+            "TD-032: 无仿真结果可用，稳态检查回退到静态初始条件启发式检查（不充分）"
+        )
+        return self._check_steady_state_from_code(ode_code)
+
+    def _check_steady_state_from_simulation(
+        self,
+        times: list[float],
+        species_values: dict[str, list[float]],
+    ) -> bool:
+        """基于仿真结果检查稳态（TD-032 结果驱动）。
+
+        检查末段 10% 时间点各物种浓度的相对波动是否在容差内。
+        相对波动 = (max - min) / (|mean| + epsilon)，超过容差视为未达稳态。
+
+        Args:
+            times: 时间点列表
+            species_values: {species_name: [浓度序列]}，与 times 对齐
+
+        Returns:
+            True 表示末段已趋于稳态
+        """
+        n = len(times)
+        if n < 5:
+            # 时间点过少，无法判定稳态，视为通过（避免误报）
+            return True
+
+        # 末段 10% 时间点（至少 2 个点）
+        tail_start = max(0, n - max(2, int(n * self.STEADY_STATE_TAIL_FRACTION)))
+
+        for species, values in species_values.items():
+            tail = values[tail_start:]
+            if len(tail) < 2:
+                continue
+            try:
+                tail_floats = [float(v) for v in tail]
+            except (TypeError, ValueError):
+                continue
+            # 跳过含 NaN/Inf 的序列（数值稳定性检查负责拦截，此处不重复报错）
+            if any(math.isnan(v) or math.isinf(v) for v in tail_floats):
+                continue
+            tail_max = max(tail_floats)
+            tail_min = min(tail_floats)
+            tail_mean = sum(tail_floats) / len(tail_floats)
+            # 相对波动 = (max - min) / (|mean| + epsilon)
+            relative_variation = (tail_max - tail_min) / (abs(tail_mean) + self._EPSILON)
+            if relative_variation > self.STEADY_STATE_RELATIVE_TOLERANCE:
+                logger.warning(
+                    "TD-032: 物种 %s 末段相对波动 %.2e > 容差 %.2e，未达稳态",
+                    species,
+                    relative_variation,
+                    self.STEADY_STATE_RELATIVE_TOLERANCE,
+                )
+                return False
+        return True
+
+    def _check_steady_state_from_code(self, ode_code: str) -> bool:
+        """基于 ODE 代码的初始条件启发式稳态检查（回退策略）。
 
         简化实现（对应 SubTask 5.2.4）：
         - 检查每个 dX/dt 方程是否含自降解项（-k*X 或 -X）
@@ -319,8 +415,154 @@ class Level1InternalValidator:
     # =========================================================================
     # SubTask 5.2.5: Numerical Stability 检查
     # =========================================================================
-    def _check_numerical_stability(self, ode_code: str) -> tuple[bool, list]:
+    # TD-014 (IB-052) 修复：数值稳定性 regex 静态扫描 —— 静态正则扫描 ODE 代码
+    # （如检测 solve_ivp 缺 BDF/Radau）会产生假阳性/假阴性，无法反映真实数值行为。
+    # 改为结果驱动：优先检查仿真结果中的 NaN/Inf/爆炸；无仿真结果时回退到正则扫描，
+    # 并记录 warning。
+    # =========================================================================
+    def _check_numerical_stability(
+        self, ode_code: str, state: dict | None = None
+    ) -> tuple[bool, list]:
         """检查数值稳定性（NaN/Inf 检测 + stiff system 检测）。
+
+        TD-014 (IB-052) 修复策略（结果驱动优先）：
+        1. 若 state 中存在仿真结果（v4_simulation_result / simulation_csv_path），
+           检查实际数据中的 NaN/Inf/浓度爆炸（max > EXPLOSION_THRESHOLD）。
+           任一命中即判定数值不稳定（is_stable=False）。
+        2. 若无仿真结果，记录 warning 并回退到静态正则扫描：
+           - 除零风险：/ variable
+           - log(0) 风险：log(expression)
+           - stiff system：max_rate / min_rate > 1e6
+
+        Args:
+            ode_code: ODE 代码字符串
+            state: LangGraph 全局状态（用于提取仿真结果）
+
+        Returns:
+            (is_stable, violation_list)
+            - is_stable: True 表示无数值稳定性风险
+            - violation_list: 每条含 type / expression / reason
+        """
+        # TD-014 修复：优先使用仿真结果检查数值稳定性
+        sim_series = self._extract_simulation_series(state)
+        if sim_series is not None:
+            times, species_values = sim_series
+            return self._check_numerical_stability_from_simulation(
+                times, species_values
+            )
+
+        # 回退：无仿真结果时使用静态正则扫描（记录 warning）
+        logger.warning(
+            "TD-014: 无仿真结果可用，数值稳定性检查回退到静态正则扫描（可能不准确）"
+        )
+        return self._check_numerical_stability_from_code(ode_code)
+
+    def _check_numerical_stability_from_simulation(
+        self,
+        times: list[float],
+        species_values: dict[str, list[float]],
+    ) -> tuple[bool, list]:
+        """基于仿真结果检查数值稳定性（TD-014 结果驱动）。
+
+        检查实际仿真数据中的：
+        1. NaN：任一时间点任一物种浓度出现 NaN
+        2. Inf：任一时间点任一物种浓度出现 Inf
+        3. 爆炸：任一物种最大浓度超过 EXPLOSION_THRESHOLD（1e6）
+
+        Args:
+            times: 时间点列表
+            species_values: {species_name: [浓度序列]}，与 times 对齐
+
+        Returns:
+            (is_stable, violation_list)
+        """
+        violations: list[dict[str, str]] = []
+
+        for species, values in species_values.items():
+            for idx, raw in enumerate(values):
+                # 尝试转 float（兼容字符串 "nan"/"inf"）
+                try:
+                    value = float(raw)
+                except (TypeError, ValueError):
+                    # 无法解析的字符串：检测 NaN/Inf 文本
+                    if isinstance(raw, str):
+                        lower = raw.strip().lower()
+                        if "nan" in lower:
+                            violations.append({
+                                "type": "nan_detected",
+                                "expression": species,
+                                "reason": (
+                                    f"Species '{species}' contains NaN at "
+                                    f"time index {idx}"
+                                ),
+                            })
+                        elif "inf" in lower:
+                            violations.append({
+                                "type": "inf_detected",
+                                "expression": species,
+                                "reason": (
+                                    f"Species '{species}' contains Inf at "
+                                    f"time index {idx}"
+                                ),
+                            })
+                    continue
+
+                # NaN 检测
+                if math.isnan(value):
+                    violations.append({
+                        "type": "nan_detected",
+                        "expression": species,
+                        "reason": (
+                            f"Species '{species}' contains NaN at "
+                            f"time index {idx}"
+                        ),
+                    })
+                    continue
+                # Inf 检测
+                if math.isinf(value):
+                    violations.append({
+                        "type": "inf_detected",
+                        "expression": species,
+                        "reason": (
+                            f"Species '{species}' contains Inf at "
+                            f"time index {idx}"
+                        ),
+                    })
+                    continue
+
+            # 爆炸检测：最大浓度超过阈值
+            try:
+                valid_values = [
+                    float(v) for v in values
+                    if isinstance(v, (int, float))
+                    or (isinstance(v, str) and v.strip().lower()
+                        not in ("nan", "inf", "-inf"))
+                ]
+                valid_values = [
+                    v for v in valid_values
+                    if not (math.isnan(v) or math.isinf(v))
+                ]
+            except (TypeError, ValueError):
+                valid_values = []
+            if valid_values:
+                max_conc = max(abs(v) for v in valid_values)
+                if max_conc > self.EXPLOSION_THRESHOLD:
+                    violations.append({
+                        "type": "explosion_detected",
+                        "expression": species,
+                        "reason": (
+                            f"Species '{species}' max |concentration| {max_conc:.2e} "
+                            f"> explosion threshold {self.EXPLOSION_THRESHOLD:.2e}"
+                        ),
+                    })
+
+        is_stable = len(violations) == 0
+        return (is_stable, violations)
+
+    def _check_numerical_stability_from_code(
+        self, ode_code: str
+    ) -> tuple[bool, list]:
+        """基于 ODE 代码的静态正则扫描数值稳定性检查（回退策略）。
 
         检查策略：
         1. 检测除零风险：ODE 代码中 / variable（变量作除数）
@@ -332,8 +574,6 @@ class Level1InternalValidator:
 
         Returns:
             (is_stable, violation_list)
-            - is_stable: True 表示无数值稳定性风险
-            - violation_list: 每条含 type / expression / reason
         """
         violations: list[dict[str, str]] = []
         if not ode_code:
@@ -540,6 +780,150 @@ class Level1InternalValidator:
             if name:
                 result[name] = float(conc)
         return result
+
+    # =========================================================================
+    # TD-014 / TD-032 共用：从 state 提取仿真时间序列
+    # =========================================================================
+    def _extract_simulation_series(
+        self, state: dict | None
+    ) -> tuple[list[float], dict[str, list[float]]] | None:
+        """从 LangGraph state 提取仿真时间序列（TD-014/TD-032 共用）。
+
+        提取优先级：
+        1. state["v4_simulation_result"]：仿真结果 dict，支持多种结构：
+           - {"t": [...], "y": [[...], ...], "species_names": [...]}
+             （scipy solve_ivp 风格，y 为 species × time 矩阵）
+           - {"time": [...], "species": {"A": [...], "B": [...]}}
+           - {"times": [...], "concentrations": {"A": [...]}}
+        2. state["simulation_csv_path"]：仿真输出 CSV 文件路径，
+           含 time 列与各物种浓度列（与 sandbox.post_simulation_validation 一致）
+
+        Args:
+            state: LangGraph 全局状态（可能含 v4_simulation_result / simulation_csv_path）
+
+        Returns:
+            (times, species_values) 或 None
+            - times: 时间点列表
+            - species_values: {species_name: [浓度序列]}，与 times 对齐
+            无可用仿真结果时返回 None
+        """
+        if not isinstance(state, dict):
+            return None
+
+        # 1. 优先从 v4_simulation_result 提取
+        sim_result = state.get("v4_simulation_result")
+        if isinstance(sim_result, dict) and sim_result:
+            series = self._parse_simulation_result_dict(sim_result)
+            if series is not None:
+                return series
+
+        # 2. 从 simulation_csv_path 提取（读取 CSV 文件）
+        csv_path = state.get("simulation_csv_path")
+        if isinstance(csv_path, str) and csv_path:
+            series = self._parse_simulation_csv(csv_path)
+            if series is not None:
+                return series
+
+        return None
+
+    def _parse_simulation_result_dict(
+        self, sim_result: dict
+    ) -> tuple[list[float], dict[str, list[float]]] | None:
+        """解析仿真结果 dict 为 (times, species_values)（TD-014/TD-032 共用）。
+
+        支持多种结构：
+        - {"t": [...], "y": [[...], ...], "species_names": [...]}：y 为 species × time
+        - {"time": [...], "species": {"A": [...]}}
+        - {"times": [...], "concentrations": {"A": [...]}}
+        """
+        # 结构 A: {"t": [...], "y": [[...], ...], "species_names": [...]}
+        t = sim_result.get("t") or sim_result.get("time") or sim_result.get("times")
+        y = sim_result.get("y")
+        species_names = sim_result.get("species_names") or sim_result.get("species")
+        if t is not None and y is not None:
+            try:
+                times = [float(v) for v in t]
+            except (TypeError, ValueError):
+                return None
+            species_values: dict[str, list[float]] = {}
+            # y 可能是 species × time 矩阵（list of lists）或 time × species
+            if isinstance(y, list) and y and isinstance(y[0], list):
+                if isinstance(species_names, list) and len(species_names) == len(y):
+                    # y 为 species × time
+                    for idx, name in enumerate(species_names):
+                        species_values[str(name)] = list(y[idx])
+                elif isinstance(species_names, list) and y and len(y) == len(times):
+                    # y 为 time × species
+                    for idx, name in enumerate(species_names):
+                        species_values[str(name)] = [row[idx] for row in y]
+                else:
+                    # 无 species_names 或维度不匹配，用索引命名
+                    for idx, row in enumerate(y):
+                        species_values[f"species_{idx}"] = list(row)
+            return (times, species_values)
+
+        # 结构 B: {"time": [...], "species": {"A": [...]}}
+        species_map = sim_result.get("species") or sim_result.get("concentrations")
+        if t is not None and isinstance(species_map, dict):
+            try:
+                times = [float(v) for v in t]
+            except (TypeError, ValueError):
+                return None
+            species_values = {
+                str(name): list(vals) for name, vals in species_map.items()
+            }
+            return (times, species_values)
+
+        return None
+
+    def _parse_simulation_csv(
+        self, csv_path: str
+    ) -> tuple[list[float], dict[str, list[float]]] | None:
+        """读取仿真 CSV 文件为 (times, species_values)（TD-014/TD-032 共用）。
+
+        CSV 格式：第一行为列头，含 time/t/Time/T 列与各物种浓度列。
+        """
+        try:
+            with open(csv_path, "r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+        except (FileNotFoundError, OSError):
+            return None
+        if not rows:
+            return None
+
+        # 识别时间列
+        time_col: str | None = None
+        for candidate in ("time", "t", "Time", "T"):
+            if candidate in rows[0]:
+                time_col = candidate
+                break
+        if time_col is None:
+            return None
+
+        times: list[float] = []
+        for row in rows:
+            try:
+                times.append(float(row[time_col]))
+            except (ValueError, TypeError):
+                times.append(0.0)
+
+        # 其余列作为物种浓度
+        time_cols = {"time", "t", "Time", "T"}
+        species_values: dict[str, list[float]] = {}
+        for col_name in rows[0].keys():
+            if col_name in time_cols:
+                continue
+            values: list[float] = []
+            for row in rows:
+                raw = row.get(col_name, "")
+                try:
+                    values.append(float(raw))
+                except (ValueError, TypeError):
+                    # 保留原始字符串，由调用方检测 NaN/Inf 文本
+                    values.append(raw)  # type: ignore[arg-type]
+            species_values[col_name] = values
+        return (times, species_values)
 
     @staticmethod
     def _get_field(obj: Any, field: str, default: Any = None) -> Any:

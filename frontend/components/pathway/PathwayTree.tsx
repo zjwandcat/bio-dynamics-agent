@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useWorkbenchStore } from "@/lib/store";
+import { useTranslation } from "@/lib/i18n";
 import {
   fetchPathways,
   type PathwayClass,
@@ -207,6 +208,7 @@ function pathwayItemFromSummary(s: PathwaySummary): PathwayItem {
 }
 
 export function PathwayTree() {
+  const { t } = useTranslation();
   const currentPathway = useWorkbenchStore((s) => s.currentPathway);
   const setCurrentPathway = useWorkbenchStore((s) => s.setCurrentPathway);
 
@@ -259,14 +261,14 @@ export function PathwayTree() {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center justify-between px-0.5 pb-1.5">
         <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-          Pathway Selection
+          {t("pathway.selection")}
         </div>
         {usingFallback && (
           <Badge
             variant="outline"
             className="h-4 border-zinc-700 px-1 text-[9px] text-zinc-500"
           >
-            offline
+            {t("pathway.offline")}
           </Badge>
         )}
       </div>
@@ -295,11 +297,11 @@ export function PathwayTree() {
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <span className="text-xs font-medium">Auto Detect</span>
+                <span className="text-xs font-medium">{t("pathway.autoDetect")}</span>
                 {isAuto && <CheckCircle2 className="h-3 w-3 text-blue-400" />}
               </div>
               <div className="truncate text-[10px] text-zinc-500">
-                Let backend auto-detect pathway from user input
+                {t("pathway.autoDetect.hint")}
               </div>
             </div>
           </button>
@@ -307,7 +309,7 @@ export function PathwayTree() {
           {loading ? (
             <div className="flex items-center justify-center gap-1.5 py-6 text-[11px] text-zinc-500">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Loading pathways…
+              {t("pathway.loading")}
             </div>
           ) : (
             <div className="space-y-2.5">

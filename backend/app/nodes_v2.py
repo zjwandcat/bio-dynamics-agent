@@ -21,6 +21,7 @@ import json
 import logging
 import re
 import time
+from collections import OrderedDict
 from typing import Any
 
 from langchain_core.messages import AIMessage
@@ -157,20 +158,67 @@ def _safe_json_parse(text: str) -> dict[str, Any]:
 
     BigModel (glm-5.1) 普通调用返回 markdown 包裹 JSON，原逐行剥离不如正则健壮；
     统一委托 config.strip_markdown_json 清洗后解析，回退正则提取最外层对象。
+
+    TD-049 (IB-082) 修复：增强 JSON 解析鲁棒性，支持以下变体：
+    - markdown 代码块（```json ... ``` / ``` ... ```）
+    - 尾随逗号（trailing commas before } 或 ]）
+    - 多种提取策略（直接解析 → 代码块提取 → 首尾大括号提取）
+    - 记录所用策略便于调试
     """
     text = (text or "").strip()
     if not text:
         return {}
+
+    # TD-049: 策略1 — 直接委托 strip_markdown_json 清洗后解析
     cleaned = strip_markdown_json(text)
     try:
-        return json.loads(cleaned)
+        result = json.loads(cleaned)
+        if isinstance(result, dict):
+            logger.debug("TD-049 _safe_json_parse 策略1(direct) 成功")
+            return result
     except Exception:
-        match = re.search(r"\{[\s\S]*\}", cleaned)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except Exception:
-                pass
+        pass
+
+    # TD-049: 策略2 — 移除尾随逗号后重试（处理 LLM 常见的 {"a":1,} 格式）
+    trailing_comma_removed = re.sub(r",\s*([}\]])", r"\1", cleaned)
+    if trailing_comma_removed != cleaned:
+        try:
+            result = json.loads(trailing_comma_removed)
+            if isinstance(result, dict):
+                logger.debug("TD-049 _safe_json_parse 策略2(trailing_comma) 成功")
+                return result
+        except Exception:
+            pass
+
+    # TD-049: 策略3 — 显式提取 markdown 代码块内容（```json ... ``` 或 ``` ... ```）
+    code_block_match = re.search(r"```(?:\w+)?\s*([\s\S]*?)\s*```", text)
+    if code_block_match:
+        block_content = code_block_match.group(1).strip()
+        block_content = re.sub(r",\s*([}\]])", r"\1", block_content)
+        try:
+            result = json.loads(block_content)
+            if isinstance(result, dict):
+                logger.debug("TD-049 _safe_json_parse 策略3(code_block) 成功")
+                return result
+        except Exception:
+            pass
+
+    # TD-049: 策略4 — 正则提取最外层 { ... } 对象（含尾随逗号清理）
+    match = re.search(r"\{[\s\S]*\}", cleaned)
+    if match:
+        candidate = re.sub(r",\s*([}\]])", r"\1", match.group(0))
+        try:
+            result = json.loads(candidate)
+            if isinstance(result, dict):
+                logger.debug("TD-049 _safe_json_parse 策略4(regex_braces) 成功")
+                return result
+        except Exception:
+            pass
+
+    # TD-049: 所有策略均失败，记录警告并返回空字典（保持向后兼容）
+    logger.warning(
+        "TD-049 _safe_json_parse 所有策略均失败，原始文本(前200字): %s", text[:200]
+    )
     return {}
 
 
@@ -288,12 +336,49 @@ def n0_sbml_loader(state: BioDynamicsState) -> dict:
 # =============================================================================
 # N1 — NER / Entity Normalize
 # =============================================================================
+# TD-034 (IB-021) 修复：HGNC ID 格式校验器（离线，不调用 HGNC API）。
+# HGNC ID 标准格式为 "HGNC:<数字>"（如 HGNC:3236），不符合则标记 ontology.verified=False。
+_HGNC_ID_RE = re.compile(r"^HGNC:\d+$")
+
+
+def _validate_gene_hgnc_ids(entities: list[dict]) -> list[dict]:
+    """TD-034: 对基因/蛋白实体的 HGNC ID 进行格式校验（离线安全）。
+
+    遍历实体列表，若实体含 hgnc_id 字段或 canonical_id 以 "HGNC:" 开头，
+    则校验其格式是否匹配 "HGNC:\\d+"。不匹配时设置 ontology.verified=False 并记录警告。
+    不调用任何外部 API，保持离线安全。
+    """
+    for ent in entities:
+        if not isinstance(ent, dict):
+            continue
+        # 提取 HGNC ID：优先 hgnc_id 字段，其次 canonical_id 以 "HGNC:" 开头
+        hgnc_id = ent.get("hgnc_id", "") or ""
+        canonical_id = ent.get("canonical_id", "") or ""
+        if not hgnc_id and canonical_id.upper().startswith("HGNC:"):
+            hgnc_id = canonical_id
+        if not hgnc_id:
+            # 无 HGNC ID 的实体跳过校验（不设置 ontology 字段，保持向后兼容）
+            continue
+        # 格式校验
+        if _HGNC_ID_RE.match(hgnc_id):
+            ent.setdefault("ontology", {})["verified"] = True
+        else:
+            # 格式不匹配，标记未验证并记录警告
+            ent.setdefault("ontology", {})["verified"] = False
+            logger.warning(
+                "TD-034 HGNC ID 格式校验失败（entity=%s, hgnc_id=%s），已标记 ontology.verified=False",
+                ent.get("name", ent.get("entity_id", "?")), hgnc_id,
+            )
+    return entities
+
+
 def n1_ner_entity_normalize(state: BioDynamicsState) -> dict:
     """从用户输入中提取生物实体。"""
     _emit_in("n1_ner_entity_normalize")
     user_input = state.get("user_input", "")
 
     try:
+        # IB-029 TODO: with_structured_output
         prompt = ChatPromptTemplate.from_messages(
             [
                 ("system", N1_NER_PROMPT),
@@ -302,11 +387,24 @@ def n1_ner_entity_normalize(state: BioDynamicsState) -> dict:
         )
         chain = prompt.partial(user_input=user_input) | llm
         response = chain.invoke({})
-        parsed = _safe_json_parse(str(response.content))
-        entities = parsed.get("entities", [])
+        raw_content = str(response.content)
+        try:
+            parsed = _safe_json_parse(raw_content)
+            # IB-029: 检测 JSON 解析失败（响应非空但结果为空）
+            if not parsed and raw_content.strip():
+                logger.warning("N1 LLM 响应 JSON 解析失败，原始(前200字): %s", raw_content[:200])
+                parsed = {"entities": [], "_parse_error": "json_parse_failed"}
+            entities = parsed.get("entities", [])
+        except Exception as parse_exc:
+            # IB-029: 解析异常时返回结构化错误响应（不崩溃）
+            logger.warning("N1 LLM 响应 JSON 解析异常：%s", parse_exc)
+            entities = []
     except Exception as exc:
         logger.warning("N1 NER 失败，使用空列表降级：%s", exc)
         entities = []
+
+    # TD-034 (IB-021): 对基因/蛋白实体的 HGNC ID 进行格式校验
+    entities = _validate_gene_hgnc_ids(entities)
 
     return {
         "entities": entities,
@@ -339,8 +437,19 @@ def n2_mechanistic_planner(state: BioDynamicsState) -> dict:
             user_input=user_input,
             entities=json.dumps(entities, ensure_ascii=False),
         ) | llm
+        # IB-029 TODO: with_structured_output
         response = chain.invoke({})
-        mechanism = _safe_json_parse(str(response.content))
+        raw_content = str(response.content)
+        try:
+            mechanism = _safe_json_parse(raw_content)
+            # IB-029: 检测 JSON 解析失败（响应非空但结果为空），记录错误以便调试
+            if not mechanism and raw_content.strip():
+                logger.warning("N2 LLM 响应 JSON 解析失败，原始(前200字): %s", raw_content[:200])
+                mechanism = {}
+        except Exception as parse_exc:
+            # IB-029: 解析异常时记录错误并返回结构化错误响应（不崩溃）
+            logger.warning("N2 LLM JSON 解析异常：%s", parse_exc)
+            mechanism = {}
     except Exception as exc:
         logger.warning("N2 Planner 失败，使用默认 simple_inhibition 降级：%s", exc)
         mechanism = {
@@ -408,9 +517,20 @@ def n3_mechanism_rag(state: BioDynamicsState) -> dict:
                 scenario=state.get("user_input", ""),
                 chunks=json.dumps(rag_evidence[:3], ensure_ascii=False),
             ) | llm
+            # IB-029 TODO: with_structured_output
             response = chain.invoke({})
-            parsed = _safe_json_parse(str(response.content))
-            description = parsed.get("mechanism_analysis", "") or parsed.get("description", "")
+            raw_content = str(response.content)
+            try:
+                parsed = _safe_json_parse(raw_content)
+                # IB-029: 检测 JSON 解析失败（响应非空但结果为空）
+                if not parsed and raw_content.strip():
+                    logger.warning("N3 LLM 响应 JSON 解析失败，原始(前200字): %s", raw_content[:200])
+                    parsed = {}
+                description = parsed.get("mechanism_analysis", "") or parsed.get("description", "")
+            except Exception as parse_exc:
+                # IB-029: 解析异常时记录错误并返回空描述（不崩溃）
+                logger.warning("N3 LLM JSON 解析异常：%s", parse_exc)
+                description = ""
         except Exception as exc:
             logger.warning("N3 机制总结失败：%s", exc)
             description = ""
@@ -482,8 +602,43 @@ _pubmed_last_call_ts: float = 0.0
 _PUBMED_RATE_LIMIT_SECONDS: float = 3.0
 # PubMed 调用超时上限（含 esearch + efetch + LLM 提取）
 _PUBMED_TIMEOUT_SECONDS: float = 30.0
-# 简易内存缓存：query → 提取的参数列表，避免同一查询重复调用 PubMed。
-_pubmed_cache: dict[str, list[dict]] = {}
+# TD-044 (IB-073) 修复：将无界 dict 替换为带 TTL + LRU 的 OrderedDict 缓存。
+# 最大条目数 1000，TTL 24 小时（86400 秒），避免内存无限增长。
+_PUBMED_CACHE_MAX_SIZE: int = 1000
+_PUBMED_CACHE_TTL_SECONDS: float = 86400.0
+# 缓存结构：key → (value, timestamp)，使用 OrderedDict 实现 LRU 淘汰。
+_pubmed_cache: "OrderedDict[str, tuple[list[dict], float]]" = OrderedDict()
+
+
+def _get_from_pubmed_cache(key: str) -> list[dict] | None:
+    """TD-044: 从 PubMed 缓存中读取值，含 TTL 过期检查与 LRU 访问顺序更新。
+
+    若 key 不存在或已过期返回 None；命中时将 key 移至末尾（最近使用）。
+    """
+    if key not in _pubmed_cache:
+        return None
+    value, ts = _pubmed_cache[key]
+    # TTL 过期检查
+    if time.time() - ts > _PUBMED_CACHE_TTL_SECONDS:
+        # 过期则删除并返回 None
+        _pubmed_cache.pop(key, None)
+        logger.debug("TD-044 PubMed 缓存过期删除：%s", key[:50])
+        return None
+    # LRU：移至末尾标记为最近使用
+    _pubmed_cache.move_to_end(key)
+    return value
+
+
+def _set_in_pubmed_cache(key: str, value: list[dict]) -> None:
+    """TD-044: 写入 PubMed 缓存，含 LRU 淘汰（超过 max_size 时淘汰最旧条目）。"""
+    # 若 key 已存在则先删除（保证 move_to_end 语义正确）
+    if key in _pubmed_cache:
+        _pubmed_cache.pop(key, None)
+    # LRU 淘汰：超过最大容量时删除最旧（头部）条目
+    while len(_pubmed_cache) >= _PUBMED_CACHE_MAX_SIZE:
+        _pubmed_cache.popitem(last=False)
+    # 写入新条目（自动在末尾）
+    _pubmed_cache[key] = (value, time.time())
 
 
 async def _fetch_params_from_pubmed(
@@ -496,11 +651,12 @@ async def _fetch_params_from_pubmed(
     含速率限制（3 秒/次）、超时控制（30 秒）、内存缓存。
     离线或失败时返回空列表，不阻塞主流程。
     """
-    # 缓存命中
+    # 缓存命中（TD-044: 使用带 TTL/LRU 的缓存读取函数）
     cache_key = f"{query}|{species_context}"
-    if cache_key in _pubmed_cache:
+    cached = _get_from_pubmed_cache(cache_key)
+    if cached is not None:
         logger.info("PubMed 缓存命中：%s", query[:50])
-        return _pubmed_cache[cache_key]
+        return cached
 
     # 速率限制
     global _pubmed_last_call_ts
@@ -526,8 +682,19 @@ async def _fetch_params_from_pubmed(
                     ("human", "{document_chunk}"),
                 ])
                 chain = prompt | llm
+                # IB-029 TODO: with_structured_output
                 response = chain.invoke({"document_chunk": abstract})
-                params = _safe_json_parse_list(str(response.content))
+                raw_content = str(response.content)
+                try:
+                    params = _safe_json_parse_list(raw_content)
+                    # IB-029: 检测 JSON 解析失败（响应非空但结果为空列表）
+                    if not params and raw_content.strip():
+                        logger.warning("PubMed LLM 响应 JSON 解析失败，原始(前200字): %s", raw_content[:200])
+                        params = []
+                except Exception as parse_exc:
+                    # IB-029: 解析异常时记录错误并返回空列表（不崩溃）
+                    logger.warning("PubMed LLM JSON 解析异常：%s", parse_exc)
+                    params = []
                 for p in params:
                     if isinstance(p, dict) and "value" in p:
                         p["source"] = article.get("source", f"PMID:{article.get('pmid', '')}")
@@ -540,7 +707,8 @@ async def _fetch_params_from_pubmed(
 
     try:
         result = await asyncio.wait_for(_do_fetch(), timeout=_PUBMED_TIMEOUT_SECONDS)
-        _pubmed_cache[cache_key] = result
+        # TD-044: 使用带 TTL/LRU 的缓存写入函数
+        _set_in_pubmed_cache(cache_key, result)
         _pubmed_last_call_ts = time.time()
         return result
     except asyncio.TimeoutError:
@@ -1375,8 +1543,19 @@ def n6_ode_generator(state: BioDynamicsState) -> dict:
             nodes=json.dumps(nodes, ensure_ascii=False),
             parameters_summary=json.dumps(params_summary, ensure_ascii=False),
         ) | llm
+        # IB-029 TODO: with_structured_output
         response = chain.invoke({})
-        network_relations = _safe_json_parse(str(response.content))
+        raw_content = str(response.content)
+        try:
+            network_relations = _safe_json_parse(raw_content)
+            # IB-029: 检测 JSON 解析失败（响应非空但结果为空）
+            if not network_relations and raw_content.strip():
+                logger.warning("N6 LLM 响应 JSON 解析失败，原始(前200字): %s", raw_content[:200])
+                network_relations = {}
+        except Exception as parse_exc:
+            # IB-029: 解析异常时记录错误并返回空字典（外层 except 会处理降级）
+            logger.warning("N6 LLM JSON 解析异常：%s", parse_exc)
+            network_relations = {}
     except Exception as exc:
         logger.warning("N6 ODE prompt 失败，使用 KG 直接生成：%s", exc)
         network_relations["equations"] = [
@@ -2126,6 +2305,9 @@ def n10_evidence_rag(state: BioDynamicsState) -> dict:
     # === Task H: PMID 提取与规范化 ===
     # TODO: P1-3 — PMID 正则从 \d{6,} 放宽至 \d{5,}（覆盖早期 5 位 PMID）
     _PMID_RE = re.compile(r"PMID[:\s]*(\d{5,})", re.IGNORECASE)
+    # TD-036 (IB-078) 修复：PMID 格式校验器（离线，不调用 PubMed API）。
+    # PMID 应为 1-8 位纯数字，不符合则标记 pmid_format_warning=True。
+    _PMID_FORMAT_RE = re.compile(r"^\d{1,8}$")
     for ev in evidence:
         pmid = ev.get("pmid", "") or ev.get("source_pmid", "")
         if not pmid:
@@ -2138,6 +2320,13 @@ def n10_evidence_rag(state: BioDynamicsState) -> dict:
                         pmid = match.group(1)
                         break
         ev["pmid"] = str(pmid) if pmid else ""
+        # TD-036: PMID 格式校验 — 非空但不匹配 ^\d{1,8}$ 时标记警告
+        if ev["pmid"] and not _PMID_FORMAT_RE.match(ev["pmid"]):
+            ev["pmid_format_warning"] = True
+            logger.warning(
+                "TD-036 PMID 格式校验失败（pmid=%s），已标记 pmid_format_warning=True",
+                ev["pmid"],
+            )
 
     # TODO: P1-3 — 显式补全 figure_ref / cell_line 字段（依赖原始记录透传，缺失时填空字符串）
     for ev in evidence:
@@ -2191,14 +2380,24 @@ def n11_scientific_report(state: BioDynamicsState) -> dict:
             confidence=confidence,
             time_unit=time_unit,
         ) | llm
+        # IB-029 TODO: with_structured_output
         response = chain.invoke({})
-        parsed = _safe_json_parse(str(response.content))
-        llm_filled = {
-            "mechanism_analysis": parsed.get("mechanism_analysis", ""),
-            "simulation_interpretation": parsed.get("simulation_interpretation", ""),
-            "discussion": parsed.get("discussion", ""),
-            "limitations": parsed.get("limitations", ""),
-        }
+        raw_content = str(response.content)
+        try:
+            parsed = _safe_json_parse(raw_content)
+            # IB-029: 检测 JSON 解析失败（响应非空但结果为空）
+            if not parsed and raw_content.strip():
+                logger.warning("N11 LLM 响应 JSON 解析失败，原始(前200字): %s", raw_content[:200])
+                parsed = {}
+            llm_filled = {
+                "mechanism_analysis": parsed.get("mechanism_analysis", ""),
+                "simulation_interpretation": parsed.get("simulation_interpretation", ""),
+                "discussion": parsed.get("discussion", ""),
+                "limitations": parsed.get("limitations", ""),
+            }
+        except Exception as parse_exc:
+            # IB-029: 解析异常时记录错误并保留默认空值（不崩溃）
+            logger.warning("N11 LLM JSON 解析异常：%s", parse_exc)
     except Exception as exc:
         logger.warning("N11 LLM JSON Fill 失败：%s", exc)
 

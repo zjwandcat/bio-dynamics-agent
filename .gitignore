@@ -10,14 +10,16 @@ env/
 ENV/
 .pytest_cache/
 
-# Environment / secrets
+# Environment / secrets (never upload keys)
 .env
 backend/.env
+*.env
 *.pem
-
-# Test files containing hardcoded credentials (kept local-only)
-backend/test_api.py
-backend/test_bigmodel_keys.py
+*.key
+*.p12
+*.pfx
+credentials*
+secrets*
 
 # Debug / runtime artifacts
 *.log
@@ -48,3 +50,32 @@ Thumbs.db
 # Generated vector databases (rebuildable)
 backend/data/vector_db/
 backend/data/qdrant_local/
+
+# =============================================================================
+# Release exclusions (per upload requirements)
+# =============================================================================
+
+# --- Test modules (do not upload) ---
+backend/tests/
+backend/test_*.py
+backend/test_*.bat
+backend/_test_*/
+backend/scripts/test_*.py
+scripts/test_*.py
+verification/
+frontend/__tests__/
+frontend/coverage/
+frontend/e2e/
+test_outputs_egf/
+
+# Test files containing hardcoded credentials (kept local-only)
+backend/test_api.py
+backend/test_bigmodel_keys.py
+
+# --- Markdown reports (keep only README.md) ---
+*.md
+!README.md
+
+# --- Text files (keep only requirements.txt) ---
+*.txt
+!requirements.txt

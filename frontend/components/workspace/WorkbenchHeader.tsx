@@ -9,10 +9,12 @@ import {
   PanelRightOpen,
   PanelRightClose,
   Database,
+  Languages,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useWorkbenchStore } from "@/lib/store";
+import { useTranslation } from "@/lib/i18n";
 import type { PathwayClass } from "@/lib/api";
 
 const PATHWAY_OPTIONS: { value: PathwayClass; label: string }[] = [
@@ -33,6 +35,7 @@ const PATHWAY_OPTIONS: { value: PathwayClass; label: string }[] = [
  * run action, knowledge-base controls, and the AI Assistant collapse toggle.
  */
 export function WorkbenchHeader() {
+  const { t, locale, toggleLocale } = useTranslation();
   const currentPathway = useWorkbenchStore((s) => s.currentPathway);
   const setCurrentPathway = useWorkbenchStore((s) => s.setCurrentPathway);
   const aiOpen = useWorkbenchStore((s) => s.uiState.aiAssistantOpen);
@@ -50,7 +53,7 @@ export function WorkbenchHeader() {
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-blue-500 to-purple-600">
             <Atom className="h-4 w-4 text-white" />
           </span>
-          <span className="text-sm font-semibold text-zinc-100">BioDynamics</span>
+          <span className="text-sm font-semibold text-zinc-100">{t("app.name")}</span>
           <Badge
             variant="outline"
             className="border-blue-700/50 text-[10px] text-blue-300"
@@ -62,35 +65,35 @@ export function WorkbenchHeader() {
 
       {/* Center: pathway selector + run */}
       <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-zinc-500">通路</span>
-          <select
-            value={currentPathway ?? ""}
-            onChange={(e) =>
-              setCurrentPathway(
-                (e.target.value || null) as PathwayClass | null
-              )
-            }
-            className="h-7 rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 outline-none focus:border-blue-500"
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-zinc-500">{t("header.pathway")}</span>
+            <select
+              value={currentPathway ?? ""}
+              onChange={(e) =>
+                setCurrentPathway(
+                  (e.target.value || null) as PathwayClass | null
+                )
+              }
+              className="h-7 rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 outline-none focus:border-blue-500"
+            >
+              <option value="">{t("header.pathway.placeholder")}</option>
+              {PATHWAY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => setAIPanelOpen(true)}
+            title={t("header.run")}
+            className="gap-1 bg-blue-600 hover:bg-blue-700"
           >
-            <option value="">— 选择通路 —</option>
-            {PATHWAY_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+            <Play className="h-3.5 w-3.5" />
+            {t("header.run")}
+          </Button>
         </div>
-        <Button
-          size="sm"
-          onClick={() => setAIPanelOpen(true)}
-          title="运行建模 / 仿真（C.4 将接入直接仿真，当前通过 AI 助手执行）"
-          className="gap-1 bg-blue-600 hover:bg-blue-700"
-        >
-          <Play className="h-3.5 w-3.5" />
-          Run
-        </Button>
-      </div>
 
       {/* Right: KB status + update + AI toggle */}
       <div className="flex items-center gap-2">
@@ -119,7 +122,8 @@ export function WorkbenchHeader() {
           size="icon-sm"
           onClick={handleUpdateVectorDb}
           disabled={isUpdatingDb}
-          title="更新知识库"
+          title={t("header.updateKb")}
+          aria-label={t("header.updateKb")}
           className="border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
         >
           <RefreshCw className={isUpdatingDb ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
@@ -127,16 +131,29 @@ export function WorkbenchHeader() {
         <Button
           variant="outline"
           size="icon-sm"
-          title="知识库状态"
+          title={t("header.kbStatus")}
+          aria-label={t("header.kbStatus")}
           className="border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
         >
           <Database className="h-3.5 w-3.5" />
         </Button>
         <Button
+          variant="outline"
+          size="sm"
+          onClick={toggleLocale}
+          title={t("header.lang")}
+          aria-label={t("header.lang")}
+          className="gap-1 border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300 hover:bg-zinc-800"
+        >
+          <Languages className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">{locale === "zh" ? "中" : "EN"}</span>
+        </Button>
+        <Button
           variant={aiOpen ? "default" : "outline"}
           size="sm"
           onClick={toggleAIPanel}
-          title={aiOpen ? "折叠 AI 助手" : "展开 AI 助手"}
+          title={aiOpen ? t("header.ai.toggle.close") : t("header.ai.toggle.open")}
+          aria-label={aiOpen ? t("header.ai.toggle.close") : t("header.ai.toggle.open")}
           className="gap-1"
         >
           {aiOpen ? (
@@ -144,7 +161,7 @@ export function WorkbenchHeader() {
           ) : (
             <PanelRightOpen className="h-3.5 w-3.5" />
           )}
-          <span className="hidden sm:inline">AI</span>
+          <span className="hidden sm:inline">{t("header.ai")}</span>
         </Button>
       </div>
     </header>

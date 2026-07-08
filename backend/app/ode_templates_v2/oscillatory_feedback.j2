@@ -90,6 +90,7 @@ def _ode_rhs(t, y):
       2. 作为 DDE 求解器的 fallback
     """
     dy = np.zeros(N_SP)
+    y = np.maximum(y, 0.0)  # TD-001 修复：负浓度保护（防 Hill src**n 对负底数产生 NaN）
     for edge in EDGES:
         src_name = edge.get("source", "")
         tgt_name = edge.get("target", "")

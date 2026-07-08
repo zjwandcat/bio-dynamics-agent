@@ -264,12 +264,12 @@ class ValidationAgent:
         # 检查 metrics 是否可用（N8 输出）
         metrics = state.get("metrics") if isinstance(state, dict) else None
         if not isinstance(metrics, dict) or not metrics:
-            # metrics 未计算（Pyramid hook 在 worker_report 前注入）→ skipped pass=True
+            # TD-017 修复（硬门）：metrics 未计算 → pass=False（不再 pass=True 软门放水）
             logger.debug(
-                "Level 4 Benchmark skipped: metrics 未计算（N8 未执行）"
+                "Level 4 Benchmark skipped: metrics 未计算（N8 未执行）→ pass=False（硬门）"
             )
             return {
-                "pass": True,
+                "pass": False,
                 "skipped": True,
                 "reason": "metrics_not_computed_yet",
                 "benchmarks": [],
@@ -329,7 +329,7 @@ def validation_pyramid_hook_node(state: dict[str, Any]) -> dict[str, Any]:
         # Task B.2: 双写 v4_validation_report → v4_state["validation"]["report"]
         set_v4_state(update, "validation", "report", report)
 
-        # 失败短路：overall_pass=False 时设置 pending_clarification
+        # 失败短路：overall_pass=False 时设置 pending_clarification + 硬门字段
         if not report.get("overall_pass", False):
             clarification = agent.build_clarification_signal(report)
             if clarification is not None:
@@ -338,6 +338,21 @@ def validation_pyramid_hook_node(state: dict[str, Any]) -> dict[str, Any]:
                     "Validation Pyramid 短路：overall_pass=False, failed_levels=%s",
                     report.get("failed_levels", []),
                 )
+            # TD-019 (IB-058) 修复：整个验证金字塔为软门不阻断 ——
+            # 原 overall_pass=False 仅设置 pending_clarification（软信号），
+            # 下游消费者无法显式查询硬门失败状态。新增硬门字段：
+            # - validation_hard_gate_failed: True（硬门失败标志，可查询）
+            # - validation_failed_levels: 失败 Level 列表（供下游决策）
+            # - validation_block_reason: 失败原因标识（固定 "validation_pyramid_failed"）
+            # 注意：不抛异常（避免破坏 graph），仅显式标记失败状态供下游消费。
+            update["validation_hard_gate_failed"] = True
+            update["validation_failed_levels"] = report.get("failed_levels", [])
+            update["validation_block_reason"] = "validation_pyramid_failed"
+            logger.info(
+                "TD-019: Validation Pyramid 硬门失败，"
+                "validation_hard_gate_failed=True, failed_levels=%s",
+                update["validation_failed_levels"],
+            )
 
         return update
     except Exception as exc:

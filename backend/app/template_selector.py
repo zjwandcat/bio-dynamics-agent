@@ -326,7 +326,14 @@ class TemplateSelectorSkill:
         if vote_result:
             return vote_result
 
-        # === 规则 8: LLM 输出（最低优先级，仅作 tie-breaker）===
+        # === 规则 8a: 相似度确定性兜底（TD-047 / IB-080）===
+        # 在调用 LLM 之前，先尝试基于 user_input 与模板名的关键词重叠做确定性匹配，
+        # 避免 LLM 单点决策的不稳定性（LLM 在无规则命中时易给出不稳定/越界模板）。
+        sim_match = self._similarity_match(user_input)
+        if sim_match:
+            return sim_match
+
+        # === 规则 8b: LLM 输出（最低优先级，仅作 tie-breaker）===
         if llm_template and llm_template in TEMPLATE_WHITELIST:
             return TemplateSelection(
                 template=llm_template,
@@ -404,6 +411,64 @@ class TemplateSelectorSkill:
 
         return None
 
+    # -------------------------------------------------------------------------
+    # 内部辅助：相似度确定性兜底（TD-047 / IB-080）
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _similarity_match(user_input: str) -> TemplateSelection | None:
+        """基于 user_input 与模板名的关键词重叠做确定性兜底匹配。
+
+        TD-047 (IB-080)：在 LLM 兜底之前插入，避免 LLM 单点决策不稳定。
+        匹配规则：
+            1. 将 user_input 与每个模板名按 _ / 空白拆分为 token（长度 > 1）
+            2. 计算 user_input token 集合与模板 token 集合的交集大小
+            3. score = 交集大小 / 模板 token 数（模板 token 被覆盖比例）
+            4. 取 score 最高且 > 0 的模板；置信度 0.55，override_llm=True
+               （确定性匹配优先于 LLM 输出）
+
+        Args:
+            user_input: 用户输入文本（通路名 / 机制描述）
+
+        Returns:
+            命中时返回 TemplateSelection，无命中返回 None
+        """
+        if not user_input:
+            return None
+        # 拆分 user_input 为 token（按 _ / 空白，过滤单字符噪声）
+        input_tokens = {
+            t.lower() for t in re.split(r"[_\s]+", user_input) if len(t) > 1
+        }
+        if not input_tokens:
+            return None
+        best_template = ""
+        best_score = 0.0
+        for tpl in TEMPLATE_WHITELIST:
+            tpl_tokens = {
+                t.lower() for t in re.split(r"[_\s]+", tpl) if len(t) > 1
+            }
+            if not tpl_tokens:
+                continue
+            overlap = len(input_tokens & tpl_tokens)
+            if overlap == 0:
+                continue
+            # score = 模板 token 被覆盖比例（模板名越短、覆盖越多，分越高）
+            score = overlap / len(tpl_tokens)
+            if score > best_score:
+                best_score = score
+                best_template = tpl
+        if best_template and best_score > 0:
+            return TemplateSelection(
+                template=best_template,
+                confidence=0.55,
+                reason=(
+                    f"相似度兜底：user_input 与模板 {best_template} 关键词重叠 "
+                    f"(score={best_score:.2f})"
+                ),
+                rule_source="similarity_fallback",
+                override_llm=True,
+            )
+        return None
+
 
 # -----------------------------------------------------------------------------
 # 便捷函数
@@ -427,8 +492,33 @@ def select_template(
 
 
 def _matches_any(text_lower: str, keywords: tuple[str, ...]) -> bool:
-    """检查文本是否匹配任一关键词（大小写不敏感）。"""
-    return any(kw.lower() in text_lower for kw in keywords)
+    """检查文本是否匹配任一关键词（大小写不敏感，词边界匹配）。
+
+    TD-048 (IB-081) 修复：原实现用 `kw in text` 子串匹配，导致 'EGFR' 误命中
+    'pEGFR'、'Rel' 误命中 'related' 等子串误判。改用词边界（\\b）正则匹配，
+    从根本上杜绝子串误命中。含非 ASCII（中文/希腊字母等）的关键词回退到子串
+    匹配（中文无词边界概念）。
+
+    Args:
+        text_lower: 已小写化的待匹配文本（调用方负责小写化）
+        keywords: 关键词元组（原始大小写，内部小写化）
+
+    Returns:
+        True 若文本命中任一关键词
+    """
+    for kw in keywords:
+        kw_lower = kw.lower()
+        if not kw_lower:
+            continue
+        # 含非 ASCII（中文/希腊字母等）的关键词用子串匹配
+        if not kw_lower.isascii():
+            if kw_lower in text_lower:
+                return True
+            continue
+        # 纯 ASCII 关键词用词边界匹配，避免子串误命中
+        if re.search(rf"\b{re.escape(kw_lower)}\b", text_lower):
+            return True
+    return False
 
 
 # -----------------------------------------------------------------------------

@@ -36,13 +36,15 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Benchmark 清单常量（spec.md Part 4 Level 4 第 304-309 行）
 # =============================================================================
-# 5 个通路特异 benchmark，每个含：
+# TD-023 (IB-016) 修复：10 个通路特异 benchmark（原仅 5/10 通路覆盖，补齐缺失 5 个）。
+# 每个含：
 # - name: benchmark 名称
 # - description: 描述
 # - source_pmid: 来源 PubMed ID
 # - metric: 仿真结果中对应的指标 key
 # - expected_range: 期望范围 (min, max)，None 表示无下限/上限
 # - tolerance: 允许偏差（超出 expected_range 但在 tolerance 内仍判 pass）
+# - benchmark_source: "literature"（精确实验值）/ "estimated"（按文献综述范围估计）
 BENCHMARK_REGISTRY: dict[str, dict[str, Any]] = {
     "EGFR_RTK": {
         "name": "pEGFR_peak_time",
@@ -51,6 +53,7 @@ BENCHMARK_REGISTRY: dict[str, dict[str, Any]] = {
         "metric": "peak_time_minutes",
         "expected_range": (5.0, 10.0),
         "tolerance": 2.0,  # 允许偏差 2 min
+        "benchmark_source": "literature",
     },
     "MAPK_ERK": {
         "name": "MAPK_Hill_coefficient",
@@ -59,6 +62,7 @@ BENCHMARK_REGISTRY: dict[str, dict[str, Any]] = {
         "metric": "hill_coefficient",
         "expected_range": (2.0, None),  # > 2
         "tolerance": 0.5,
+        "benchmark_source": "literature",
     },
     "NF_KB": {
         "name": "NF_kB_oscillation_period",
@@ -67,6 +71,7 @@ BENCHMARK_REGISTRY: dict[str, dict[str, Any]] = {
         "metric": "oscillation_period_hours",
         "expected_range": (1.0, 2.0),
         "tolerance": 0.5,
+        "benchmark_source": "literature",
     },
     "p53": {
         "name": "p53_pulse_period",
@@ -75,6 +80,7 @@ BENCHMARK_REGISTRY: dict[str, dict[str, Any]] = {
         "metric": "pulse_period_hours",
         "expected_range": (5.0, 7.0),
         "tolerance": 1.0,
+        "benchmark_source": "literature",
     },
     "WNT": {
         "name": "beta_catenin_steady_state",
@@ -83,6 +89,55 @@ BENCHMARK_REGISTRY: dict[str, dict[str, Any]] = {
         "metric": "steady_state_nM",
         "expected_range": (None, 10.0),  # < 10
         "tolerance": 2.0,
+        "benchmark_source": "literature",
+    },
+    # TD-023 (IB-016) 修复：以下 5 个通路原无 benchmark 覆盖，现按文献综述范围补齐。
+    # 阈值取自 backend/benchmarks/*.yaml 官方 benchmark 套件（含真实 PMID），
+    # 因注册表为单指标摘要（YAML 含多指标），标记 benchmark_source="estimated"。
+    "PI3K_AKT_mTOR": {
+        "name": "pAKT_peak_time",
+        "description": "pAKT 30-60 min 达峰（Mazzoletti 2009）",
+        "source_pmid": "PMID:19211571",  # Mazzoletti 2009
+        "metric": "pAKT_peak_time",
+        "expected_range": (30.0, 60.0),
+        "tolerance": 5.0,
+        "benchmark_source": "estimated",  # 单指标摘要，按文献综述范围估计
+    },
+    "TGF_BETA": {
+        "name": "pSmad2_peak_time",
+        "description": "pSmad2 5-15 min 达峰（Clarke 2009 / Massagué 1998）",
+        "source_pmid": "PMID:9674480",  # Massagué 1998
+        "metric": "pSmad2_peak_time",
+        "expected_range": (5.0, 15.0),
+        "tolerance": 1.0,
+        "benchmark_source": "estimated",
+    },
+    "APOPTOSIS": {
+        "name": "Cyt_c_precedes_Casp3",
+        "description": "Cyt c 释放早于 Caspase-3 激活 5-15 min（Rehm 2006 / Green & Kroemer 2004）",
+        "source_pmid": "PMID:15241432",  # Green & Kroemer 2004
+        "metric": "Cyt_c_precedes_Casp3",
+        "expected_range": (5.0, 15.0),
+        "tolerance": 1.0,
+        "benchmark_source": "estimated",
+    },
+    "CELL_CYCLE": {
+        "name": "CyclinB_APC_oscillation_period",
+        "description": "CyclinB-APC/C 振荡周期 8-12h（Tyson 1991 / Pomerening 2005）",
+        "source_pmid": "PMID:11389814",  # Pomerening 2005
+        "metric": "CyclinB_APC_oscillation_period",
+        "expected_range": (8.0, 12.0),
+        "tolerance": 0.5,
+        "benchmark_source": "estimated",
+    },
+    "JAK_STAT": {
+        "name": "pSTAT5_peak_time",
+        "description": "pSTAT5 5-15 min 达峰（Timm 2003 / Schwartz 2003）",
+        "source_pmid": "PMID:15286703",  # Schwartz 2003
+        "metric": "pSTAT5_peak_time",
+        "expected_range": (5.0, 15.0),
+        "tolerance": 1.0,
+        "benchmark_source": "estimated",
     },
 }
 
@@ -176,10 +231,12 @@ class Level4BenchmarkValidator:
                 evaluated.append(self._evaluate_benchmark(bm, metrics))
 
             # 3. 任一 benchmark 失败 → pass=False（spec.md 第 310 行）
-            #    无 benchmark 时 pass=True（无验证规则）
+            #    TD-017 修复（硬门）：无 benchmark 匹配时 pass=False（不再 pass=True 软门放水）
             if not evaluated:
                 return {
-                    "pass": True,
+                    "pass": False,
+                    "skipped": True,
+                    "reason": "no_benchmark_matched",
                     "benchmarks": [],
                     "method": "no_benchmark_matched",
                 }

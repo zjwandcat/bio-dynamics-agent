@@ -10,6 +10,7 @@ import {
   Lightbulb,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n";
 import {
   ValidationDetail,
   type CheckStatus,
@@ -122,43 +123,46 @@ interface LevelConfig {
   taper: number;
 }
 
-const LEVELS: LevelConfig[] = [
-  {
-    key: "level1",
-    number: 1,
-    name: "Internal Consistency",
-    icon: <Network className="h-3.5 w-3.5" />,
-    taper: 0,
-  },
-  {
-    key: "level2",
-    number: 2,
-    name: "SBML / BioModels",
-    icon: <GitCompare className="h-3.5 w-3.5" />,
-    taper: 6,
-  },
-  {
-    key: "level3",
-    number: 3,
-    name: "Cross-Pathway",
-    icon: <Network className="h-3.5 w-3.5" />,
-    taper: 12,
-  },
-  {
-    key: "level4",
-    number: 4,
-    name: "Benchmark",
-    icon: <BarChart3 className="h-3.5 w-3.5" />,
-    taper: 18,
-  },
-  {
-    key: "level5",
-    number: 5,
-    name: "Hypothesis",
-    icon: <Lightbulb className="h-3.5 w-3.5" />,
-    taper: 24,
-  },
-];
+function useLevels(): LevelConfig[] {
+  const { t } = useTranslation();
+  return [
+    {
+      key: "level1",
+      number: 1,
+      name: t("validation.level1"),
+      icon: <Network className="h-3.5 w-3.5" />,
+      taper: 0,
+    },
+    {
+      key: "level2",
+      number: 2,
+      name: t("validation.level2"),
+      icon: <GitCompare className="h-3.5 w-3.5" />,
+      taper: 6,
+    },
+    {
+      key: "level3",
+      number: 3,
+      name: t("validation.level3"),
+      icon: <Network className="h-3.5 w-3.5" />,
+      taper: 12,
+    },
+    {
+      key: "level4",
+      number: 4,
+      name: t("validation.level4"),
+      icon: <BarChart3 className="h-3.5 w-3.5" />,
+      taper: 18,
+    },
+    {
+      key: "level5",
+      number: 5,
+      name: t("validation.level5"),
+      icon: <Lightbulb className="h-3.5 w-3.5" />,
+      taper: 24,
+    },
+  ];
+}
 
 // ---------------------------------------------------------------------------
 // Status derivation
@@ -468,19 +472,23 @@ const STATUS_BORDER: Record<CheckStatus, string> = {
   skipped: "border-l-zinc-600",
 };
 
-const BADGE_STYLE: Record<CheckStatus, { label: string; cls: string }> = {
-  pass: { label: "Pass", cls: "bg-emerald-500/15 text-emerald-300" },
-  warning: { label: "Warn", cls: "bg-amber-500/15 text-amber-300" },
-  fail: { label: "Fail", cls: "bg-red-500/15 text-red-300" },
-  skipped: { label: "Skip", cls: "bg-zinc-500/15 text-zinc-400" },
-};
+function useBadgeStyle(): Record<CheckStatus, { label: string; cls: string }> {
+  const { t } = useTranslation();
+  return {
+    pass: { label: t("Pass", "Pass"), cls: "bg-emerald-500/15 text-emerald-300" },
+    warning: { label: t("Warn", "Warn"), cls: "bg-amber-500/15 text-amber-300" },
+    fail: { label: t("Fail", "Fail"), cls: "bg-red-500/15 text-red-300" },
+    skipped: { label: t("Skip", "Skip"), cls: "bg-zinc-500/15 text-zinc-400" },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
 function StatusBadge({ status }: { status: CheckStatus }) {
-  const cfg = BADGE_STYLE[status];
+  const style = useBadgeStyle();
+  const cfg = style[status];
   return (
     <span
       className={cn(
@@ -497,11 +505,37 @@ function ScoreHeader({
   passed,
   total,
   overallPass,
+  hasReport,
 }: {
   passed: number;
   total: number;
   overallPass: boolean;
+  hasReport: boolean;
 }) {
+  const { t } = useTranslation();
+
+  // 尚未运行仿真时显示中性状态，避免用户进入即看到 FAILED
+  if (!hasReport) {
+    return (
+      <div className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900/70 px-3 py-2">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-zinc-500" />
+          <div className="leading-tight">
+            <div className="text-[11px] font-semibold text-zinc-100">
+              {t("validation.pending")}
+            </div>
+            <div className="text-[9px] uppercase tracking-wide text-zinc-500">
+              {t("validation.pending.hint")}
+            </div>
+          </div>
+        </div>
+        <span className="rounded bg-zinc-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-zinc-400">
+          {t("validation.notRun")}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900/70 px-3 py-2">
       <div className="flex items-center gap-2">
@@ -513,10 +547,12 @@ function ScoreHeader({
         />
         <div className="leading-tight">
           <div className="text-[11px] font-semibold text-zinc-100">
-            {passed}/{total} levels passed
+            {t("validation.levelsPassed", undefined, { passed, total })}
           </div>
           <div className="text-[9px] uppercase tracking-wide text-zinc-500">
-            {overallPass ? "validation clear" : "validation failed"}
+            {overallPass
+              ? t("validation.clear")
+              : t("validation.failed")}
           </div>
         </div>
       </div>
@@ -528,7 +564,7 @@ function ScoreHeader({
             : "bg-red-500/15 text-red-300"
         )}
       >
-        {overallPass ? "All Pass" : "Failed"}
+        {overallPass ? t("validation.allPass") : t("validation.failedBadge")}
       </span>
     </div>
   );
@@ -547,7 +583,9 @@ export function ValidationPyramid({
   report,
   className,
 }: ValidationPyramidProps) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState<LevelKey | null>(null);
+  const LEVELS = useLevels();
 
   const rows = useMemo(
     () =>
@@ -557,13 +595,16 @@ export function ValidationPyramid({
         const notes = levelNotes(cfg.key, report);
         return { cfg, status, checks, notes };
       }),
-    [report]
+    [report, LEVELS]
   );
 
   const passedCount = rows.filter(
     (r) => report[r.cfg.key]?.pass === true
   ).length;
   const overallPass = report.overall_pass === true;
+  const hasReport =
+    Object.keys(report).length > 0 &&
+    LEVELS.some((l) => report[l.key] !== undefined);
 
   return (
     <div className={cn("space-y-2", className)}>
@@ -571,6 +612,7 @@ export function ValidationPyramid({
         passed={passedCount}
         total={LEVELS.length}
         overallPass={overallPass}
+        hasReport={hasReport}
       />
 
       <div className="space-y-1.5">
@@ -622,7 +664,7 @@ export function ValidationPyramid({
               )}
               {isOpen && checks.length === 0 && (
                 <div className="border-t border-zinc-800/80 px-3 py-2 text-[10px] text-zinc-500">
-                  No checks available for this level.
+                  {t("validation.noChecks")}
                 </div>
               )}
             </div>

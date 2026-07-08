@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -164,6 +165,24 @@ class ODERendererV2:
                 dde_delay = temporal.get("dde_delay_minutes", 0.0)
                 if t_end is None:
                     t_end = temporal.get("t_end_minutes", 60.0)
+
+        # TD-038 (IB-029): DDE 延迟优先从 reaction_ir 提取
+        # （遍历 reaction.parameter_context / constraints 中的 delay/tau/τ 声明），
+        # 而非硬编码或仅依赖 pathway_graph。IR 中未声明延迟时回退到默认值并记录 debug。
+        ir_delay = self._extract_dde_delay_from_ir(reaction_ir)
+        if ir_delay is not None:
+            # IR 中显式声明延迟，以 IR 为准（覆盖 pathway_graph 的默认值）
+            dde_delay = ir_delay
+            if ir_delay > 0:
+                requires_dde = True
+            logger.debug(
+                "TD-038: 从 reaction_ir 提取 DDE 延迟 τ=%.4f min", dde_delay,
+            )
+        else:
+            # IR 中未声明延迟，回退到 pathway_graph / 默认值，记录 debug
+            logger.debug(
+                "TD-038: reaction_ir 未声明 DDE 延迟，回退默认 %.4f min", dde_delay,
+            )
 
         # 4. 默认 t_end
         if t_end is None:
@@ -441,6 +460,79 @@ class ODERendererV2:
                 "modifiers": modifier_names,
             })
         return edges
+
+    @staticmethod
+    def _extract_dde_delay_from_ir(reaction_ir: dict[str, Any]) -> float | None:
+        """TD-038 (IB-029): 从 ReactionIRv2 提取 DDE 延迟值 τ（分钟）。
+
+        延迟应来自 IR 数据本身，而非硬编码。检索范围（按优先级）：
+          1. 各 reaction 的 ``parameter_context`` 中显式声明的 delay/tau/τ 数值
+             （匹配 ``delay=5`` / ``tau:5.0`` / ``τ 5`` 等形式）
+          2. 顶层 ``constraints`` 与 reaction 级 ``constraints`` 中含 delay/tau/τ
+             的约束 ``expression``
+          3. 顶层 ``parameters`` 字典中 delay/tau/dde_delay 键的数值
+
+        Args:
+            reaction_ir: P2 ReactionIRv2 的 dict 表示。
+
+        Returns:
+            延迟值（分钟）；未找到时返回 None，由调用方回退到默认值。
+        """
+        # 匹配 delay / tau / τ 后跟数值（容忍 = / : / 空格 分隔符）
+        delay_pattern = re.compile(
+            r"(?:delay|tau|τ)\s*[:=]?\s*([0-9]+(?:\.[0-9]+)?)",
+            re.IGNORECASE,
+        )
+
+        def _try_parse(text: Any) -> float | None:
+            """从文本中提取首个 delay/tau 数值。"""
+            if not isinstance(text, str) or not text:
+                return None
+            m = delay_pattern.search(text)
+            if not m:
+                return None
+            try:
+                return float(m.group(1))
+            except (TypeError, ValueError):
+                return None
+
+        # 1. 遍历 reaction.parameter_context 查找 delay/tau/τ 声明
+        for rxn in reaction_ir.get("reactions", []):
+            if not isinstance(rxn, dict):
+                continue
+            val = _try_parse(rxn.get("parameter_context", ""))
+            if val is not None:
+                return val
+
+        # 2. 遍历 constraints（顶层 + reaction 级）查找 delay/tau/τ 表达式
+        constraint_lists: list[Any] = [reaction_ir.get("constraints", [])]
+        for rxn in reaction_ir.get("reactions", []):
+            if isinstance(rxn, dict):
+                constraint_lists.append(rxn.get("constraints", []))
+        for constraints in constraint_lists:
+            if not isinstance(constraints, list):
+                continue
+            for c in constraints:
+                if not isinstance(c, dict):
+                    continue
+                val = _try_parse(c.get("expression", ""))
+                if val is not None:
+                    return val
+
+        # 3. 顶层 parameters 字典中的 delay/tau/dde_delay 键
+        top_params = reaction_ir.get("parameters")
+        if isinstance(top_params, dict):
+            for key, val in top_params.items():
+                if (
+                    isinstance(key, str)
+                    and key.lower() in (
+                        "delay", "tau", "τ", "dde_delay", "dde_delay_minutes",
+                    )
+                    and isinstance(val, (int, float))
+                ):
+                    return float(val)
+
+        return None
 
 
 # =============================================================================

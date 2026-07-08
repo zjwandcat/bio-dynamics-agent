@@ -60,6 +60,7 @@ def _get_param(target_name, param_key, default):
 def _ode_rhs(t, y):
     """ODE 右端函数（Caspase 级联模板）。"""
     dy = np.zeros(N_SP)
+    y = np.maximum(y, 0.0)  # TD-001 修复：负浓度保护（防 Hill src**n 对负底数产生 NaN）
     for edge in EDGES:
         src_name = edge.get("source", "")
         tgt_name = edge.get("target", "")
@@ -78,14 +79,23 @@ def _ode_rhs(t, y):
             Km = _get_param(tgt_name, "Km", 0.1)
             _Vmax = k_cat * src
             _rate = _Vmax * tgt / (Km + tgt) if (Km + tgt) > 0 else 0.0
-            dy[t_idx] -= _rate  # 底物（pro-caspase）消耗
-            # 产物（active caspase）生成
+            # TD-029 (IB-025) 修复：避免净零通量 —— 底物消耗与产物生成必须在
+            # 不同物种 index 上，且底物减少量 = 产物生成量（质量守恒）
             active_name = tgt_name.replace("pro_", "active_").replace("Pro", "Active")
-            if active_name in SP_IDX:
+            if active_name in SP_IDX and active_name != tgt_name:
+                # 情况1：target 是底物（pro-caspase），active 形式是产物
+                # 底物（pro-caspase）减少
+                dy[t_idx] -= _rate
+                # 产物（active caspase）增加 —— 质量守恒：底物减少 = 产物增加
                 dy[SP_IDX[active_name]] += _rate
             else:
-                # 简化：直接增加 target（假设 target 就是 active 形式）
+                # TD-029 修复：active 形式不存在或与 target 同名时，
+                # target 视为产物（active caspase），产物增加（不再与底物减少抵消）
                 dy[t_idx] += _rate
+                # 尝试找到底物（pro-caspase）并减少 —— 质量守恒
+                pro_name = tgt_name.replace("active_", "pro_").replace("Active", "Pro")
+                if pro_name in SP_IDX and pro_name != tgt_name:
+                    dy[SP_IDX[pro_name]] -= _rate
 
         elif mechanism == "phosphorylation":
             # Michaelis-Menten

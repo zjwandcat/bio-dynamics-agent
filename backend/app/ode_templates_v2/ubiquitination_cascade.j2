@@ -60,6 +60,7 @@ def _get_param(target_name, param_key, default):
 def _ode_rhs(t, y):
     """ODE 右端函数（泛素化级联模板）。"""
     dy = np.zeros(N_SP)
+    y = np.maximum(y, 0.0)  # TD-001 修复：负浓度保护（防 Hill src**n 对负底数产生 NaN）
     for edge in EDGES:
         src_name = edge.get("source", "")
         tgt_name = edge.get("target", "")

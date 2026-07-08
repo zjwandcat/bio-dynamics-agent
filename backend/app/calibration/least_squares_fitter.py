@@ -47,6 +47,10 @@ class FitResult:
     method: str = "none"
     residuals: list[float] | None = None
     raw: Any = None
+    # TD-024 修复：新增拟合质量指标与协方差（默认 None，向后兼容）
+    # fit_quality 含 R² / RMSE / AIC；covariance 来自 curve_fit 的 pcov
+    fit_quality: dict[str, float] | None = None
+    covariance: Any = None
 
 
 # =============================================================================
@@ -126,17 +130,44 @@ class LeastSquaresFitter:
                     method=self._backend_name(),
                 )
 
-            # 选择 model_func（默认 placeholder）
+            # 选择 model_func（默认真实一阶动力学模型，TD-024 替换原占位 placeholder）
             effective_model = model_func if model_func is not None else self._default_model
+            # 默认模型路径标记：用于后续注入真实 curve_fit 的 covariance + fit_quality
+            use_default_curve = model_func is None
 
             # 双路径分发
             if self._lmfit_available:
-                return self._fit_with_lmfit(
+                result = self._fit_with_lmfit(
                     target_params, observations, effective_model
                 )
-            return self._fit_with_scipy(
-                target_params, observations, effective_model
-            )
+            else:
+                result = self._fit_with_scipy(
+                    target_params, observations, effective_model
+                )
+
+            # TD-024 修复：默认模型路径下，用真实 curve_fit 计算 covariance + fit_quality
+            # （替代原占位 dummy 输出，提供 R²/RMSE/AIC 拟合质量指标）
+            if use_default_curve and result.success:
+                try:
+                    t_data = self._extract_timepoints(
+                        reference_data, len(observations)
+                    )
+                    param_guess = [self.DEFAULT_PARAM_INIT] * len(target_params)
+                    param_bounds = (
+                        [self.DEFAULT_PARAM_MIN] * len(target_params),
+                        [self.DEFAULT_PARAM_MAX] * len(target_params),
+                    )
+                    _, covariance, fit_quality = self._fit_curve(
+                        t_data, observations, param_guess, param_bounds
+                    )
+                    result.fit_quality = fit_quality
+                    result.covariance = covariance
+                except Exception as qexc:
+                    logger.warning(
+                        "fit_quality/covariance 计算失败: %s", qexc
+                    )
+
+            return result
 
         except Exception as exc:
             logger.warning("LeastSquaresFitter.fit 失败：%s", exc)
@@ -255,27 +286,233 @@ class LeastSquaresFitter:
         )
 
     # =========================================================================
-    # 默认 model_func（placeholder：参数积近似 forward simulation）
+    # 默认 model_func（TD-024 修复：真实一阶动力学模型，替代参数积占位）
     # =========================================================================
     @staticmethod
-    def _default_model(**kwargs: float) -> list[float]:
-        """默认 placeholder model：参数积近似 forward simulation。
+    def _default_model_curve(t: Any, *params: float) -> Any:
+        """真实默认模型函数（scipy.optimize.curve_fit 兼容）。
 
-        生产环境应注入真实 ODE 仿真（roadrunner / scipy.solve_ivp），
-        此 placeholder 仅用于接口完整性 + 测试，不保证生物学意义。
+        一阶动力学指数衰减/增长组合（生化动力学常见形式）。
+        参数解释：偶数索引为振幅（amplitude），奇数索引为速率常数（rate），
+        末尾若剩单参数则作为常数偏置。
+
+        Args:
+            t: 自变量（时间点，标量或数组）
+            *params: 参数序列
+
+        Returns:
+            预测值（与 t 同形状的数组）
         """
-        # 参数积作为 simulated（与观测数据对齐）
+        import numpy as np  # type: ignore[import-untyped]
+
+        t_arr = np.asarray(t, dtype=float)
+        y = np.zeros_like(t_arr)
+        n = len(params)
+        i = 0
+        while i < n:
+            amp = float(params[i])
+            if i + 1 < n:
+                rate = float(params[i + 1])
+                # 指数项：amp * exp(-rate * t)
+                y = y + amp * np.exp(-rate * t_arr)
+            else:
+                # 末尾单参数作常数偏置
+                y = y + amp
+            i += 2
+        return y
+
+    @staticmethod
+    def _default_model(**kwargs: float) -> list[float]:
+        """真实默认 model_func（替代占位 placeholder）。
+
+        基于一阶动力学指数模型生成预测序列，使用参数构造指数衰减组合，
+        返回与观测长度无关的预测列表（residual 内部对齐长度）。
+        生产环境应注入真实 ODE 仿真（roadrunner / scipy.solve_ivp）。
+        """
+        import numpy as np  # type: ignore[import-untyped]
+
         if not kwargs:
             return [0.0]
-        product = 1.0
+        # 参数值序列（按 kwargs 插入顺序）
+        param_values: list[float] = []
         for v in kwargs.values():
             try:
-                product *= float(v)
+                param_values.append(float(v))
             except (TypeError, ValueError):
-                product *= 1.0
-        # 返回与观测长度无关的 placeholder；调用方对齐长度
-        # 用一个常量列表避免长度不匹配（residual 内部对齐）
-        return [product * 0.1, product * 0.5, product * 1.0, product * 1.5, product * 2.0]
+                param_values.append(1.0)
+        # 默认时间网格（10 点，覆盖典型动力学时间尺度）
+        t_grid = np.linspace(0.0, 10.0, 10)
+        y_pred = LeastSquaresFitter._default_model_curve(t_grid, *param_values)
+        return [float(v) for v in y_pred]
+
+    # =========================================================================
+    # 真实曲线拟合（TD-024 修复：scipy.optimize.curve_fit + 网格搜索降级）
+    # =========================================================================
+    def _fit_curve(
+        self,
+        t_data: list[float],
+        y_data: list[float],
+        param_guess: list[float],
+        param_bounds: tuple[list[float], list[float]],
+    ) -> tuple[list[float], Any, dict[str, float]]:
+        """真实最小二乘曲线拟合。
+
+        使用 scipy.optimize.curve_fit 拟合 _default_model_curve 到 (t_data, y_data)，
+        返回 (best_params, covariance, fit_quality)。
+        scipy 不可用或 curve_fit 失败时降级为简单网格搜索 + warning。
+
+        Args:
+            t_data: 自变量序列（时间点）
+            y_data: 因变量序列（观测值）
+            param_guess: 参数初值列表
+            param_bounds: (lower_bounds, upper_bounds)
+
+        Returns:
+            (best_params, covariance, fit_quality)
+            - best_params: 拟合后的参数列表
+            - covariance: 参数协方差矩阵（curve_fit 的 pcov；网格搜索路径为 None）
+            - fit_quality: {"R2": float, "RMSE": float, "AIC": float}
+        """
+        import numpy as np  # type: ignore[import-untyped]
+
+        t_arr = np.asarray(t_data, dtype=float)
+        y_arr = np.asarray(y_data, dtype=float)
+        n_params = len(param_guess)
+        lower, upper = param_bounds
+        lower_arr = np.asarray(lower, dtype=float)
+        upper_arr = np.asarray(upper, dtype=float)
+
+        best_params: list[float] = list(param_guess)
+        covariance: Any = None
+
+        # 尝试 scipy.optimize.curve_fit
+        try:
+            from scipy.optimize import curve_fit  # type: ignore[import-untyped]
+
+            popt, pcov = curve_fit(
+                LeastSquaresFitter._default_model_curve,
+                t_arr,
+                y_arr,
+                p0=param_guess,
+                bounds=(lower_arr, upper_arr),
+                maxfev=2000,
+            )
+            best_params = [float(p) for p in popt]
+            covariance = pcov
+        except Exception as exc:
+            # scipy 不可用或 curve_fit 失败 → 网格搜索降级
+            if isinstance(exc, ImportError):
+                logger.warning(
+                    "scipy 不可用，_fit_curve 降级为网格搜索: %s", exc
+                )
+            else:
+                logger.warning(
+                    "curve_fit 失败，_fit_curve 降级为网格搜索: %s", exc
+                )
+            best_params = self._grid_search(
+                t_arr, y_arr, param_guess, lower_arr, upper_arr
+            )
+            covariance = None
+
+        # 计算拟合质量 R² / RMSE / AIC
+        fit_quality = self._compute_fit_quality(t_arr, y_arr, best_params, n_params)
+        return best_params, covariance, fit_quality
+
+    @staticmethod
+    def _grid_search(
+        t_arr: Any,
+        y_arr: Any,
+        param_guess: list[float],
+        lower: Any,
+        upper: Any,
+    ) -> list[float]:
+        """简单坐标下降网格搜索（scipy 不可用时的降级）。
+
+        对每个参数独立地在 [lower, upper] 上取 5 个等距候选值，
+        贪心选取使残差平方和最小的参数值（坐标下降）。
+        """
+        import numpy as np  # type: ignore[import-untyped]
+
+        current = list(param_guess)
+        best_sse = float("inf")
+        grid_size = 5
+        # 坐标下降：逐参数扫描
+        for i in range(len(current)):
+            lo = float(lower[i])
+            hi = float(upper[i])
+            candidates = np.linspace(lo, hi, grid_size)
+            for cand in candidates:
+                trial = list(current)
+                trial[i] = float(cand)
+                y_pred = LeastSquaresFitter._default_model_curve(t_arr, *trial)
+                sse = float(np.sum((y_arr - y_pred) ** 2))
+                if sse < best_sse:
+                    best_sse = sse
+                    current = trial
+        return current
+
+    @staticmethod
+    def _compute_fit_quality(
+        t_arr: Any,
+        y_arr: Any,
+        params: list[float],
+        n_params: int,
+    ) -> dict[str, float]:
+        """计算拟合质量指标：R²、RMSE、AIC。
+
+        - R² = 1 - SS_res / SS_tot（决定系数）
+        - RMSE = sqrt(SS_res / n)（均方根误差）
+        - AIC = n * ln(SS_res / n) + 2k（高斯误差最小二乘的赤池信息量准则）
+        """
+        import numpy as np  # type: ignore[import-untyped]
+
+        y_pred = LeastSquaresFitter._default_model_curve(t_arr, *params)
+        n = len(y_arr)
+        k = max(n_params, 1)
+        ss_res = float(np.sum((y_arr - y_pred) ** 2))
+        y_mean = float(np.mean(y_arr)) if n > 0 else 0.0
+        ss_tot = float(np.sum((y_arr - y_mean) ** 2))
+        r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+        rmse = float(np.sqrt(ss_res / n)) if n > 0 else 0.0
+        # AIC（高斯误差最小二乘形式）：n*ln(ss_res/n) + 2k
+        if n > 0 and ss_res > 0:
+            aic = n * math.log(ss_res / n) + 2 * k
+        else:
+            aic = float("inf")
+        return {"R2": r2, "RMSE": rmse, "AIC": aic}
+
+    @staticmethod
+    def _extract_timepoints(
+        reference_data: dict[str, Any], n_observations: int
+    ) -> list[float]:
+        """从 reference_data 提取时间点；缺失时用等距网格 [0, n-1]。
+
+        支持字段（优先级）：timepoints / time / t_data；
+        同时检查 user_data 下同名字段。
+        """
+        if isinstance(reference_data, dict):
+            for key in ("timepoints", "time", "t_data"):
+                vals = reference_data.get(key)
+                if isinstance(vals, list) and vals:
+                    try:
+                        tp = [float(v) for v in vals]
+                        if len(tp) >= n_observations:
+                            return tp[:n_observations]
+                    except (TypeError, ValueError):
+                        pass
+            user_data = reference_data.get("user_data")
+            if isinstance(user_data, dict):
+                for key in ("timepoints", "time", "t_data"):
+                    vals = user_data.get(key)
+                    if isinstance(vals, list) and vals:
+                        try:
+                            tp = [float(v) for v in vals]
+                            if len(tp) >= n_observations:
+                                return tp[:n_observations]
+                        except (TypeError, ValueError):
+                            pass
+        # 默认等距网格
+        return [float(i) for i in range(n_observations)]
 
     # =========================================================================
     # 辅助方法

@@ -19,12 +19,16 @@ class PathwayEntry:
         reactome_id: Reactome pathway ID（如 "R-HSA-177929"）
         keywords: 通路识别关键词列表（中英文，≥8 个），供 Pathway Planner 规则匹配
         description: 通路简述（中文）
+        biomodels_id: BioModels 模型 ID（如 "BIOMD0000000017"），用于 SBML grounding
+            与参数检索；TD-043 (IB-068) 新增字段，默认空串以保持向后兼容
     """
     pathway_class: str
     kegg_id: str
     reactome_id: str
     keywords: tuple[str, ...]
     description: str
+    # TD-043 (IB-068) 修复：新增 biomodels_id 字段，默认空串保持向后兼容
+    biomodels_id: str = ""
 
     def matches(self, text: str) -> bool:
         """判断文本是否包含本通路的关键词（大小写不敏感，词边界匹配）。
@@ -69,6 +73,7 @@ PATHWAY_REGISTRY: dict[str, PathwayEntry] = {
             "EGF", "TGF-alpha", "amphiregulin", "HB-EGF",
         ),
         description="EGF 受体酪氨酸激酶通路：配体结合→受体二聚化→自磷酸化→下游信号",
+        biomodels_id="BIOMD0000000017",  # TD-043 (IB-068)
     ),
     "MAPK_ERK": PathwayEntry(
         pathway_class="MAPK_ERK",
@@ -80,6 +85,7 @@ PATHWAY_REGISTRY: dict[str, PathwayEntry] = {
             "Ras-Raf-MEK-ERK", "级联放大", "cascade",
         ),
         description="MAPK/ERK 级联通路：Ras→Raf→MEK→ERK 三级激酶级联放大",
+        biomodels_id="BIOMD0000000010",  # TD-043 (IB-068) Schoeberl MAPK model
     ),
     "PI3K_AKT_mTOR": PathwayEntry(
         pathway_class="PI3K_AKT_mTOR",
@@ -91,6 +97,7 @@ PATHWAY_REGISTRY: dict[str, PathwayEntry] = {
             "磷脂酰肌醇3激酶", "TSC", "Rheb", "S6K", "4E-BP1",
         ),
         description="PI3K-AKT-mTOR 通路：生长因子→PI3K→PIP3→AKT→mTOR，调控代谢与存活",
+        biomodels_id="BIOMD0000000054",  # TD-043 (IB-068)
     ),
     "p53": PathwayEntry(
         pathway_class="p53",
@@ -102,6 +109,7 @@ PATHWAY_REGISTRY: dict[str, PathwayEntry] = {
             "DNA damage", "DNA损伤", "细胞周期阻滞", "apoptosis",
         ),
         description="p53 通路：DNA 损伤→p53 磷酸化→MDM2 反馈环路→周期阻滞/凋亡",
+        biomodels_id="BIOMD0000000012",  # TD-043 (IB-068)
     ),
     "APOPTOSIS": PathwayEntry(
         pathway_class="APOPTOSIS",
@@ -113,6 +121,7 @@ PATHWAY_REGISTRY: dict[str, PathwayEntry] = {
             "FasL", "Fas", "TNF", "TRAIL", "死亡受体", "线粒体途径",
         ),
         description="凋亡通路：外源性（死亡受体）+ 内源性（线粒体）+ Caspase 级联",
+        biomodels_id="BIOMD0000000200",  # TD-043 (IB-068)
     ),
     "CELL_CYCLE": PathwayEntry(
         pathway_class="CELL_CYCLE",
@@ -124,6 +133,7 @@ PATHWAY_REGISTRY: dict[str, PathwayEntry] = {
             "G1/S", "G2/M", "checkpoint", "检查点",
         ),
         description="细胞周期通路：Cyclin-CDK 驱动 G1/S/G2/M 转换，Rb/E2F 调控",
+        biomodels_id="BIOMD0000000005",  # TD-043 (IB-068)
     ),
     "JAK_STAT": PathwayEntry(
         pathway_class="JAK_STAT",
@@ -136,6 +146,7 @@ PATHWAY_REGISTRY: dict[str, PathwayEntry] = {
             "growth hormone", "生长激素", "SH2", "磷酸化",
         ),
         description="JAK-STAT 通路：细胞因子受体→JK 磷酸化→STAT 二聚体入核→转录",
+        biomodels_id="BIOMD0000000214",  # TD-043 (IB-068)
     ),
     "NF_KB": PathwayEntry(
         pathway_class="NF_KB",
@@ -147,6 +158,7 @@ PATHWAY_REGISTRY: dict[str, PathwayEntry] = {
             "免疫", "immune", "Rel", "IkBa", "IκBα", "proteasome",
         ),
         description="NF-κB 通路：TNF/TLR→IKK→IκBα 降解→NF-κB 入核，炎症响应核心",
+        biomodels_id="BIOMD0000000208",  # TD-043 (IB-068)
     ),
     "WNT": PathwayEntry(
         pathway_class="WNT",
@@ -158,6 +170,7 @@ PATHWAY_REGISTRY: dict[str, PathwayEntry] = {
             "TCF", "LEF", "canonical Wnt", "经典Wnt通路", "胚胎发育",
         ),
         description="Wnt 通路：Wnt→Frizzled/LRP→破坏复合体解离→β-catenin 累积入核",
+        biomodels_id="BIOMD0000000026",  # TD-043 (IB-068) Lee Wnt model
     ),
     "TGF_BETA": PathwayEntry(
         pathway_class="TGF_BETA",
@@ -170,6 +183,7 @@ PATHWAY_REGISTRY: dict[str, PathwayEntry] = {
             "EMT", "上皮间质转化", "R-SMAD", "Co-SMAD",
         ),
         description="TGF-β 通路：TGF-β→TβR→SMAD2/3 磷酸化→与 SMAD4 结并入核",
+        biomodels_id="BIOMD0000000053",  # TD-043 (IB-068)
     ),
 }
 

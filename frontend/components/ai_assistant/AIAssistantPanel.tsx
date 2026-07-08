@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChatMessage } from "@/components/ai_assistant/ChatMessage";
 import { ChatInput } from "@/components/ai_assistant/ChatInput";
 import {
@@ -31,14 +30,18 @@ import {
 } from "@/components/ai_assistant/SuggestionsPanel";
 import { LogsPanel } from "@/components/ai_assistant/LogsPanel";
 import { useWorkbenchStore } from "@/lib/store";
+import { useTranslation } from "@/lib/i18n";
 
 type Tab = "chat" | "suggestions" | "logs";
 
-const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-  { id: "chat", label: "Chat", icon: <MessageSquare className="h-3.5 w-3.5" /> },
-  { id: "suggestions", label: "Suggestions", icon: <Lightbulb className="h-3.5 w-3.5" /> },
-  { id: "logs", label: "Logs", icon: <ScrollText className="h-3.5 w-3.5" /> },
-];
+function useTabDefs() {
+  const { t } = useTranslation();
+  return [
+    { id: "chat" as Tab, label: t("ai.tab.chat"), icon: <MessageSquare className="h-3.5 w-3.5" /> },
+    { id: "suggestions" as Tab, label: t("ai.tab.suggestions"), icon: <Lightbulb className="h-3.5 w-3.5" /> },
+    { id: "logs" as Tab, label: t("ai.tab.logs"), icon: <ScrollText className="h-3.5 w-3.5" /> },
+  ];
+}
 
 /**
  * AI Assistant panel — a collapsible, tabbed side panel.
@@ -56,9 +59,11 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
  * when collapsed.)
  */
 export function AIAssistantPanel() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("chat");
   const [workflowOpen, setWorkflowOpen] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const TABS = useTabDefs();
 
   const messages = useWorkbenchStore((s) => s.messages);
   const input = useWorkbenchStore((s) => s.input);
@@ -115,11 +120,11 @@ export function AIAssistantPanel() {
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-zinc-800 px-3">
         <div className="flex items-center gap-2">
           <MessageSquare className="h-4 w-4 text-blue-400" />
-          <span className="text-sm font-semibold text-zinc-100">AI Assistant</span>
+          <span className="text-sm font-semibold text-zinc-100">{t("ai.title")}</span>
           {isStreaming && (
             <span className="flex items-center gap-1 text-[10px] text-blue-400">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
-              运行中
+              {t("ai.running")}
             </span>
           )}
         </div>
@@ -129,7 +134,8 @@ export function AIAssistantPanel() {
             size="icon-xs"
             onClick={clearMemory}
             disabled={isStreaming}
-            title="清除当前对话"
+            title={t("ai.clear")}
+            aria-label={t("ai.clear")}
             className="text-zinc-400 hover:text-red-300"
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -138,7 +144,8 @@ export function AIAssistantPanel() {
             variant="ghost"
             size="icon-xs"
             onClick={() => setAIPanelOpen(false)}
-            title="折叠 AI 助手"
+            title={t("header.ai.toggle.close")}
+            aria-label={t("header.ai.toggle.close")}
             className="text-zinc-400 hover:text-zinc-100"
           >
             <X className="h-4 w-4" />
@@ -168,7 +175,7 @@ export function AIAssistantPanel() {
 
       {/* Tab content */}
       {tab === "chat" && (
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {/* Collapsible workflow tracker strip */}
           {hasWorkflow && (
             <div className="shrink-0 border-b border-zinc-800 bg-zinc-900/95">
@@ -177,7 +184,7 @@ export function AIAssistantPanel() {
                 onClick={() => setWorkflowOpen((v) => !v)}
                 className="flex w-full items-center justify-between px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500 hover:text-zinc-300"
               >
-                <span>Workflow</span>
+                <span>{t("ai.workflow")}</span>
                 {workflowOpen ? (
                   <ChevronUp className="h-3.5 w-3.5" />
                 ) : (
@@ -204,15 +211,13 @@ export function AIAssistantPanel() {
             </div>
           )}
 
-          {/* Messages */}
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="space-y-4 px-3 py-4">
+          {/* Messages: native scroll so the scrollbar is always visible in Edge/Chrome and the input stays anchored. */}
+          <div className="min-h-0 flex-1 overflow-y-scroll overscroll-contain px-3 py-4">
+            <div className="space-y-4">
               {messages.length === 0 && (
                 <div className="flex flex-col items-center justify-center gap-2 pt-20 text-center text-zinc-500">
                   <MessageSquare className="h-8 w-8 text-zinc-700" />
-                  <p className="text-xs">
-                    输入生物学假说，AI 将自动建模并运行仿真。
-                  </p>
+                  <p className="text-xs">{t("ai.placeholder")}</p>
                 </div>
               )}
               {messages.map((msg) => (
@@ -236,7 +241,7 @@ export function AIAssistantPanel() {
               ))}
               <div ref={messagesEndRef} />
             </div>
-          </ScrollArea>
+          </div>
 
           {/* Clarification dialog (human-in-the-loop) */}
           {clarification && (
@@ -261,7 +266,7 @@ export function AIAssistantPanel() {
                   className="border-red-800 text-red-300 hover:bg-red-950/50 hover:text-red-200"
                 >
                   <Square className="mr-1 h-3 w-3" />
-                  停止生成
+                  {t("ai.stop")}
                 </Button>
               </div>
             )}

@@ -301,13 +301,21 @@ class Level5HypothesisValidator:
             if result.get("low_confidence"):
                 low_confidence = True
 
-        # spec 要求：low_confidence / falsified 都不阻塞（pass=True）
+        # TD-016 修复（硬门）：pass 不再恒为 True。
+        # 当超过半数假设被证伪时（falsified_ratio > 0.5），判定失败。
+        # 无假设时（total=0）pass=True（无假设可证伪）。
+        total_hypotheses = hypotheses_validated + hypotheses_falsified
+        falsified_ratio = (
+            hypotheses_falsified / total_hypotheses if total_hypotheses > 0 else 0.0
+        )
+        pass_flag = falsified_ratio <= 0.5
         return {
-            "pass": True,
+            "pass": pass_flag,
             "hypotheses_validated": hypotheses_validated,
             "hypotheses_falsified": hypotheses_falsified,
             "evidence_support": evidence_support,
             "low_confidence": low_confidence,
+            "falsified_ratio": round(falsified_ratio, 3),
         }
 
     # =========================================================================

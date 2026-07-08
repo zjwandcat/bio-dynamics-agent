@@ -65,6 +65,70 @@ _MECHANISM_TO_REACTION: dict[str, tuple[str, str]] = {
 }
 
 
+# -----------------------------------------------------------------------------
+# TD-050 (IB-084) 机制↔反应方程一致性交叉验证
+# -----------------------------------------------------------------------------
+# 每种 mechanism 期望在 reaction_equation 中出现的"信号词/模式"；空 tuple 表示该
+# mechanism 不做交叉验证（无强信号词）。检查时若 equation 不包含任一信号词（且不
+# 命中专用正则补充检查），则判定 mechanism_mismatch=True。
+#
+# 设计原则：
+# - 信号词尽量具体，避免泛化（不把通用箭头 → / -> 作为信号，否则所有含箭头的方程
+#   都会通过校验，失去交叉验证意义）。
+# - 磷酸化 / 乙酰化额外用专用正则匹配产物命名约定（p 前缀 / _ac 后缀）。
+_MECHANISM_SIGNALS: dict[str, tuple[str, ...]] = {
+    "phosphorylation": ("phos",),                      # 磷酸化：含 phos 或 p 前缀产物（专用正则补充）
+    "dephosphorylation": ("dephos",),                  # 去磷酸化
+    "binding": ("+", "complex", "-"),                  # 结合：多反应物 + 或复合物 -
+    "exchange": ("GDP", "GTP", "exchange"),            # 核苷酸交换
+    "degradation": ("degrad", "0", "∅", "degraded"),   # 降解
+    "transcription": ("mRNA", "transcription"),        # 转录
+    "inhibition": ("inhib", "|"),                      # 抑制
+    "acetylation": ("acetyl", "ac"),                   # 乙酰化：含 acetyl/ac 或 _ac 后缀产物
+    # translation / activation / recruitment / dissociation / transport 等无强信号，不做检查
+}
+
+# 磷酸化产物 p 前缀正则：匹配 pEGFR / pMEK / ppMEK / pRaf 等（p+ 后跟大写字母）
+_PHOSPHO_PRODUCT_RE = re.compile(r"\bp+[A-Z][A-Za-z0-9]*\b")
+# 乙酰化产物 _ac 后缀正则：匹配 p53_ac 等
+_ACETYL_PRODUCT_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9]*_ac\b")
+
+
+def _check_mechanism_mismatch(mechanism: str, reaction_eq: str) -> bool:
+    """检查 mechanism 与 reaction_equation 是否一致（启发式，TD-050 / IB-084）。
+
+    若 mechanism 在 _MECHANISM_SIGNALS 中登记了信号词，而 reaction_equation 不包含
+    任一信号词（磷酸化/乙酰化额外检查产物命名约定的专用正则），则判定不一致
+    （mismatch=True）。空 reaction_equation 不判 mismatch（交由上层必填校验处理）；
+    未登记的 mechanism 不做检查，返回 False。
+
+    Args:
+        mechanism: 边的 mechanism 字段（如 "phosphorylation"）
+        reaction_eq: 边的 reaction_equation 字段
+
+    Returns:
+        True 表示 mechanism 与 reaction_equation 不一致
+    """
+    if not reaction_eq:
+        return False
+    mech = (mechanism or "").lower()
+    signals = _MECHANISM_SIGNALS.get(mech)
+    if signals is None:
+        # 未登记的 mechanism 不做检查
+        return False
+    eq_lower = reaction_eq.lower()
+    # 信号词子串匹配（大小写不敏感）
+    if any(sig.lower() in eq_lower for sig in signals):
+        return False
+    # 磷酸化专用补充检查：p 前缀产物（pEGFR / ppMEK 等，原大小写匹配）
+    if mech == "phosphorylation" and _PHOSPHO_PRODUCT_RE.search(reaction_eq):
+        return False
+    # 乙酰化专用补充检查：_ac 后缀产物（p53_ac 等）
+    if mech == "acetylation" and _ACETYL_PRODUCT_RE.search(reaction_eq):
+        return False
+    return True
+
+
 class ReactionIR:
     """Reaction IR：把 KG 转换为结构化反应图。
 
@@ -136,6 +200,10 @@ class ReactionIR:
                 "reaction_type": reaction_type,
                 "kinetics_type": kinetics_type,
                 "parameter_context": parameter_context,
+                # TD-050 (IB-084) 机制↔反应方程交叉验证标志：
+                # True 表示 mechanism 与 reaction_equation 启发式不一致，供下游模板
+                # 编译器 / 测试消费（不阻断渲染，仅标记可疑反应）。
+                "mechanism_mismatch": _check_mechanism_mismatch(mechanism, reaction_eq),
             })
 
             # 把 reaction 中的新 species 加入 species 列表
@@ -202,6 +270,12 @@ class ReactionIR:
 # -----------------------------------------------------------------------------
 # 辅助：解析 reaction_equation
 # -----------------------------------------------------------------------------
+# TD-046 (IB-079) 升级：支持多种箭头（→ / -> / ⟶）、链式 A->B->C、并列分隔符 + 与 |
+# 物种 token 分隔符为 + / | / 空白，连字符（如 EGF-EGFR）保留为单一物种名。
+_ARROW_RE = re.compile(r"(?:→|->|⟶)")
+_TOKEN_SEP_RE = re.compile(r"[+|\s]+")
+
+
 def _parse_reaction_equation(
     reaction_eq: str,
     default_source: str,
@@ -209,17 +283,34 @@ def _parse_reaction_equation(
 ) -> tuple[list[str], list[str]]:
     """解析反应方程，返回 (from_species, to_species)。
 
-    例：
-        "EGF + EGFR → EGF-EGFR" → (["EGF", "EGFR"], ["EGF-EGFR"])
-        "pEGFR + Shc → pEGFR + pShc" → (["pEGFR", "Shc"], ["pEGFR", "pShc"])
-        "EGF-EGFR → pEGFR" → (["EGF-EGFR"], ["pEGFR"])
+    支持的语法（TD-046 / IB-079 升级）：
+        "EGF + EGFR → EGF-EGFR"     → (["EGF", "EGFR"], ["EGF-EGFR"])
+        "pEGFR + Shc → pEGFR + pShc"→ (["pEGFR", "Shc"], ["pEGFR", "pShc"])
+        "A -> B -> C"               → (["A"], ["C"])        # 链式：取首末段
+        "A|B"                        → (["A", "B"], [default_target])  # 无箭头并列
+        "A|B → C"                   → (["A", "B"], ["C"])   # | 作并列分隔
+        "EGF-EGFR → pEGFR"         → (["EGF-EGFR"], ["pEGFR"])
+
+    说明：
+        - 链式 A->B->C 视为整体变换 A→C，中间段 B 为中间产物不在 from/to 中体现。
+        - "|" 与 "+" 语义一致，均作并列反应物/产物分隔符。
+        - 连字符 "-" 不作分隔符，保留复合物名（如 EGF-EGFR、p53-MDM2）。
     """
-    if not reaction_eq or "→" not in reaction_eq:
+    if not reaction_eq:
         return [default_source], [default_target]
     try:
-        lhs, rhs = reaction_eq.split("→", 1)
-        from_species = [s.strip() for s in lhs.replace("+", " ").split() if s.strip()]
-        to_species = [s.strip() for s in rhs.replace("+", " ").split() if s.strip()]
+        # 按箭头切分（支持 → / -> / ⟶）
+        parts = _ARROW_RE.split(reaction_eq)
+        parts = [p.strip() for p in parts if p.strip()]
+        if not parts:
+            return [default_source], [default_target]
+        # 无箭头（仅 "A|B" / "A+B" 形式）：视为并列源物种，target 用默认
+        if len(parts) == 1:
+            from_species = [s for s in _TOKEN_SEP_RE.split(parts[0]) if s]
+            return (from_species or [default_source]), [default_target]
+        # 链式或普通：from 取首段全部物种，to 取末段全部物种
+        from_species = [s for s in _TOKEN_SEP_RE.split(parts[0]) if s] or [default_source]
+        to_species = [s for s in _TOKEN_SEP_RE.split(parts[-1]) if s] or [default_target]
         return from_species, to_species
     except Exception:
         return [default_source], [default_target]

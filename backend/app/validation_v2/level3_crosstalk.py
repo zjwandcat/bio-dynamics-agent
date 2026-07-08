@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from app.config import settings
@@ -234,11 +235,17 @@ class Level3CrossPathwayValidator:
             return (True, [])
 
         if not specialist_outputs:
-            # 有 edges 但无 Specialist 输出：无法验证一致性，视为一致（保守）
-            logger.debug(
-                "_check_crosstalk_consistency: 有 edges 但无 specialist_outputs，跳过"
+            # TD-018 修复（硬门）：有 crosstalk edges 但无 Specialist 输出 →
+            # 无法验证一致性 → 判定失败（不再 pass=True 软门放水）
+            logger.warning(
+                "_check_crosstalk_consistency: 有 crosstalk edges 但无 specialist_outputs，"
+                "无法验证一致性 → 判定失败（硬门）"
             )
-            return (True, [])
+            return (False, [{
+                "edge_id": "global",
+                "reason": "missing_specialist_outputs",
+                "detail": "有 crosstalk edges 但无 specialist_outputs，无法验证一致性",
+            }])
 
         # 构建每个通路的 species 集合（用于检查 target_node 是否被接受为输入）
         pathway_species: dict[str, set[str]] = {}
@@ -299,6 +306,12 @@ class Level3CrossPathwayValidator:
     # =========================================================================
     # SubTask 5.4.3: shared species conservation 检查
     # =========================================================================
+    # TD-015 (IB-053) 修复：共享物种守恒基于计数非通量 —— 原实现基于反应计量计数
+    # （produced/consumed stoichiometry 累加），无法反映真实仿真中的浓度守恒。
+    # 改为结果驱动：当 specialist_outputs 含仿真时间序列时，计算每个 shared species
+    # 在所有通路中的总浓度随时间的变化，若变化超阈值则判定不守恒。
+    # 无时间序列数据时回退到计数启发式，并记录 warning（检查为近似）。
+    # =========================================================================
     def _check_shared_species_conservation(
         self,
         shared_species: list[str],
@@ -306,22 +319,23 @@ class Level3CrossPathwayValidator:
     ) -> tuple[float, list[dict[str, Any]]]:
         """检查 shared species 跨通路守恒。
 
+        TD-015 (IB-053) 修复策略（通量驱动优先）：
+        1. 若 specialist_outputs 含仿真时间序列数据（simulation_result / time_series
+           字段），计算每个 shared species 在所有通路中的总浓度随时间的变化，
+           若相对变化超阈值则判定不守恒（flux-based conservation）。
+        2. 若无时间序列数据，回退到计数启发式（produced/consumed stoichiometry），
+           并记录 warning（检查为近似）。
+
         守恒规则（spec.md 第 296-298 行）：
         - shared species 在跨通路场景下应守恒
         - 例如：RasGTP 在 EGFR 通路产生，在 MAPK 通路消耗，总量应守恒
         - 误差 = |产生量 - 消耗量| / max(产生量, 消耗量)
         - 阈值 10%（spec.md 第 298 行）
 
-        实现策略：
-        1. 遍历每个 shared species
-        2. 从 specialist_outputs 中收集该 species 的产生量与消耗量
-           （从 reactions 的 product / substrate 中提取）
-        3. 计算守恒误差
-        4. 取所有 shared species 的最大误差
-
         Args:
             shared_species: shared species 名列表（如 ["RasGTP", "AKT"]）
-            specialist_outputs: Specialist 输出列表，每条含 reactions
+            specialist_outputs: Specialist 输出列表，每条含 reactions，
+                以及可选的 simulation_result / time_series 时间序列数据
 
         Returns:
             (max_error, violation_list)
@@ -333,12 +347,201 @@ class Level3CrossPathwayValidator:
             return (0.0, [])
 
         if not specialist_outputs:
-            # 有 shared species 但无 Specialist 输出：无法计算守恒，返回 0.0（保守）
-            logger.debug(
-                "_check_shared_species_conservation: 有 shared_species 但无 specialist_outputs，跳过"
+            # TD-018 修复（硬门）：有 shared species 但无 Specialist 输出 →
+            # 无法计算守恒 → 返回 max_error=1.0（超过阈值 0.10 → conservation_pass=False）
+            logger.warning(
+                "_check_shared_species_conservation: 有 shared_species 但无 specialist_outputs，"
+                "无法计算守恒 → 判定失败（硬门）"
             )
-            return (0.0, [])
+            return (1.0, [{
+                "species": "global",
+                "reason": "missing_specialist_outputs",
+                "detail": "有 shared_species 但无 specialist_outputs，无法计算守恒",
+            }])
 
+        # TD-015 修复：优先使用仿真时间序列进行通量守恒检查
+        timeseries_list = self._extract_specialist_timeseries(
+            shared_species, specialist_outputs
+        )
+        if timeseries_list is not None:
+            return self._check_flux_conservation(
+                shared_species, timeseries_list
+            )
+
+        # 回退：无时间序列数据，使用计数启发式（近似检查，记录 warning）
+        logger.warning(
+            "TD-015: specialist_outputs 无仿真时间序列数据，"
+            "共享物种守恒检查回退到计数启发式（近似检查，可能不准确）"
+        )
+        return self._check_counting_conservation(
+            shared_species, specialist_outputs
+        )
+
+    def _extract_specialist_timeseries(
+        self,
+        shared_species: list[str],
+        specialist_outputs: list[dict[str, Any]],
+    ) -> list[dict[str, list[float]]] | None:
+        """从 specialist_outputs 提取每个通路的 shared species 时间序列。
+
+        TD-015 修复：检查 specialist_outputs 是否含仿真时间序列数据。
+        每条 output 可能含：
+        - simulation_result: {"t": [...], "species": {"A": [...]}}
+        - time_series: {"time": [...], "concentrations": {"A": [...]}}
+
+        Args:
+            shared_species: shared species 名列表
+            specialist_outputs: Specialist 输出列表
+
+        Returns:
+            list[dict[species, list[float]]]：每个通路一个 dict，含 shared species
+            的浓度序列；任一通路无时间序列数据时返回 None（回退到计数启发式）
+        """
+        result: list[dict[str, list[float]]] = []
+        for output in specialist_outputs:
+            if not isinstance(output, dict):
+                return None
+            # 尝试从 simulation_result 或 time_series 字段提取
+            sim_data = output.get("simulation_result") or output.get("time_series")
+            if not isinstance(sim_data, dict):
+                return None
+
+            # 提取时间序列（兼容多种结构）
+            species_series = self._parse_specialist_timeseries(sim_data)
+            if species_series is None:
+                return None
+
+            # 仅保留 shared species
+            pathway_shared: dict[str, list[float]] = {}
+            for sp in shared_species:
+                if sp in species_series:
+                    pathway_shared[sp] = species_series[sp]
+            result.append(pathway_shared)
+
+        return result
+
+    def _parse_specialist_timeseries(
+        self, sim_data: dict
+    ) -> dict[str, list[float]] | None:
+        """解析单通路仿真时间序列 dict 为 {species: [浓度序列]}。
+
+        支持多种结构：
+        - {"t": [...], "y": [[...], ...], "species_names": [...]}：y 为 species × time
+        - {"time": [...], "species": {"A": [...]}}
+        - {"times": [...], "concentrations": {"A": [...]}}
+        """
+        # 结构 B: {"time": [...], "species": {"A": [...]}}
+        species_map = sim_data.get("species") or sim_data.get("concentrations")
+        if isinstance(species_map, dict) and species_map:
+            return {str(name): list(vals) for name, vals in species_map.items()}
+
+        # 结构 A: {"t": [...], "y": [[...], ...], "species_names": [...]}
+        y = sim_data.get("y")
+        species_names = sim_data.get("species_names") or sim_data.get("species")
+        if y is not None and isinstance(y, list) and y and isinstance(y[0], list):
+            if isinstance(species_names, list) and len(species_names) == len(y):
+                # y 为 species × time
+                return {str(name): list(y[idx]) for idx, name in enumerate(species_names)}
+            # 无 species_names，用索引命名
+            return {f"species_{idx}": list(row) for idx, row in enumerate(y)}
+
+        return None
+
+    def _check_flux_conservation(
+        self,
+        shared_species: list[str],
+        timeseries_list: list[dict[str, list[float]]],
+    ) -> tuple[float, list[dict[str, Any]]]:
+        """基于仿真时间序列的通量守恒检查（TD-015 结果驱动）。
+
+        对每个 shared species，计算其在所有通路中的总浓度随时间的变化：
+        - total[t] = sum over pathways of concentration[species][t]
+        - 守恒误差 = (max(total) - min(total)) / (|mean(total)| + epsilon)
+        - 误差超阈值（10%）则判定不守恒
+
+        Args:
+            shared_species: shared species 名列表
+            timeseries_list: 每个通路一个 dict，含 shared species 的浓度序列
+
+        Returns:
+            (max_error, violation_list)
+        """
+        violations: list[dict[str, Any]] = []
+        max_error = 0.0
+
+        for sp in shared_species:
+            # 收集该 species 在所有通路中的浓度序列
+            pathway_series: list[list[float]] = []
+            for pathway_dict in timeseries_list:
+                series = pathway_dict.get(sp)
+                if series is None:
+                    continue
+                try:
+                    float_series = [float(v) for v in series]
+                except (TypeError, ValueError):
+                    continue
+                # 跳过含 NaN/Inf 的序列
+                if any(math.isnan(v) or math.isinf(v) for v in float_series):
+                    continue
+                pathway_series.append(float_series)
+
+            if not pathway_series:
+                # 该 species 无有效时间序列，视为守恒（跳过）
+                continue
+
+            # 对齐时间点长度（取最短长度）
+            min_len = min(len(s) for s in pathway_series)
+            if min_len < 2:
+                continue
+
+            # 计算每个时间点的总浓度
+            totals: list[float] = []
+            for t_idx in range(min_len):
+                total = sum(s[t_idx] for s in pathway_series)
+                totals.append(total)
+
+            # 守恒误差 = (max - min) / (|mean| + epsilon)
+            total_max = max(totals)
+            total_min = min(totals)
+            total_mean = sum(totals) / len(totals)
+            error = (total_max - total_min) / (abs(total_mean) + self._EPSILON)
+            # 若总浓度均接近 0，视为守恒
+            if abs(total_max) < self._EPSILON and abs(total_min) < self._EPSILON:
+                error = 0.0
+            max_error = max(max_error, error)
+            if error > self.SHARED_SPECIES_CONSERVATION_THRESHOLD:
+                violations.append({
+                    "species": sp,
+                    "produced": total_max,
+                    "consumed": total_min,
+                    "error": error,
+                    "method": "flux_based",
+                    "reason": (
+                        f"shared species '{sp}' 跨通路总浓度变化误差 {error:.2%} > "
+                        f"阈值 {self.SHARED_SPECIES_CONSERVATION_THRESHOLD:.2%} "
+                        f"(flux-based: max={total_max:.4e}, min={total_min:.4e})"
+                    ),
+                })
+
+        return (max_error, violations)
+
+    def _check_counting_conservation(
+        self,
+        shared_species: list[str],
+        specialist_outputs: list[dict[str, Any]],
+    ) -> tuple[float, list[dict[str, Any]]]:
+        """基于反应计量计数的守恒检查（回退策略，近似检查）。
+
+        TD-015 回退逻辑：无时间序列数据时，从 reactions 的 product/substrate
+        计量系数累加，计算产生量与消耗量的守恒误差。
+
+        Args:
+            shared_species: shared species 名列表
+            specialist_outputs: Specialist 输出列表，每条含 reactions
+
+        Returns:
+            (max_error, violation_list)
+        """
         # 收集每个 shared species 的产生量与消耗量
         # produced[species] = 总产生量（sum of products across pathways）
         # consumed[species] = 总消耗量（sum of substrates across pathways）
@@ -391,9 +594,11 @@ class Level3CrossPathwayValidator:
                     "produced": p,
                     "consumed": c,
                     "error": error,
+                    "method": "counting_heuristic",
                     "reason": (
                         f"shared species '{sp}' 跨通路守恒误差 {error:.2%} > "
-                        f"阈值 {self.SHARED_SPECIES_CONSERVATION_THRESHOLD:.2%}"
+                        f"阈值 {self.SHARED_SPECIES_CONSERVATION_THRESHOLD:.2%} "
+                        f"(counting heuristic, approximate)"
                     ),
                 })
 

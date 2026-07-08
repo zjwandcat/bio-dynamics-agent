@@ -52,6 +52,11 @@ SP_IDX = {name: i for i, name in enumerate(SPECIES_NAMES)}
 MAX_STEP_FAST = 0.1
 MAX_STEP_MEDIUM = 0.5
 
+# TD-008 (IB-026) 修复：compartment 体积默认值
+# 核质运输需要按源 compartment 体积缩放通量，否则忽略体积差异（cytoplasm vs nucleus）
+V_CYTOPLASM = 0.5   # 细胞质体积（默认值，可被 PARAMS 覆盖）
+V_NUCLEUS = 0.1      # 细胞核体积（默认值，可被 PARAMS 覆盖）
+
 
 def _get_param(target_name, param_key, default):
     """从 PARAMS 中获取指定 target 的参数值。"""
@@ -59,9 +64,19 @@ def _get_param(target_name, param_key, default):
     return eparams.get(param_key, default)
 
 
+def _get_compartment_volumes():
+    """TD-008 修复：读取 compartment 体积（允许 PARAMS 覆盖默认值）。"""
+    v_cyto = _get_param("__compartments__", "V_cytoplasm", V_CYTOPLASM)
+    v_nuc = _get_param("__compartments__", "V_nucleus", V_NUCLEUS)
+    return float(v_cyto), float(v_nuc)
+
+
 def _ode_rhs(t, y):
     """ODE 右端函数（核质运输模板）。"""
     dy = np.zeros(N_SP)
+    y = np.maximum(y, 0.0)  # TD-001 修复：负浓度保护（防 Hill src**n 对负底数产生 NaN）
+    # TD-008 修复：获取 compartment 体积用于通量缩放
+    _v_cyto, _v_nuc = _get_compartment_volumes()
     for edge in EDGES:
         src_name = edge.get("source", "")
         tgt_name = edge.get("target", "")
@@ -74,16 +89,18 @@ def _ode_rhs(t, y):
         tgt = y[t_idx]
 
         if mechanism == "nuclear_import":
-            # 核质→核（一级动力学）
+            # TD-008 修复：核质→核，按源 compartment（cytoplasm）体积缩放
+            # flux = k_import * src * (1/V_source)，V_source = V_cytoplasm
             k_import = _get_param(tgt_name, "k_import", 0.1)
-            _rate = k_import * src
+            _rate = k_import * src * (1.0 / _v_cyto)
             dy[s_idx] -= _rate
             dy[t_idx] += _rate
 
         elif mechanism == "nuclear_export":
-            # 核→核质（一级动力学）
+            # TD-008 修复：核→核质，按源 compartment（nucleus）体积缩放
+            # flux = k_export * src * (1/V_source)，V_source = V_nucleus
             k_export = _get_param(tgt_name, "k_export", 0.05)
-            _rate = k_export * src
+            _rate = k_export * src * (1.0 / _v_nuc)
             dy[s_idx] -= _rate
             dy[t_idx] += _rate
 

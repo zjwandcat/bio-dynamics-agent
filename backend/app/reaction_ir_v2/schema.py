@@ -11,9 +11,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+# 模块级 logger，供 TD-041 降级警告使用
+_logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -49,6 +53,8 @@ class SpeciesV2(BaseModel):
     compartment: str = "cytoplasm"      # extracellular/membrane/cytoplasm/nucleus/mitochondria
     initial_concentration: float = 0.0  # 初始浓度（nM）
     concentration_unit: str = "nM"      # nM / molecule_per_cell
+    # TD-031 (IB-038): 单位转换因子，用于浓度单位换算（如 nM → molecule/cell），默认 1.0（向后兼容）
+    unit_conversion_factor: float = 1.0
     # 溯源链：SBML model ID / PMID / UniProt entry
     source_sbml: str | None = None
     source_pmid: str | None = None
@@ -85,7 +91,14 @@ class Modifier(BaseModel):
 
     species_id: str
     modifier_type: str = "catalytic"  # catalytic/allosteric/inhibitory/activating
-    site: str | None = None           # 修饰位点，如 "Ser259" / "Tyr1068"
+    # TD-028 (IB-011): site 改为 list[str] 支持多位点，向后兼容单 string（validator 自动转换）
+    site: list[str] = Field(default_factory=list)  # 修饰位点列表，如 ["Ser259", "Tyr1068"]
+    # TD-027 (IB-010): 调控因子动力学参数（全部可选，默认 None，向后兼容）
+    ki: float | None = None             # 抑制常数 Ki（inhibitory 调控子用）
+    kact: float | None = None           # 激活常数 Kact（activating 调控子用）
+    n_hill: float | None = None         # Hill 系数（协同调控用）
+    inhibition_type: str | None = None  # 抑制类型：competitive/uncompetitive/noncompetitive/mixed
+    alpha: float | None = None          # 变构耦合因子（allosteric 调控子用）
 
     @field_validator("modifier_type")
     @classmethod
@@ -93,6 +106,33 @@ class Modifier(BaseModel):
         allowed = {"catalytic", "allosteric", "inhibitory", "activating"}
         if v not in allowed:
             return "catalytic"
+        return v
+
+    @field_validator("site", mode="before")
+    @classmethod
+    def _validate_site(cls, v):
+        """TD-028: 向后兼容——单 string 自动转为 list[str]，None 转为空 list。
+
+        使用 mode="before" 在 Pydantic list[str] 类型强转之前拦截原始输入，
+        避免裸字符串被拒绝（Pydantic v2 默认不会把 str 拆成 list）。
+        """
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v]
+        return v
+
+    @field_validator("inhibition_type")
+    @classmethod
+    def _validate_inhibition_type(cls, v: str | None) -> str | None:
+        """TD-027: inhibition_type 必须为合法值之一或 None。"""
+        if v is None:
+            return None
+        allowed = {"competitive", "uncompetitive", "noncompetitive", "mixed"}
+        if v not in allowed:
+            raise ValueError(
+                f"inhibition_type 非法值 '{v}'，合法值: {sorted(allowed)}"
+            )
         return v
 
 
@@ -114,19 +154,38 @@ class Constraint(BaseModel):
     type: str                          # mass_conservation/steady_state/non_negative/enzymatic/thermodynamic
     scope: str = "species"             # species/reaction/pathway/global
     expression: str                    # 约束表达式，如 "EGFR + pEGFR + EGF-EGFR = EGFR_total"
+    # TD-040 (IB-036): 结构化约束表达式，与 expression 字符串并存（向后兼容，可选）
+    # 形如 {"lhs": [{"species": "A", "coeff": 1}], "rhs": [{"species": "B_total", "coeff": 1}], "operator": "="}
+    expression_structured: dict[str, Any] | None = None
     tolerance: float = 0.05            # 容差（0.05 表示 5%）
     provenance: str = ""               # 约束来源，如 "Schoeberl 2002"
+    # TD-041 (IB-037): strict 模式控制非法 type 的处理方式
+    # strict=True（默认）：非法 type 抛 ValueError；strict=False：降级为 non_negative 并记录警告（向后兼容遗留数据）
+    strict: bool = True
 
-    @field_validator("type")
-    @classmethod
-    def _validate_type(cls, v: str) -> str:
-        allowed = {
-            "mass_conservation", "steady_state", "non_negative",
-            "enzymatic", "thermodynamic",
-        }
-        if v not in allowed:
-            return "non_negative"
-        return v
+    # 合法 type 集合（供 model_validator 校验）
+    _CONSTRAINT_ALLOWED_TYPES = frozenset({
+        "mass_conservation", "steady_state", "non_negative",
+        "enzymatic", "thermodynamic",
+    })
+
+    @model_validator(mode="after")
+    def _validate_type_strict(self) -> "Constraint":
+        """TD-041: type 非法时根据 strict 决定抛错或降级（替代旧的静默降级）。"""
+        if self.type in self._CONSTRAINT_ALLOWED_TYPES:
+            return self
+        # 非法 type
+        if self.strict:
+            raise ValueError(
+                f"Constraint.type 非法值 '{self.type}'，"
+                f"合法值: {sorted(self._CONSTRAINT_ALLOWED_TYPES)}"
+            )
+        # strict=False：降级为 non_negative 并记录警告（向后兼容遗留数据）
+        _logger.warning(
+            "Constraint.type 非法值 '%s'，strict=False 降级为 'non_negative'", self.type
+        )
+        self.type = "non_negative"
+        return self
 
 
 class ReactionV2(BaseModel):

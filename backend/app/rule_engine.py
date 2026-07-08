@@ -27,7 +27,8 @@ class Violation:
     rule_name: str
     edge_key: str | None
     message: str
-    severity: str  # "error" | "warning"
+    # TD-022 (IB-083) 修复：新增 "hard" 级别（物理可行性硬门，阻塞级，等同 error）
+    severity: str  # "error" | "warning" | "hard"
 
 
 @dataclass
@@ -168,6 +169,85 @@ class ParameterRangeRule:
                                 f"{pname}={v} 超出允许范围 [{lo}, {hi}]"
                             ),
                             severity="warning",
+                        )
+                    )
+        return violations
+
+
+# -----------------------------------------------------------------------------
+# 规则 2b：参数物理可行性硬门（TD-022 / IB-083 修复）
+# -----------------------------------------------------------------------------
+class PhysicalFeasibilityHardGateRule:
+    """参数物理可行性硬门（TD-022 / IB-083）。
+
+    对核心动力学参数施加物理可行性硬性上下界：
+    - k_cat / k_on / k_off / Km / K_d：基于生物物理极限（扩散极限、催化速率上限）
+    - n_hill：基于协同性物理上限（Hill 系数 ≤ 4）
+
+    违例时 severity="hard"，RuleEngine.check() 据此返回 ok=False（阻塞流水线），
+    而非仅 warning 软门。覆盖 ParameterRangeRule 软门未硬门控的物理量。
+    """
+
+    name: str = "physical_feasibility_hard_gate"
+
+    # TD-022 修复：物理可行性硬门边界 —— (下限_开, 上限, 上限是否闭)
+    # 下限统一为开区间（须 > 0）；n_hill 上限为闭区间（<= 4），其余上限为开（< upper）
+    HARD_BOUNDS: dict[str, tuple[float, float, bool]] = {
+        "k_cat": (0.0, 1e6, False),   # 催化速率，物理上限 1e6 /s（须 >0 且 <1e6）
+        "k_on": (0.0, 1e9, False),    # 结合速率，扩散极限 ~1e9 M^-1s^-1（须 >0 且 <1e9）
+        "k_off": (0.0, 1e3, False),   # 解离速率，物理上限 1e3 /s（须 >0 且 <1e3）
+        "km": (0.0, 1e6, False),      # Michaelis 常数（须 >0 且 <1e6）
+        "n_hill": (0.0, 4.0, True),   # Hill 系数，协同性 ≤4（须 >0 且 <=4）
+        "kd": (0.0, 1e6, False),      # 解离常数（须 >0 且 <1e6）
+    }
+
+    def check(self, network_relations: dict, parameters: dict) -> list[Violation]:
+        violations: list[Violation] = []
+        for key, params in (parameters or {}).items():
+            if not isinstance(params, dict):
+                continue
+            for pname, info in params.items():
+                # 跳过非参数元数据字段（与 ParameterRangeRule 保持一致）
+                if pname in ("param_found", "fallback_to_estimation", "reasoning", "edge_key"):
+                    continue
+                if not isinstance(info, dict):
+                    continue
+                bounds = self.HARD_BOUNDS.get(str(pname).lower())
+                if bounds is None:
+                    continue
+                val = info.get("value")
+                if val is None:
+                    continue
+                try:
+                    v = float(val)
+                except (TypeError, ValueError):
+                    # 非数值本身由 ParameterRangeRule 报 error，此处不重复上报
+                    continue
+                lower, upper, upper_inclusive = bounds
+                violated = False
+                reason = ""
+                # 下限为开区间：v 必须严格 > lower
+                if v <= lower:
+                    violated = True
+                    reason = f"{pname}={v} 不满足物理可行性下限（须 > {lower}）"
+                elif upper_inclusive:
+                    # 上限闭区间：v 须 <= upper
+                    if v > upper:
+                        violated = True
+                        reason = f"{pname}={v} 超出物理可行性上限（须 <= {upper}）"
+                else:
+                    # 上限开区间：v 须 < upper
+                    if v >= upper:
+                        violated = True
+                        reason = f"{pname}={v} 超出物理可行性上限（须 < {upper}）"
+                if violated:
+                    violations.append(
+                        Violation(
+                            rule_name=self.name,
+                            edge_key=str(key),
+                            message=reason,
+                            # TD-022 修复：物理可行性硬门，severity="hard" 导致 ok=False
+                            severity="hard",
                         )
                     )
         return violations
@@ -334,6 +414,8 @@ class RuleEngine:
     DEFAULT_RULES: list[Rule] = [
         TemplateRule(),
         ParameterRangeRule(),
+        # TD-022 (IB-083) 修复：参数物理可行性硬门（severity="hard" 阻塞级）
+        PhysicalFeasibilityHardGateRule(),
         UnitRule(),
         ActivationDirectionRule(),
         HillCoefficientRule(),
@@ -358,5 +440,8 @@ class RuleEngine:
                         severity="warning",
                     )
                 )
-        ok = len([v for v in all_violations if v.severity == "error"]) == 0
+        # TD-022 (IB-083) 修复：severity="hard"（物理可行性硬门）与 "error" 同为阻塞级。
+        # 任一 hard/error 违例 → RuleResult.ok=False（对应 {"passed": False, "violations": [...]}）
+        blocking = [v for v in all_violations if v.severity in ("error", "hard")]
+        ok = len(blocking) == 0
         return RuleResult(ok=ok, violations=all_violations)

@@ -543,6 +543,32 @@ def execute_simulation_code_v2(code: str, timeout: int | None = None, allow_stoc
                     stdout_stderr += "\n"
                 stdout_stderr += bio_msg
 
+        # 7.5 TD-003 接线强制：仿真后验证（负浓度 / NaN / Inf / 爆炸 / 质量守恒）
+        # 纪律1：post_simulation_validation 必须在仿真后流程中强制调用，拦截不通过的仿真。
+        # 当 CSV 存在时无条件调用（species_names=None 自动从列头检测）。
+        if simulation_csv_path and status == "success":
+            try:
+                psv_result = post_simulation_validation(simulation_csv_path)
+                if not psv_result.get("passed", True):
+                    status = "error"
+                    error_class = ERR_NUMERICAL
+                    if stdout_stderr:
+                        stdout_stderr += "\n"
+                    stdout_stderr += (
+                        f"[post_simulation_validation FAILED] "
+                        f"negative_concentrations={psv_result.get('negative_concentrations', [])[:3]} "
+                        f"nan_detected={psv_result.get('nan_detected')} "
+                        f"inf_detected={psv_result.get('inf_detected')} "
+                        f"explosion_detected={psv_result.get('explosion_detected')} "
+                        f"mass_conservation_violations={len(psv_result.get('mass_conservation_violations', []))}"
+                    )
+                    logger.warning(
+                        "post_simulation_validation 拦截仿真: %s",
+                        psv_result,
+                    )
+            except Exception as exc:
+                logger.warning("post_simulation_validation 执行异常: %s", exc)
+
         # 8. 审计日志 + metrics 埋点（深度审核报告 §3.1 + §3.3）
         duration = time.perf_counter() - exec_start
         _write_audit_log(
@@ -573,7 +599,7 @@ _NEGATIVE_TOLERANCE = 1e-9
 _EXPLOSION_THRESHOLD = 1e6
 
 
-def post_simulation_validation(csv_path: str, species_names: list[str],
+def post_simulation_validation(csv_path: str, species_names: list[str] | None = None,
                                 constraints: list[dict] | None = None) -> dict:
     """仿真后验证：检测负浓度、NaN、Inf、质量守恒。
 
@@ -586,6 +612,7 @@ def post_simulation_validation(csv_path: str, species_names: list[str],
     Args:
         csv_path: 仿真输出 CSV 文件路径，应包含 time 列与各物种浓度列。
         species_names: 待校验的物种名列表（需与 CSV 列名一致）。
+            为 None 时自动从 CSV 列头检测（排除 time/t/Time/T 列）。
         constraints: 约束列表，每项形如
             {"type": "mass_conservation", "species": ["A", "B"], "tolerance": 1e-6}。
 
@@ -635,7 +662,15 @@ def post_simulation_validation(csv_path: str, species_names: list[str],
             break
 
     # 3. 筛选 CSV 中实际存在的物种列
-    available_species = [s for s in species_names if s in rows[0]]
+    # TD-003 接线：species_names 为 None 时自动从 CSV 列头检测（排除时间列）
+    if species_names is None:
+        _time_cols = {"time", "t", "Time", "T"}
+        available_species = [k for k in rows[0].keys() if k not in _time_cols]
+        logger.debug(
+            "post_simulation_validation 自动检测物种列: %s", available_species
+        )
+    else:
+        available_species = [s for s in species_names if s in rows[0]]
     if not available_species:
         logger.warning(
             "post_simulation_validation 未在 CSV 中找到任何指定物种列: %s",

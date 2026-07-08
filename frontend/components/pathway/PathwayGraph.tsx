@@ -630,12 +630,14 @@ export interface PathwayGraphProps {
   /** Called when a species node is clicked (opens the detail panel). */
   onNodeClick?: (nodeId: string) => void;
   className?: string;
+  style?: React.CSSProperties;
 }
 
 export function PathwayGraph({
   graph,
   onNodeClick,
   className,
+  style,
 }: PathwayGraphProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -680,7 +682,10 @@ export function PathwayGraph({
   );
 
   return (
-    <div className={cn("relative h-full w-full bg-zinc-950", className)}>
+    <div
+      className={cn("relative h-full w-full bg-zinc-950", className)}
+      style={style}
+    >
       {hasGraph ? (
         <ReactFlow
           nodes={nodes}

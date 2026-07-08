@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Zap,
   Settings2,
@@ -19,38 +19,46 @@ import {
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { useWorkbenchStore, type RunMode } from "@/lib/store";
+import { useTranslation } from "@/lib/i18n";
 
 /**
  * Run controls — absorbs the mode selector + manual module checkbox logic from
  * the legacy `ControlBar.tsx`. Rendered in the left pane of the WorkbenchShell.
  */
-const MODES: { value: RunMode; label: string; icon: React.ReactNode; desc: string }[] = [
-  { value: "auto_fast", label: "Auto Fast", icon: <Zap className="h-3.5 w-3.5" />, desc: "极简流程，单智能体直跑" },
-  { value: "auto_standard", label: "Auto Standard", icon: <Settings2 className="h-3.5 w-3.5" />, desc: "默认模式，LLM 动态裁剪流程" },
-  { value: "manual", label: "Manual", icon: <Hand className="h-3.5 w-3.5" />, desc: "用户勾选所需模块" },
-];
+function useModes(t: (key: string) => string) {
+  return [
+    { value: "auto_fast" as RunMode, label: t("run.autoFast"), icon: <Zap className="h-3.5 w-3.5" />, desc: t("run.autoFast.desc") },
+    { value: "auto_standard" as RunMode, label: t("run.autoStandard"), icon: <Settings2 className="h-3.5 w-3.5" />, desc: t("run.autoStandard.desc") },
+    { value: "manual" as RunMode, label: t("run.manual"), icon: <Hand className="h-3.5 w-3.5" />, desc: t("run.manual.desc") },
+  ];
+}
 
 interface ModuleDef {
   key: string;
-  label: string;
+  labelKey: string;
   icon: React.ReactNode;
   required?: boolean;
 }
 
-const MODULES: ModuleDef[] = [
-  { key: "terminology_mcp", label: "术语标准化 (MCP)", icon: <Activity className="h-3.5 w-3.5" /> },
-  { key: "mechanism_graph", label: "机制解析与图谱", icon: <Cpu className="h-3.5 w-3.5" /> },
-  { key: "mechanism_parameter_rag", label: "知识检索 (RAG)", icon: <Search className="h-3.5 w-3.5" /> },
-  { key: "pkpd_inference", label: "PK/PD 推断", icon: <FlaskConical className="h-3.5 w-3.5" /> },
-  { key: "sandbox_execute", label: "沙箱仿真执行", icon: <Beaker className="h-3.5 w-3.5" />, required: true },
-  { key: "dose_analysis", label: "剂量递增分析", icon: <Activity className="h-3.5 w-3.5" /> },
-  { key: "experiment_evidence_rag", label: "实验与文献检索", icon: <Library className="h-3.5 w-3.5" /> },
-  { key: "report_generation", label: "预测报告生成", icon: <FileText className="h-3.5 w-3.5" /> },
-];
-
-const MODULE_ORDER = MODULES.map((m) => m.key);
+function useModules(t: (key: string) => string): ModuleDef[] {
+  return [
+    { key: "terminology_mcp", labelKey: "run.module.terminology", icon: <Activity className="h-3.5 w-3.5" /> },
+    { key: "mechanism_graph", labelKey: "run.module.mechanism", icon: <Cpu className="h-3.5 w-3.5" /> },
+    { key: "mechanism_parameter_rag", labelKey: "run.module.rag", icon: <Search className="h-3.5 w-3.5" /> },
+    { key: "pkpd_inference", labelKey: "run.module.pkpd", icon: <FlaskConical className="h-3.5 w-3.5" /> },
+    { key: "sandbox_execute", labelKey: "run.module.sandbox", icon: <Beaker className="h-3.5 w-3.5" />, required: true },
+    { key: "dose_analysis", labelKey: "run.module.dose", icon: <Activity className="h-3.5 w-3.5" /> },
+    { key: "experiment_evidence_rag", labelKey: "run.module.evidence", icon: <Library className="h-3.5 w-3.5" /> },
+    { key: "report_generation", labelKey: "run.module.report", icon: <FileText className="h-3.5 w-3.5" /> },
+  ];
+}
 
 export function RunControls() {
+  const { t } = useTranslation();
+  const MODES = useModes(t);
+  const MODULES = useModules(t);
+  const MODULE_ORDER = useMemo(() => MODULES.map((m) => m.key), [MODULES]);
+
   const controlBarState = useWorkbenchStore((s) => s.controlBarState);
   const setControlBarState = useWorkbenchStore((s) => s.setControlBarState);
   const isStreaming = useWorkbenchStore((s) => s.isStreaming);
@@ -73,11 +81,11 @@ export function RunControls() {
         (a, b) => MODULE_ORDER.indexOf(a) - MODULE_ORDER.indexOf(b)
       );
       setControlBarState({ ...controlBarState, manualModules: next });
-      setTooltip("已自动补充依赖项：沙箱仿真执行、机制解析与图谱");
-      const t = setTimeout(() => setTooltip(null), 3000);
-      return () => clearTimeout(t);
+      setTooltip(t("run.tooltip.deps"));
+      const timer = setTimeout(() => setTooltip(null), 3000);
+      return () => clearTimeout(timer);
     }
-  }, [manualModules, mode, setControlBarState, controlBarState]);
+  }, [manualModules, mode, setControlBarState, controlBarState, MODULE_ORDER, t]);
 
   const setMode = (m: RunMode) =>
     setControlBarState({ ...controlBarState, mode: m });
@@ -94,7 +102,7 @@ export function RunControls() {
   return (
     <div className="space-y-2">
       <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-        运行模式
+        {t("run.mode")}
       </div>
       <div className="space-y-1.5">
         {MODES.map((opt) => (
@@ -126,7 +134,7 @@ export function RunControls() {
       {mode === "manual" && (
         <div className="space-y-1.5">
           <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-            模块勾选
+            {t("run.modules")}
           </div>
           {tooltip && (
             <div className="flex items-center gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-300">
@@ -155,10 +163,10 @@ export function RunControls() {
                   onChange={() => toggleModule(mod.key)}
                 />
                 <span className="text-zinc-500">{mod.icon}</span>
-                <span className="flex-1">{mod.label}</span>
+                <span className="flex-1">{t(mod.labelKey)}</span>
                 {mod.required && (
                   <Badge variant="outline" className="h-4 text-[9px] border-zinc-700 text-zinc-500">
-                    必须
+                    {t("run.required")}
                   </Badge>
                 )}
               </label>

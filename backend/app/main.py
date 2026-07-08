@@ -33,6 +33,7 @@ from scripts.update_vector_db import update_vector_db
 from app.bio_db_client import BioDBClient
 from app.rag_client import RagClient
 from app.rag_collections import get_rag_collections
+from app.v4_endpoints import router as v4_router  # v4 REST 端点（6 个端点）
 
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 挂载 v4 REST 路由（pathways / graph / simulation / benchmark / reports / sweep）
+# 这些端点与 /api/chat SSE 流独立，供前端 Scientific Workspace 直接 REST 调用。
+app.include_router(v4_router)
 
 
 # Task G.2：全局异常处理中间件
@@ -223,6 +228,32 @@ def _build_v3_registry_payload(plan: list[str]) -> list[dict[str, str]]:
 def _sse_event(payload: Dict[str, Any]) -> str:
     """将字典封装为 SSE 数据行。"""
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _v3_edge_relation(edge: Dict[str, Any]) -> str:
+    """将 v3 network_json 边的 relation/interaction 字段归并为 frontend 5 类枚举。
+
+    frontend api.ts 定义 edges[].relation ∈ {activation, inhibition,
+    phosphorylation, binding, catalysis}。v3 network_json 用 interaction /
+    type / mechanism 等字段表达，本函数做归并。
+    """
+    val = (
+        edge.get("relation")
+        or edge.get("interaction")
+        or edge.get("type")
+        or edge.get("mechanism")
+        or "activation"
+    )
+    val_lower = str(val).lower()
+    if "inhibit" in val_lower or "repress" in val_lower:
+        return "inhibition"
+    if "phosphor" in val_lower:
+        return "phosphorylation"
+    if "bind" in val_lower or "complex" in val_lower or "dimer" in val_lower:
+        return "binding"
+    if "cataly" in val_lower or "cleav" in val_lower or "degrad" in val_lower:
+        return "catalysis"
+    return "activation"
 
 
 @app.get("/")
@@ -567,12 +598,18 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
 
                 # v4 Phase 6: 假设生成完成事件（前端可不订阅）
                 # Hypothesis Agent hook 输出 v4_hypothesis_generated=True 时发射
+                # 字段名契约：统一使用 v4_hypothesis_list（与 frontend store.ts 对齐）
                 if isinstance(output, dict) and output.get("v4_hypothesis_generated"):
+                    hyp_list = output.get("v4_hypothesis_list", [])
+                    yield _sse_event({
+                        "event": "v4_hypothesis_list",
+                        "data": hyp_list,
+                    })
                     yield _sse_event({
                         "event": "v4_hypothesis_generated",
                         "data": {
-                            "hypothesis_count": len(output.get("v4_hypothesis_list", [])),
-                            "hypothesis_list": output.get("v4_hypothesis_list", []),
+                            "hypothesis_count": len(hyp_list),
+                            "v4_hypothesis_list": hyp_list,
                         },
                     })
 
@@ -644,6 +681,36 @@ async def _emit_worker_outputs(node_name: str, output: Dict[str, Any]):
                     f"模板 {mechanism.get('template', '?')}"
                 ),
             )
+        # v4 SSE 事件：触发 v4_pathway_graph（与 frontend store.ts hydration 对齐）
+        # worker_mechanism 输出 network_json / entities，前端可据此渲染中间图谱。
+        v4_graph = output.get("v4_pathway_graph")
+        if v4_graph and isinstance(v4_graph, dict):
+            yield _yield("v4_pathway_graph", v4_graph)
+        elif isinstance(output.get("network_json"), dict) and output["network_json"].get("nodes"):
+            # 降级：从 v3 network_json 构造简易 v4_pathway_graph 载荷，保证前端有图可渲染
+            nj = output["network_json"]
+            yield _yield("v4_pathway_graph", {
+                "pathway_class": "egfr",  # 占位；前端会按选中通路覆盖
+                "nodes": [
+                    {
+                        "id": n.get("id", n.get("name", f"N{i}")),
+                        "label": n.get("label", n.get("name", "")),
+                        "species": n.get("name", n.get("label", "")),
+                        "node_type": "species",
+                        "compartment": n.get("compartment", "cytoplasm"),
+                    }
+                    for i, n in enumerate(nj.get("nodes", []) or [])
+                ],
+                "edges": [
+                    {
+                        "source": e.get("source", ""),
+                        "target": e.get("target", ""),
+                        "relation": _v3_edge_relation(e),
+                    }
+                    for e in nj.get("edges", []) or []
+                ],
+                "modules": [],
+            })
 
     elif node_name == "worker_rag":
         rag_insights = output.get("rag_insights")
@@ -706,6 +773,20 @@ async def _emit_worker_outputs(node_name: str, output: Dict[str, Any]):
                     "hed": output.get("hed"),
                 },
             )
+        # v4 SSE 事件：触发 v4_simulation_result（与 frontend store.ts hydration 对齐）
+        # worker_sandbox 输出 execution_result / image_base64 / csv_path，封装为
+        # SimulationResult 载荷供前端 SimulationPanel 直接渲染。
+        execution_result = output.get("execution_result") or {}
+        if execution_result or image_base64 or csv_path:
+            yield _yield("v4_simulation_result", {
+                "run_id": f"v3_{output.get('run_id', '')}",
+                "pathway_class": "egfr",  # 占位；前端按选中通路覆盖
+                "time_points": execution_result.get("time_points", []) if isinstance(execution_result, dict) else [],
+                "species": execution_result.get("species", {}) if isinstance(execution_result, dict) else {},
+                "metrics": output.get("metrics", {}),
+                "csv_path": csv_path,
+                "image_base64": image_base64,
+            })
 
     elif node_name == "worker_report":
         metrics = output.get("metrics") or {}
@@ -721,6 +802,17 @@ async def _emit_worker_outputs(node_name: str, output: Dict[str, Any]):
         if report.get("markdown"):
             yield _yield("report", report)
             yield _yield("report_ready", report.get("markdown", ""))
+        # v4 SSE 事件：触发 v4_validation_report（与 frontend store.ts hydration 对齐）
+        # worker_report 输出 metrics / report / experiment_protocols，封装为
+        # validationReport 载荷供前端 ValidationReportPanel 渲染。
+        yield _yield("v4_validation_report", {
+            "metrics": metrics,
+            "report_markdown": report.get("markdown", ""),
+            "experiment_protocols": protocols,
+            "paper_evidence": evidence,
+            "confidence": output.get("confidence", 0.0),
+            "passed": bool(metrics and not metrics.get("has_errors", False)),
+        })
 
 
 # === V4 API ENDPOINTS ===

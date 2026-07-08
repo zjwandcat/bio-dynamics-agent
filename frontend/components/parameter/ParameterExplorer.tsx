@@ -44,6 +44,7 @@ import {
   type SimulationResult,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Self-contained chart theme + formatter (mirrors the Simulation Panel palette
@@ -216,17 +217,20 @@ const MUTATION_PRESETS: MutationPreset[] = [
 
 type Mode = "slider" | "ic50" | "knockout" | "overexpression" | "mutation";
 
-const MODES: {
+function useModes(): {
   value: Mode;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
-}[] = [
-  { value: "slider", label: "Slider", icon: Sliders },
-  { value: "ic50", label: "IC50/EC50", icon: Activity },
-  { value: "knockout", label: "Knockout", icon: XCircle },
-  { value: "overexpression", label: "Overexpr.", icon: TrendingUp },
-  { value: "mutation", label: "Mutation", icon: Dna },
-];
+}[] {
+  const { t } = useTranslation();
+  return [
+    { value: "slider", label: t("params.slider"), icon: Sliders },
+    { value: "ic50", label: t("params.ic50"), icon: Activity },
+    { value: "knockout", label: t("params.knockout"), icon: XCircle },
+    { value: "overexpression", label: t("params.overexpr"), icon: TrendingUp },
+    { value: "mutation", label: t("params.mutation"), icon: Dna },
+  ];
+}
 
 // ---------------------------------------------------------------------------
 // Sweep snapshot
@@ -279,6 +283,8 @@ interface ParameterExplorerProps {
  * restores defaults and fires one baseline sweep.
  */
 export function ParameterExplorer({ onStatusChange }: ParameterExplorerProps) {
+  const { t } = useTranslation();
+  const MODES = useModes();
   const simulationResult = useWorkbenchStore((s) => s.simulationResult);
   const setSimulationResult = useWorkbenchStore((s) => s.setSimulationResult);
   const currentPathway = useWorkbenchStore((s) => s.currentPathway);
@@ -629,7 +635,7 @@ export function ParameterExplorer({ onStatusChange }: ParameterExplorerProps) {
             ) : (
               <Play className="h-3.5 w-3.5" />
             )}
-            Apply Changes
+            {t("params.apply")}
           </Button>
           <Button
             size="sm"
@@ -638,10 +644,10 @@ export function ParameterExplorer({ onStatusChange }: ParameterExplorerProps) {
             disabled={isApplying}
           >
             <RefreshCw className="h-3.5 w-3.5" />
-            Reset to Baseline
+            {t("params.reset")}
           </Button>
           {isApplying && (
-            <span className="text-[10px] text-zinc-500">re-simulating…</span>
+            <span className="text-[10px] text-zinc-500">{t("params.reSimulating")}</span>
           )}
         </div>
       </div>
@@ -660,6 +666,7 @@ function SliderMode({
   values: Record<string, number>;
   onChange: (key: string, value: number) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-2.5">
       {PARAM_CATALOG.map((p) => {
@@ -681,7 +688,7 @@ function SliderMode({
                     variant="outline"
                     className="h-3.5 border-amber-600/50 px-1 text-[9px] text-amber-300"
                   >
-                    modified
+                    {t("params.modified")}
                   </Badge>
                 )}
               </div>
@@ -697,6 +704,7 @@ function SliderMode({
               value={val}
               onChange={(e) => onChange(p.key, Number(e.target.value))}
               className="mt-1.5 h-1.5 w-full cursor-pointer accent-emerald-400"
+              style={{ caretColor: "transparent" }}
             />
             <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-zinc-500">
               <span>min {formatVal(p.min)}</span>
@@ -731,6 +739,7 @@ function IC50Mode({
   onEc50: (v: number) => void;
   onHill: (v: number) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       <div className="grid shrink-0 grid-cols-3 gap-1.5">
@@ -828,8 +837,7 @@ function IC50Mode({
         </ResponsiveContainer>
       </div>
       <p className="shrink-0 text-[10px] text-zinc-500">
-        Preview only — Apply Changes runs a parameter sweep against the current
-        pathway.
+        {t("params.previewHint")}
       </p>
     </div>
   );
@@ -878,11 +886,13 @@ function KnockoutMode({
   selected: Set<string>;
   onToggle: (sp: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-1.5">
       <p className="text-[10px] text-zinc-500">
-        Force a species concentration to 0 (knockout) at t=0.
+        {t("params.knockoutHint")}
       </p>
+
       {species.map((sp) => {
         const on = selected.has(sp);
         return (
@@ -925,10 +935,11 @@ function OverexpressionMode({
   folds: Record<string, number>;
   onChange: (sp: string, fold: number) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-1.5">
       <p className="text-[10px] text-zinc-500">
-        Overexpress a species (fold change over baseline). 1× = no change.
+        {t("params.overexprHint")}
       </p>
       {species.map((sp) => {
         const fold = folds[sp] ?? 1;
@@ -951,6 +962,7 @@ function OverexpressionMode({
               value={fold}
               onChange={(e) => onChange(sp, Number(e.target.value))}
               className="mt-1.5 h-1.5 w-full cursor-pointer accent-emerald-400"
+              style={{ caretColor: "transparent" }}
             />
             <div className="mt-1 flex gap-1">
               {[1, 10, 100].map((f) => (
@@ -993,12 +1005,13 @@ function MutationMode({
   onCustom: (key: string, val: number) => void;
   onClearCustom: (key: string) => void;
 }) {
+  const { t } = useTranslation();
   const preset = MUTATION_PRESETS.find((m) => m.key === current);
   return (
     <div className="space-y-2">
       <div className="space-y-1">
         <p className="text-[10px] text-zinc-500">
-          Preset mutations alter kinetic parameters directly.
+          {t("params.mutationHint")}
         </p>
         {MUTATION_PRESETS.map((m) => {
           const active = m.key === current;
@@ -1028,7 +1041,7 @@ function MutationMode({
 
       <div className="space-y-1.5 border-t border-zinc-800 pt-2">
         <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-          Custom override
+          {t("params.customOverride")}
         </p>
         {PARAM_CATALOG.map((p) => {
           const overridden = p.key in custom;
@@ -1054,15 +1067,15 @@ function MutationMode({
                     variant="outline"
                     className="h-3.5 border-amber-600/50 px-1 text-[9px] text-amber-300"
                   >
-                    override
+                    {t("params.override")}
                   </Badge>
                   <button
                     type="button"
                     onClick={() => onClearCustom(p.key)}
                     className="text-[10px] text-zinc-500 hover:text-zinc-300"
-                    title="Clear override"
+                    title={t("params.clear")}
                   >
-                    clear
+                    {t("params.clear")}
                   </button>
                 </>
               )}
@@ -1073,7 +1086,7 @@ function MutationMode({
 
       {preset && preset.key !== "none" && (
         <div className="rounded-md bg-zinc-800/50 px-2 py-1.5 text-[10px] text-zinc-400">
-          <span className="text-zinc-300">Active preset:</span> {preset.label}
+          <span className="text-zinc-300">{t("params.activePreset")}:</span> {preset.label}
           <div className="mt-0.5">
             {Object.entries(preset.overrides)
               .map(([k, v]) => `${k}=${formatVal(v)}`)
@@ -1102,6 +1115,7 @@ function ComparisonStrip({
   overexprCount: number;
   mutationKey: string;
 }) {
+  const { t } = useTranslation();
   const changed = PARAM_CATALOG.filter(
     (p) => Math.abs((params[p.key] ?? 0) - p.default) > 1e-12
   );
@@ -1111,7 +1125,7 @@ function ComparisonStrip({
     return (
       <div className="flex items-center gap-1.5 text-[10px] text-zinc-500">
         <CheckCircle2 className="h-3 w-3 text-emerald-400" />
-        All parameters at baseline
+        {t("params.allBaseline")}
       </div>
     );
   }

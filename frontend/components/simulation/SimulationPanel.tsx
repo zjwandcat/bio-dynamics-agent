@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useWorkbenchStore } from "@/lib/store";
 import { runSimulation, type PathwayClass, type SimulationParams } from "@/lib/api";
+import { useTranslation } from "@/lib/i18n";
 
 import { SimulationTabs, type SimStatus } from "./SimulationTabs";
 
@@ -23,6 +24,7 @@ import { SimulationTabs, type SimStatus } from "./SimulationTabs";
  * a clear error state without crashing the panel.
  */
 export function SimulationPanel() {
+  const { t } = useTranslation();
   const simulationResult = useWorkbenchStore((s) => s.simulationResult);
   const setSimulationResult = useWorkbenchStore((s) => s.setSimulationResult);
   const currentPathway = useWorkbenchStore((s) => s.currentPathway);
@@ -58,8 +60,8 @@ export function SimulationPanel() {
       <header className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2">
         <div className="flex items-center gap-2">
           <FlaskConical className="h-3.5 w-3.5 text-emerald-400" />
-          <h3 className="text-xs font-semibold text-zinc-200">Simulation</h3>
-          <StatusBadge status={status} />
+          <h3 className="text-xs font-semibold text-zinc-200">{t("sim.title")}</h3>
+          <StatusBadge status={status} t={t} />
         </div>
         <Button
           size="sm"
@@ -71,7 +73,7 @@ export function SimulationPanel() {
           ) : (
             <Play className="h-3.5 w-3.5" />
           )}
-          Run Simulation
+          {t("sim.run")}
         </Button>
       </header>
 
@@ -87,28 +89,28 @@ export function SimulationPanel() {
   );
 }
 
-function StatusBadge({ status }: { status: SimStatus }) {
+function StatusBadge({ status, t }: { status: SimStatus; t: (key: string) => string }) {
   const map: Record<
     SimStatus,
-    { label: string; variant: "default" | "secondary" | "outline" | "destructive"; className: string }
+    { labelKey: string; variant: "default" | "secondary" | "outline" | "destructive"; className: string }
   > = {
     idle: {
-      label: "idle",
+      labelKey: "sim.status.idle",
       variant: "outline",
       className: "border-zinc-700 text-zinc-500",
     },
     running: {
-      label: "running",
+      labelKey: "sim.status.running",
       variant: "secondary",
       className: "bg-blue-500/15 text-blue-300",
     },
     complete: {
-      label: "complete",
+      labelKey: "sim.status.complete",
       variant: "secondary",
       className: "bg-emerald-500/15 text-emerald-300",
     },
     error: {
-      label: "error",
+      labelKey: "sim.status.error",
       variant: "destructive",
       className: "",
     },
@@ -116,7 +118,7 @@ function StatusBadge({ status }: { status: SimStatus }) {
   const cfg = map[status];
   return (
     <Badge variant={cfg.variant} className={`h-4 text-[9px] ${cfg.className}`}>
-      {cfg.label}
+      {t(cfg.labelKey)}
     </Badge>
   );
 }

@@ -22,6 +22,7 @@ def detect_bistability(
     species_names: list[str],
     threshold_ratio: float = 0.5,
     key_species_hint: str = "",
+    jump_threshold_ratio: float = 0.3,
 ) -> dict[str, Any]:
     """检测双稳态行为。
 
@@ -32,6 +33,8 @@ def detect_bistability(
         threshold_ratio: 高/低态判定阈值（默认 0.5，即超过最大值一半为高态）
         key_species_hint: 关键 species 名提示（如 "Caspase3_active"），
                           为空时自动检测
+        jump_threshold_ratio: 切换事件判定阈值（默认 0.3，即相邻时间点
+                              导数幅度超过信号幅度的 30% 时记为一次切换事件）
 
     Returns:
         dict: {
@@ -44,6 +47,7 @@ def detect_bistability(
             "final_value": float,    # 关键 species 最终值
             "initial_value": float,  # 关键 species 初始值
             "threshold": float,      # 高/低态判定阈值
+            "switching_events": list[dict],  # TD-030: 状态跳变切换事件列表
         }
     """
     t_arr = np.asarray(t_arr)
@@ -53,7 +57,10 @@ def detect_bistability(
     key_idx = _find_key_species(species_names, key_species_hint)
 
     if key_idx < 0 or y_arr.ndim != 2 or key_idx >= y_arr.shape[1]:
-        return _unknown_result()
+        # TD-030: 未知结果同样附带空 switching_events，保持字段一致
+        result = _unknown_result()
+        result["switching_events"] = []
+        return result
 
     key_series = y_arr[:, key_idx]
     max_val = float(np.max(key_series))
@@ -88,6 +95,15 @@ def detect_bistability(
             switch_time = float(t_arr[i])
             break
 
+    # === TD-030 (IB-031) 修复：检测双稳态切换事件 ===
+    # 原检测器仅判定最终 ON/OFF 状态，未捕获"从一个稳态跳变到另一个稳态"的事件。
+    # 此处基于相邻时间点的差分（导数近似）扫描突变点：当 |Δy| 超过信号幅度的
+    # jump_threshold_ratio 时记为一次切换事件，记录时间/前值/后值/方向，
+    # 供下游报告与可视化消费。
+    switching_events = _detect_switching_events(
+        t_arr, key_series, amplitude, jump_threshold_ratio
+    )
+
     return {
         "bistable": bistable,
         "final_state": final_state,
@@ -98,7 +114,61 @@ def detect_bistability(
         "final_value": final_val,
         "initial_value": initial_val,
         "threshold": threshold,
+        "switching_events": switching_events,
     }
+
+
+def _detect_switching_events(
+    t_arr: np.ndarray,
+    key_series: np.ndarray,
+    amplitude: float,
+    jump_threshold_ratio: float,
+) -> list[dict[str, Any]]:
+    """扫描时间序列，识别双稳态切换事件（突变跳变点）。
+
+    TD-030 (IB-031) 修复：当系统从一个稳态跳变到另一个稳态时，
+    相邻时间点的差分（导数近似）会显著超过信号幅度的均值水平。
+    本函数以 ``amplitude * jump_threshold_ratio`` 为阈值，逐点扫描
+    突变点并记录切换事件，用于补全原检测器缺失的事件检测能力。
+
+    Args:
+        t_arr: 时间序列 (N_time,)
+        key_series: 关键 species 的状态序列 (N_time,)
+        amplitude: 信号幅度（max - min），用于换算跳变阈值
+        jump_threshold_ratio: 跳变阈值占幅度的比例（如 0.3 表示 30%）
+
+    Returns:
+        切换事件列表，每个事件 dict 含：
+            - time: 跳变发生时间
+            - index: 跳变点索引
+            - value_before: 跳变前的值
+            - value_after: 跳变后的值
+            - delta: 跳变幅度（value_after - value_before）
+            - direction: "up"（向上跳变）/ "down"（向下跳变）
+    """
+    events: list[dict[str, Any]] = []
+    n = len(key_series)
+    if n < 2 or amplitude < 1e-6:
+        # 时间点过少或信号幅度太小，无法判定跳变
+        return events
+
+    # 跳变阈值：信号幅度的 jump_threshold_ratio 倍
+    jump_threshold = amplitude * jump_threshold_ratio
+
+    for i in range(1, n):
+        # 相邻时间点的差分（导数近似，未除以 dt，仅用于突变点检测）
+        delta = float(key_series[i] - key_series[i - 1])
+        if abs(delta) >= jump_threshold:
+            direction = "up" if delta > 0 else "down"
+            events.append({
+                "time": float(t_arr[i]),
+                "index": int(i),
+                "value_before": float(key_series[i - 1]),
+                "value_after": float(key_series[i]),
+                "delta": delta,
+                "direction": direction,
+            })
+    return events
 
 
 def _find_key_species(species_names: list[str], hint: str = "") -> int:

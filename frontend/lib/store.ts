@@ -868,8 +868,8 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
     isUpdatingDb: false,
     updateDbStatus: "",
 
-    // --- UI state: AI Assistant collapsed by default ---
-    uiState: { aiAssistantOpen: false },
+    // --- UI state: AI Assistant 默认展开（开源用户体验：进入即可见 AI 输入框）---
+    uiState: { aiAssistantOpen: true },
 
     // --- actions: UI / domain ---
     setInput: (value) => set({ input: value }),
