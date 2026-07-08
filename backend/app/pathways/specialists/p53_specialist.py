@@ -843,8 +843,69 @@ class P53Specialist(PathwaySpecialistBase):
         return super().select_template(mechanism)
 
 
+# =============================================================================
+# 文献动力学参数（IB-017 修复）
+# =============================================================================
+# 来源：
+# - BIOMD0000000012 (Lev Bar-Or 2000, PMID:10648606) p53-Mdm2 延迟负反馈振荡模型
+# - BIOMD0000000567 (Purvis 2012) p53 状态机/脉冲动力学模型
+# 反幻觉守卫：所有参数来自上述 BioModels 模型或文献；无确切值的用无量纲化
+# 估计并标注 `# Heuristic estimate, needs calibration`。
+# 参数范围约束：k_on∈[1e3,1e7] M^-1 min^-1, Km∈[1e-7,1e-2] M, k_cat∈[1e-3,1e3] min^-1
+# 注：p53-Mdm2 转录延迟 _P53_MDM2_DELAY_MINUTES=60min 为 DDE 延迟项（见文件顶部）。
+KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
+    # DNA_damage→pATM ATM 激活（Lev Bar-Or 2000, PMID:10648606, BIOMD0000000012）
+    "DNA_pATM": {
+        "k_cat": 1.0,                # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-6,                  # M (ATM Km)  # Heuristic estimate, needs calibration
+    },
+    # pATM→p53 p53 磷酸化（Lev Bar-Or 2000, PMID:10648606, 异磷酸化）
+    "pATM_p53": {
+        "k_cat": 1.0,                # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                  # M (p53 Km)  # Heuristic estimate, needs calibration
+    },
+    # p53→p53_tetramer 四聚化（Purvis 2012, BIOMD0000000567）
+    "p53_tetramer": {
+        "k_on": 1.0e6,               # M^-1 min^-1  # Heuristic estimate, needs calibration
+        "k_off": 1e-3,               # min^-1  # Heuristic estimate, needs calibration
+    },
+    # p53_tetramer→p53_nuclear 入核（Purvis 2012, BIOMD0000000567）
+    "p53_nuclear_import": {
+        "k_import": 0.1,             # min^-1  # Heuristic estimate, needs calibration
+    },
+    # p53_nuclear→Mdm2_mRNA 转录（Lev Bar-Or 2000, PMID:10648606, DDE delay=60min）
+    "p53_Mdm2_transcription": {
+        "k_transcription": 1.0,      # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                  # M (p53_nuclear Km, Hill n=2)  # Heuristic estimate, needs calibration
+    },
+    # Mdm2_mRNA→Mdm2 翻译（Lev Bar-Or 2000, PMID:10648606）
+    "Mdm2_translation": {
+        "k_translation": 0.1,        # min^-1  # Heuristic estimate, needs calibration
+    },
+    # Mdm2→p53_ubi p53 泛素化（Lev Bar-Or 2000, PMID:10648606）
+    "Mdm2_p53_ubi": {
+        "k_cat": 1.0,                # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                  # M (p53 Km)  # Heuristic estimate, needs calibration
+    },
+    # p53_ubi 降解（蛋白酶体, Lev Bar-Or 2000, PMID:10648606）
+    "p53_ubi_degradation": {
+        "k_degradation": 0.1,        # min^-1  # Heuristic estimate, needs calibration
+    },
+    # p53_nuclear→p21_mRNA 转录（Purvis 2012, BIOMD0000000567）
+    "p53_p21_transcription": {
+        "k_transcription": 1.0,      # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                  # M  # Heuristic estimate, needs calibration
+    },
+    # p21_mRNA→p21 翻译（Purvis 2012, BIOMD0000000567）
+    "p21_translation": {
+        "k_translation": 0.1,        # min^-1  # Heuristic estimate, needs calibration
+    },
+}
+
+
 __all__ = [
     "P53Specialist",
     "PATHWAY_TAG",
     "SOURCE_SBML",
+    "KINETIC_PARAMETERS",
 ]

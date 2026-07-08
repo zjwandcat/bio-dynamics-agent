@@ -1325,13 +1325,13 @@ def worker_validator(state: BioDynamicsState) -> dict[str, Any]:
                 "method": "skipped",
                 "role": role,
                 "structural_confidence_score": 0.0,
-                "pass": True,  # 异常不阻塞
+                "pass": False,  # IB-057 修复：validator 异常时不放行
                 "details": {"reason": f"validator_exception: {exc}"},
             }
             update["agent_dispatches"] = dispatches + [
                 _dispatch_for_v3_worker("worker_validator", "completed", f"验证异常：{exc}"),
             ]
-            get_metrics().record_validation("exception", True, 0.0)
+            get_metrics().record_validation("exception", False, 0.0)
 
     return update
 

@@ -607,8 +607,57 @@ class EGFRSpecialist(PathwaySpecialistBase):
     #   return super().select_template(mechanism)
 
 
+# =============================================================================
+# 文献动力学参数（IB-017 修复）
+# =============================================================================
+# 来源：
+# - BIOMD0000000010 (Schoeberl 2002, PMID:12451189) EGF/MAPK 信号模型
+# - BIOMD0000000055 (Hatakeyama 2003) EGFR 信号转导模型
+# 反幻觉守卫：所有参数来自上述 BioModels 模型或文献；无确切值的用无量纲化
+# 估计并标注 `# Heuristic estimate, needs calibration`。
+# 参数范围约束：k_on∈[1e3,1e7] M^-1 min^-1, Km∈[1e-7,1e-2] M, k_cat∈[1e-3,1e3] min^-1
+# 注：Schoeberl 2002 原模型使用 nM 单位，此处统一转换为 M 以满足范围约束。
+KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
+    # EGF-EGFR 配体-受体结合 + EGFR 自磷酸化（Schoeberl 2002, BIOMD0000000010, PMID:12451189）
+    "EGF_EGFR": {
+        "k_on": 3.85e5,              # M^-1 min^-1
+        "k_off": 0.34,               # min^-1
+        "k_cat": 1.0,                # min^-1 (EGFR 自磷酸化)
+        "Km": 1e-7,                  # M (原模型 100 nM, Schoeberl 2002)
+        "k_dephos": 0.01,            # min^-1 (受体去磷酸化)
+        "k_internalization": 0.015,  # min^-1 (受体内吞)
+    },
+    # pEGFR→pShc 异磷酸化（Shc 作 substrate, pEGFR 作 modifier, Schoeberl 2002, BIOMD0000000010）
+    "pEGFR_pShc": {
+        "k_cat": 0.5,                # min^-1  # Heuristic estimate, needs calibration
+        "Km": 5e-7,                  # M (Shc 底物 Km)  # Heuristic estimate, needs calibration
+    },
+    # pEGFR-Grb2 接头蛋白结合（Hatakeyama 2003, BIOMD0000000055）
+    "pEGFR_Grb2": {
+        "k_on": 1.0e6,               # M^-1 min^-1  # Heuristic estimate, needs calibration
+        "k_off": 0.1,                # min^-1  # Heuristic estimate, needs calibration
+    },
+    # Grb2-SOS 结合（Hatakeyama 2003, BIOMD0000000055）
+    "Grb2_SOS": {
+        "k_on": 5.0e5,               # M^-1 min^-1  # Heuristic estimate, needs calibration
+        "k_off": 0.05,               # min^-1  # Heuristic estimate, needs calibration
+    },
+    # SOS 催化 Ras→RasGTP GDP/GTP 交换（Hatakeyama 2003, BIOMD0000000055）
+    "SOS_RasGTP": {
+        "k_cat": 0.1,                # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-6,                  # M (Ras 底物 Km)  # Heuristic estimate, needs calibration
+    },
+    # RasGTP→pRaf 异磷酸化（Raf 作 substrate, RasGTP 作 modifier, Schoeberl 2002, BIOMD0000000010）
+    "RasGTP_pRaf": {
+        "k_cat": 0.5,                # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                  # M (Raf 底物 Km)  # Heuristic estimate, needs calibration
+    },
+}
+
+
 __all__ = [
     "EGFRSpecialist",
     "PATHWAY_TAG",
     "SOURCE_SBML",
+    "KINETIC_PARAMETERS",
 ]

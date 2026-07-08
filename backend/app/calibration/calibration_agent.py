@@ -204,7 +204,12 @@ class CalibrationAgent:
                 len(warnings),
             )
 
-            return {"v4_calibration_result": result}
+            # IB-019 修复：calibrated_params 回写 state.parameters
+            # 仅在拟合成功（calibrated_params 非空）时回写，避免空 dict 覆盖原参数
+            update_dict: dict[str, Any] = {"v4_calibration_result": result}
+            if calibrated_params:
+                update_dict["parameters"] = calibrated_params
+            return update_dict
 
         except Exception as exc:
             logger.warning(

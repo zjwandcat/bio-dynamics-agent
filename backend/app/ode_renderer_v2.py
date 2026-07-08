@@ -242,12 +242,19 @@ class ODERendererV2:
     # -------------------------------------------------------------------------
     @staticmethod
     def _extract_species_names(reaction_ir: dict[str, Any]) -> list[str]:
-        """从 reaction_ir.species 提取物种名列表。"""
+        """从 reaction_ir.species 提取物种名列表。
+
+        IB-001 修复：读取 ``canonical_name``（Schema 定义字段），
+        而非不存在的 ``name`` 字段。``canonical_name`` 为空时回退到 ``id``。
+        """
         species_list = reaction_ir.get("species", [])
         names: list[str] = []
         seen: set[str] = set()
         for sp in species_list:
-            name = sp.get("name") or sp.get("id", "")
+            if not isinstance(sp, dict):
+                continue
+            # IB-001: 使用 canonical_name（Schema 定义），回退到 id
+            name = sp.get("canonical_name") or sp.get("name") or sp.get("id", "")
             if name and name not in seen:
                 names.append(name)
                 seen.add(name)
@@ -255,9 +262,20 @@ class ODERendererV2:
 
     @staticmethod
     def _extract_y0(reaction_ir: dict[str, Any], species_names: list[str]) -> list[float]:
-        """从 reaction_ir.species 提取初始浓度。"""
+        """从 reaction_ir.species 提取初始浓度。
+
+        IB-001 修复：以 ``canonical_name`` 为 key 构建 sp_map，
+        而非不存在的 ``name`` 字段。
+        """
         species_list = reaction_ir.get("species", [])
-        sp_map = {sp.get("name"): sp for sp in species_list if isinstance(sp, dict)}
+        # IB-001: 以 canonical_name 为 key
+        sp_map: dict[str, dict] = {}
+        for sp in species_list:
+            if not isinstance(sp, dict):
+                continue
+            key = sp.get("canonical_name") or sp.get("name") or sp.get("id", "")
+            if key:
+                sp_map[key] = sp
         y0: list[float] = []
         for name in species_names:
             sp = sp_map.get(name, {})
@@ -272,27 +290,69 @@ class ODERendererV2:
     def _extract_params(reaction_ir: dict[str, Any]) -> dict[str, dict[str, float]]:
         """从 reaction_ir 提取动力学参数。
 
+        IB-001 修复：ReactionIRv2 的 SpeciesV2 无 ``parameters`` 字段，
+        ReactionV2 无 ``target``/``parameters`` 字段。参数来源：
+        1. 顶层 ``parameters`` dict（由 specialist 注入）
+        2. 每个 reaction 的 ``parameter_context`` 字符串中隐含的参数键
+           （此处不解析，由 specialist 传入 params 覆盖）
+        3. species 的 initial_concentration（非动力学参数，不提取）
+
         返回格式：{species_name: {param_key: value}}
         """
         params: dict[str, dict[str, float]] = {}
-        # 从 species.parameters 提取
+
+        # IB-001: 从顶层 parameters 字典提取（specialist 注入的参数）
+        top_params = reaction_ir.get("parameters")
+        if isinstance(top_params, dict):
+            for key, val in top_params.items():
+                if isinstance(val, dict):
+                    params[key] = {
+                        k: float(v) for k, v in val.items()
+                        if isinstance(v, (int, float))
+                    }
+
+        # IB-001: 从 species 的 canonical_name 查找，species 无 parameters 字段
+        # 但保留对旧格式（species.parameters）的兼容
         for sp in reaction_ir.get("species", []):
             if not isinstance(sp, dict):
                 continue
-            name = sp.get("name") or sp.get("id", "")
+            name = sp.get("canonical_name") or sp.get("name") or sp.get("id", "")
             if not name:
                 continue
             sp_params = sp.get("parameters", {})
             if isinstance(sp_params, dict):
-                params[name] = {k: float(v) for k, v in sp_params.items()
-                                if isinstance(v, (int, float))}
-        # 从 reactions.parameters 提取（按 target 归类）
+                if name not in params:
+                    params[name] = {}
+                params[name].update({
+                    k: float(v) for k, v in sp_params.items()
+                    if isinstance(v, (int, float))
+                })
+
+        # IB-001: 从 reactions 提取参数（兼容旧格式 rxn.parameters）
+        # 新格式 ReactionV2 无 parameters 字段，此循环对旧格式兼容
         for rxn in reaction_ir.get("reactions", []):
             if not isinstance(rxn, dict):
                 continue
-            tgt = rxn.get("target") or rxn.get("products", [{}])[0] if isinstance(rxn.get("products"), list) else ""
+            # 解析 target 名（从 products[0].species_id → 查 species 表）
+            products = rxn.get("products", [])
+            tgt = ""
+            if isinstance(products, list) and products:
+                first_product = products[0]
+                if isinstance(first_product, dict):
+                    species_id = first_product.get("species_id", "")
+                    # 查 species 表解析 canonical_name
+                    for sp in reaction_ir.get("species", []):
+                        if isinstance(sp, dict) and sp.get("id") == species_id:
+                            tgt = sp.get("canonical_name") or sp.get("name") or species_id
+                            break
+                    if not tgt:
+                        tgt = species_id
+            # 兼容旧格式
+            if not tgt:
+                tgt = rxn.get("target", "")
             if isinstance(tgt, dict):
-                tgt = tgt.get("name", "")
+                tgt = tgt.get("canonical_name") or tgt.get("name", "")
+
             if not tgt:
                 continue
             rxn_params = rxn.get("parameters", {})
@@ -307,25 +367,78 @@ class ODERendererV2:
 
     @staticmethod
     def _extract_edges(reaction_ir: dict[str, Any]) -> list[dict[str, Any]]:
-        """从 reaction_ir.reactions 提取边列表（v4 模板格式）。"""
+        """从 reaction_ir.reactions 提取边列表（v4 模板格式）。
+
+        IB-001 修复：ReactionV2 无 ``source``/``target`` 字段，
+        需从 ``reactants[0].species_id`` / ``products[0].species_id``
+        解析 species_id → canonical_name。
+        """
+        # 构建 species_id → canonical_name 查找表
+        species_list = reaction_ir.get("species", [])
+        id_to_name: dict[str, str] = {}
+        for sp in species_list:
+            if not isinstance(sp, dict):
+                continue
+            sid = sp.get("id", "")
+            cname = sp.get("canonical_name") or sp.get("name") or sid
+            if sid:
+                id_to_name[sid] = cname
+
+        def _resolve_species_ref(ref: Any) -> str:
+            """从 SpeciesRef dict 解析物种名。"""
+            if isinstance(ref, dict):
+                sid = ref.get("species_id", "")
+                return id_to_name.get(sid, sid)
+            if isinstance(ref, str):
+                return id_to_name.get(ref, ref)
+            return ""
+
         edges: list[dict[str, Any]] = []
         for rxn in reaction_ir.get("reactions", []):
             if not isinstance(rxn, dict):
                 continue
-            src = rxn.get("source") or rxn.get("reactants", [{}])[0] if isinstance(rxn.get("reactants"), list) else ""
-            tgt = rxn.get("target") or rxn.get("products", [{}])[0] if isinstance(rxn.get("products"), list) else ""
-            if isinstance(src, dict):
-                src = src.get("name", "")
-            if isinstance(tgt, dict):
-                tgt = tgt.get("name", "")
+
+            # IB-001: 从 reactants[0] 解析 source
+            reactants = rxn.get("reactants", [])
+            src = ""
+            if isinstance(reactants, list) and reactants:
+                src = _resolve_species_ref(reactants[0])
+            # 兼容旧格式
+            if not src:
+                src = rxn.get("source", "")
+                if isinstance(src, dict):
+                    src = src.get("canonical_name") or src.get("name", "")
+
+            # IB-001: 从 products[0] 解析 target
+            products = rxn.get("products", [])
+            tgt = ""
+            if isinstance(products, list) and products:
+                tgt = _resolve_species_ref(products[0])
+            # 兼容旧格式
+            if not tgt:
+                tgt = rxn.get("target", "")
+                if isinstance(tgt, dict):
+                    tgt = tgt.get("canonical_name") or tgt.get("name", "")
+
             mechanism = rxn.get("reaction_type") or rxn.get("mechanism", "activation")
             reaction_eq = rxn.get("reaction_eq") or rxn.get("equation", "")
+
+            # 提取 modifiers（用于 MM 公式的酶浓度）
+            modifiers = rxn.get("modifiers", [])
+            modifier_names: list[str] = []
+            if isinstance(modifiers, list):
+                for mod in modifiers:
+                    mname = _resolve_species_ref(mod)
+                    if mname:
+                        modifier_names.append(mname)
+
             edges.append({
                 "source": src,
                 "target": tgt,
                 "mechanism": mechanism,
                 "reaction_eq": reaction_eq,
                 "sbo_term": rxn.get("sbo_term"),
+                "modifiers": modifier_names,
             })
         return edges
 

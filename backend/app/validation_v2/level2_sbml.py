@@ -601,59 +601,104 @@ class Level2SBMLValidator:
     def _simulate_v4_ode(self, ode_system: dict[str, Any]) -> dict[str, Any]:
         """跑 v4 ODE 仿真。
 
-        默认实现：尝试 exec ode_code（含 scipy.integrate.odeint 或纯 Python）。
-        失败返回 {}。
+        IB-015 修复：替换 MOCK 线性衰减为真实 ODE solver。
+        使用 scipy.integrate.solve_ivp 求解从 ode_code 提取的 rhs 函数。
+        若 ode_code 无法执行或求解失败，返回 {"method": "failed", "error": "..."}，
+        不再返回 MOCK 线性衰减数据。
 
-        返回：{species_id: [(time, concentration), ...], ...}
+        Args:
+            ode_system: v4_ode_system dict，含 ode_code（可执行 ODE Python 代码）。
+
+        Returns:
+            成功：{species_id: [(time, concentration), ...], ...}
+            失败：{"method": "failed", "error": "..."}
         """
+        # IB-015 修复：替换 MOCK 线性衰减为真实 ODE solver
         try:
             ode_code = ode_system.get("ode_code", "") or ""
             if not ode_code:
-                return {}
+                return {"method": "failed", "error": "ode_code 为空"}
 
-            # 简化实现：从 ode_code 提取初始浓度与速率，用 scipy.integrate.odeint 求解
-            # 真实场景应由 sandbox 执行 ode_code；此处仅做 mock 友好的占位
-            # 提取初始浓度（k_X = value 或 X_0 = value）
-            import re
-            init_conc: dict[str, float] = {}
-            for match in re.finditer(
-                r"^\s*([A-Za-z_]\w*)\s*=\s*(\d+\.?\d*(?:[eE][-+]?\d+)?)",
-                ode_code, re.MULTILINE,
-            ):
-                name, val = match.group(1), float(match.group(2))
-                if name.startswith("k_") or name.endswith("_0") or name.endswith("_init"):
-                    if name.endswith("_0") or name.endswith("_init"):
-                        sp_name = name.replace("_0", "").replace("_init", "")
-                        init_conc[sp_name] = val
-                else:
-                    # 可能是 species 初始浓度
-                    if name not in init_conc:
-                        init_conc[name] = val
+            # 本地导入科学计算库（避免顶层依赖；同时注入到 ode_code 命名空间）
+            import numpy as np
+            from scipy.integrate import solve_ivp
 
-            # 提取 dX/dt 方程中的 species 名
-            species_list: list[str] = []
-            for match in re.finditer(
-                r"^\s*d([A-Za-z_]\w*)\s*/\s*dt\s*=", ode_code, re.MULTILINE
-            ):
-                species_list.append(match.group(1))
+            # 准备 exec 命名空间：单一 dict 兼作 globals 与 locals，
+            # 确保 ode_code 顶层定义的 _ode_rhs 其 __globals__ 能查到
+            # SPECIES_NAMES / EDGES / SP_IDX / _get_param 等同名字典内变量
+            namespace: dict[str, Any] = {
+                "__name__": "__v4_ode_sim__",
+                "np": np,
+                "numpy": np,
+                "solve_ivp": solve_ivp,
+            }
 
-            # 构造 mock 时间序列：初始浓度 → 线性衰减到 0
+            # 执行 ode_code，期望其定义 _ode_rhs(t, y) 及 SPECIES_NAMES / Y0 / T_END 等
+            exec(ode_code, namespace)
+
+            # 从命名空间提取 rhs 函数与仿真配置（优先 ode_code 定义，回退 ode_system 字段）
+            rhs = namespace.get("_ode_rhs")
+            if rhs is None:
+                return {
+                    "method": "failed",
+                    "error": "ode_code 未定义 _ode_rhs(t, y) 函数",
+                }
+
+            species_names = (
+                namespace.get("SPECIES_NAMES")
+                or ode_system.get("species_names")
+                or []
+            )
+            y0 = namespace.get("Y0") or ode_system.get("y0") or []
+            t_end = float(
+                namespace.get("T_END", self.DEFAULT_SIM_DURATION)
+                or self.DEFAULT_SIM_DURATION
+            )
+            n_eval = int(
+                namespace.get("N_EVAL", self.DEFAULT_SIM_POINTS)
+                or self.DEFAULT_SIM_POINTS
+            )
+
+            if not species_names or not y0:
+                return {
+                    "method": "failed",
+                    "error": (
+                        f"物种名或初始浓度为空 "
+                        f"species_names={species_names} y0={y0}"
+                    ),
+                }
+
+            # 用 scipy.integrate.solve_ivp 求解 ODE（LSODA 自适应，刚性/非刚性通用）
+            t_eval = np.linspace(0.0, t_end, n_eval)
+            sol = solve_ivp(
+                rhs,
+                [0.0, t_end],
+                [float(v) for v in y0],
+                t_eval=t_eval,
+                method="LSODA",
+                rtol=1e-6,
+                atol=1e-9,
+            )
+            if not sol.success or sol.y is None or sol.y.size == 0:
+                return {
+                    "method": "failed",
+                    "error": f"solve_ivp 求解失败: {sol.message}",
+                }
+
+            # 组装 {species_id: [(time, concentration), ...], ...}
+            times = [float(t) for t in sol.t]
+            y_arr = sol.y  # shape: (n_species, n_times)
             species_data: dict[str, list[tuple[float, float]]] = {}
-            times = [
-                self.DEFAULT_SIM_DURATION * i / (self.DEFAULT_SIM_POINTS - 1)
-                for i in range(self.DEFAULT_SIM_POINTS)
-            ]
-            for sp in species_list:
-                init = init_conc.get(sp, 1.0)
-                # 简单线性衰减 mock（真实场景由 sandbox 跑 ode_code）
-                species_data[sp] = [
-                    (t, init * (1.0 - 0.5 * t / self.DEFAULT_SIM_DURATION))
-                    for t in times
+            for sp_idx, sp_name in enumerate(species_names):
+                if sp_idx >= y_arr.shape[0]:
+                    break
+                species_data[sp_name] = [
+                    (times[i], float(y_arr[sp_idx, i])) for i in range(len(times))
                 ]
             return species_data
         except Exception as exc:
-            logger.warning("_simulate_v4_ode 失败: %s", exc)
-            return {}
+            logger.warning("_simulate_v4_ode 执行失败: %s", exc)
+            return {"method": "failed", "error": f"{type(exc).__name__}: {exc}"}
 
     def _extract_peaks(
         self, sim_data: dict[str, list[tuple[float, float]]]

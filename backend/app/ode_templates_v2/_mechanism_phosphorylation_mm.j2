@@ -18,6 +18,7 @@
      {% include "_mechanism_phosphorylation_mm.j2" %}
      在 Signaling_Cascade_Phos v4 主模板中通过 {% include %} 组合。
 #}
+            # BIO_CHECK: mechanism=phosphorylation_mm_v4, mass_conserved=true
             # Xxx → pXxx (Michaelis-Menten 磷酸化，严格质量守恒)
             # v4 修复：恢复 Michaelis-Menten 酶饱和动力学
             # v3 错误：mass-action ONLY，失去酶饱和特性

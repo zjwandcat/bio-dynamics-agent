@@ -203,6 +203,13 @@ if __name__ == "__main__":
     t_arr = sol.t
     y_arr = sol.y.T
 
+    # BIO_CHECK: simulation_complete, n_species=N_SP, n_steps=len(t_eval)
+    # BIO_CHECK: max_conc={max(y_arr[:,i]) for i in range(N_SP)}
+    # BIO_CHECK: min_conc={min(y_arr[:,i]) for i in range(N_SP)}
+    print(f"# BIO_CHECK: simulation_complete, n_species={N_SP}, n_steps={len(t_eval)}")
+    print(f"# BIO_CHECK: max_conc={[float(np.max(y_arr[:, i])) for i in range(N_SP)]}")
+    print(f"# BIO_CHECK: min_conc={[float(np.min(y_arr[:, i])) for i in range(N_SP)]}")
+
     delay_result = detect_delay_effect(t_arr, y_arr)
 
     import json

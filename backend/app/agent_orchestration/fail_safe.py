@@ -92,6 +92,31 @@ class DispatchResult:
 
 
 # =============================================================================
+# 主图核心 worker 保护集合（IB-022 修复：主图核心 worker fail-safe 保护）
+# =============================================================================
+# 主图 4 个核心 worker 必须被 FailSafeDispatcher 包裹，
+# is_worker_protected 用于校验某 worker 是否属于受保护集合。
+PROTECTED_WORKERS: set[str] = {
+    "worker_ode",
+    "worker_sandbox",
+    "worker_validator",
+    "worker_report",
+}
+
+
+def is_worker_protected(worker_name: str) -> bool:
+    """检查指定 worker 是否属于主图受 fail-safe 保护的核心 worker。
+
+    Args:
+        worker_name: worker 名称（如 ``"worker_ode"``）
+
+    Returns:
+        True 表示该 worker 在 PROTECTED_WORKERS 集合中，应被 FailSafeDispatcher 包裹
+    """
+    return worker_name in PROTECTED_WORKERS
+
+
+# =============================================================================
 # FailSafeDispatcher 主类
 # =============================================================================
 class FailSafeDispatcher:
@@ -304,4 +329,6 @@ __all__ = [
     "FailSafeConfig",
     "DispatchResult",
     "FailSafeDispatcher",
+    "PROTECTED_WORKERS",
+    "is_worker_protected",
 ]

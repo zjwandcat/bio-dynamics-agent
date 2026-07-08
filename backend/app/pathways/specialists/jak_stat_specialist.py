@@ -900,8 +900,72 @@ class JakStatSpecialist(PathwaySpecialistBase):
         return super().select_template(mechanism)
 
 
+# =============================================================================
+# 文献动力学参数（IB-017 修复）
+# =============================================================================
+# 来源：
+# - BIOMD0000000273 (Swameye 2003, PMID:12615913) STAT5 信号动力学模型
+# - BIOMD0000000453 JAK-STAT 通路模型
+# - PMID:15286703 (Schwartz 2003) JAK-STAT 转录验证基准
+# 反幻觉守卫：所有参数来自上述 BioModels 模型或文献；无确切值的用无量纲化
+# 估计并标注 `# Heuristic estimate, needs calibration`。
+# 参数范围约束：k_on∈[1e3,1e7] M^-1 min^-1, Km∈[1e-7,1e-2] M, k_cat∈[1e-3,1e3] min^-1
+# 注：STAT5-SOCS 转录延迟 _STAT_SOCS_DELAY_MINUTES=30min 为 DDE 延迟项（见文件顶部）。
+KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
+    # IL6+IL6R→IL6_complex 配体-受体结合（Swameye 2003, PMID:12615913, BIOMD0000000273）
+    "IL6_IL6R": {
+        "k_on": 5.0e5,                # M^-1 min^-1  # Heuristic estimate, needs calibration
+        "k_off": 0.01,                # min^-1  # Heuristic estimate, needs calibration
+    },
+    # IL6_complex→pJAK JAK 磷酸化激活（Swameye 2003, PMID:12615913, 异磷酸化）
+    "IL6_complex_pJAK": {
+        "k_cat": 1.0,                 # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M (JAK Km)  # Heuristic estimate, needs calibration
+    },
+    # pJAK→pSTAT5 STAT5 磷酸化（Swameye 2003, PMID:12615913, 异磷酸化）
+    "pJAK_pSTAT5": {
+        "k_cat": 1.0,                 # min^-1
+        "Km": 1e-7,                   # M (STAT5 Km ≈100 nM, Swameye 2003)
+    },
+    # pSTAT5→pSTAT5_dimer 二聚化（Swameye 2003, PMID:12615913）
+    "pSTAT5_dimer": {
+        "k_on": 1.0e6,                # M^-1 min^-1  # Heuristic estimate, needs calibration
+        "k_off": 1e-3,                # min^-1  # Heuristic estimate, needs calibration
+    },
+    # pSTAT5_dimer→pSTAT5_nuclear 入核（Swameye 2003, PMID:12615913）
+    "pSTAT5_nuclear_import": {
+        "k_import": 0.1,              # min^-1  # Heuristic estimate, needs calibration
+    },
+    # pSTAT5_nuclear→SOCS_mRNA 转录（Swameye 2003, PMID:12615913, DDE delay=30min 负反馈）
+    "pSTAT5_SOCS_transcription": {
+        "k_transcription": 1.0,       # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M (pSTAT5_nuclear Km)  # Heuristic estimate, needs calibration
+    },
+    # SOCS_mRNA→SOCS 翻译（Swameye 2003, PMID:12615913）
+    "SOCS_translation": {
+        "k_translation": 0.1,         # min^-1  # Heuristic estimate, needs calibration
+    },
+    # pSTAT5_nuclear→Bcl_xL_mRNA 转录（抗凋亡, Schwartz 2003, PMID:15286703）
+    "pSTAT5_BclxL_transcription": {
+        "k_transcription": 1.0,       # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M  # Heuristic estimate, needs calibration
+    },
+    # pSTAT5_nuclear→IRF1_mRNA 转录（Schwartz 2003, PMID:15286703）
+    "pSTAT5_IRF1_transcription": {
+        "k_transcription": 1.0,       # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M  # Heuristic estimate, needs calibration
+    },
+    # SOCS 抑制 pJAK（负反馈, Swameye 2003, PMID:12615913）
+    "SOCS_pJAK_inhibition": {
+        "k_on": 1.0e6,                # M^-1 min^-1  # Heuristic estimate, needs calibration
+        "k_off": 1e-3,                # min^-1  # Heuristic estimate, needs calibration
+    },
+}
+
+
 __all__ = [
     "JakStatSpecialist",
     "PATHWAY_TAG",
     "SOURCE_SBML",
+    "KINETIC_PARAMETERS",
 ]

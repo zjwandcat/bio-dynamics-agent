@@ -103,12 +103,22 @@ def _ode_rhs(t, y):
         tgt = y[t_idx]
 
         if mechanism == "phosphorylation":
-            # Michaelis-Menten（v4 恢复）
+            # Michaelis-Menten（IB-002 修复：v = k_cat * [E] * [S] / (Km + [S])）
+            # [E] 为酶浓度（modifier），[S] 为底物浓度（src）
+            # 旧错误形式：_Vmax = k_cat * src; _rate = _Vmax * src → k_cat * src²
             k_cat = _get_param(tgt_name, "k_cat", 0.1)
             Km = _get_param(tgt_name, "Km", 0.1)
             k_dephos = _get_param(tgt_name, "k_dephos", 0.001)
-            _Vmax = k_cat * src
-            _rate = _Vmax * src / (Km + src) if (Km + src) > 0 else 0.0
+            # IB-002: 酶浓度优先从 modifier 列表获取，否则回退到 src（自磷酸化场景）
+            modifiers = edge.get("modifiers", [])
+            if modifiers:
+                enzyme_name = modifiers[0]
+                enzyme_idx = SP_IDX.get(enzyme_name)
+                enzyme_conc = y[enzyme_idx] if enzyme_idx is not None else src
+            else:
+                # 自磷酸化：酶 = 底物自身
+                enzyme_conc = src
+            _rate = k_cat * enzyme_conc * src / (Km + src) if (Km + src) > 0 else 0.0
             dy[s_idx] -= _rate
             dy[t_idx] += _rate
             dy[t_idx] -= k_dephos * tgt
@@ -177,19 +187,34 @@ def _ode_rhs(t, y):
 def _dde_rhs(t, y, yt_delayed):
     """DDE 右端函数（含延迟项 y(t-τ)）。
 
+    IB-030 修复：transcription 边不再双重计数。
+
     Args:
         t: 当前时间
         y: 当前状态 y(t)
         yt_delayed: 延迟状态 y(t-τ)，用于转录延迟
 
     转录延迟处理：
-      transcription 反应中，TF 用 y(t-τ) 而非 y(t)
+      transcription 反应中，TF 用 y(t-τ) 而非 y(t)。
+      其他机制无延迟，使用 y(t)。
+
+    IB-030 修复说明：
+      旧实现在 transcription 分支计算 dy[t_idx] 后，
+      又调用 _ode_rhs(t, y) 计算 dy_ode（含 transcription 非延迟版），
+      最后 return dy_ode + dy → transcription 被算两次。
+      修复：从 _ode_rhs 结果中减去 transcription 边的非延迟贡献，
+      再加上 transcription 边的延迟贡献。
     """
-    dy = np.zeros(N_SP)
+    # 1. 计算 ODE rhs（所有边，含 transcription 的非延迟版本）
+    dy_ode = _ode_rhs(t, y)
+
+    # 2. 对 transcription 边：减去非延迟贡献，加上延迟贡献
     for edge in EDGES:
+        mechanism = edge.get("mechanism", "activation")
+        if mechanism != "transcription":
+            continue
         src_name = edge.get("source", "")
         tgt_name = edge.get("target", "")
-        mechanism = edge.get("mechanism", "activation")
         if src_name not in SP_IDX or tgt_name not in SP_IDX:
             continue
         s_idx = SP_IDX[src_name]
@@ -197,37 +222,24 @@ def _dde_rhs(t, y, yt_delayed):
         src = y[s_idx]
         tgt = y[t_idx]
 
-        if mechanism == "transcription":
-            # 转录延迟：TF 用 y(t-τ)
-            src_delayed = yt_delayed[s_idx]
-            k_trans = _get_param(tgt_name, "k_trans", 0.1)
-            n_hill = _get_param(tgt_name, "n_hill", 2.0)
-            K_d = _get_param(tgt_name, "K_d", 0.5)
-            k_mRNA_deg = _get_param(tgt_name, "k_mRNA_deg", 0.01)
-            _hill = (src_delayed ** n_hill) / (K_d ** n_hill + src_delayed ** n_hill) if (K_d ** n_hill + src_delayed ** n_hill) > 0 else 0.0
-            _rate = k_trans * _hill
-            dy[t_idx] += _rate
-            dy[t_idx] -= k_mRNA_deg * tgt
-        else:
-            # 其他机制无延迟，调用 ODE rhs 单条边逻辑（简化）
-            # 这里复用 _ode_rhs 的逻辑，但仅处理当前 edge
-            # 为简化，直接调用 _ode_rhs 并提取差异（生产实现应更精细）
-            pass
+        # 减去 _ode_rhs 中 transcription 边的非延迟贡献
+        k_trans = _get_param(tgt_name, "k_trans", 0.1)
+        n_hill = _get_param(tgt_name, "n_hill", 2.0)
+        K_d = _get_param(tgt_name, "K_d", 0.5)
+        k_mRNA_deg = _get_param(tgt_name, "k_mRNA_deg", 0.01)
+        _hill_nondelayed = (src ** n_hill) / (K_d ** n_hill + src ** n_hill) if (K_d ** n_hill + src ** n_hill) > 0 else 0.0
+        _rate_nondelayed = k_trans * _hill_nondelayed
+        dy_ode[t_idx] -= _rate_nondelayed          # 减去非延迟
+        dy_ode[t_idx] += k_mRNA_deg * tgt           # 还原降解项（_ode_rhs 已减）
 
-    # 非转录边由 _ode_rhs 处理（合并）
-    dy_ode = _ode_rhs(t, y)
-    # 覆盖转录边（_ode_rhs 已计算但用了非延迟 TF，这里用延迟版本覆盖）
-    for edge in EDGES:
-        if edge.get("mechanism") == "transcription":
-            src_name = edge.get("source", "")
-            tgt_name = edge.get("target", "")
-            if src_name in SP_IDX and tgt_name in SP_IDX:
-                s_idx = SP_IDX[src_name]
-                t_idx = SP_IDX[tgt_name]
-                # 重置 transcription 边的贡献（_ode_rhs 的非延迟版本）
-                # 注意：这里简化处理，生产实现应分离 transcription 与非 transcription
-                pass
-    return dy_ode + dy  # 合并（生产实现需更精细的边分离）
+        # 加上延迟贡献
+        src_delayed = yt_delayed[s_idx]
+        _hill_delayed = (src_delayed ** n_hill) / (K_d ** n_hill + src_delayed ** n_hill) if (K_d ** n_hill + src_delayed ** n_hill) > 0 else 0.0
+        _rate_delayed = k_trans * _hill_delayed
+        dy_ode[t_idx] += _rate_delayed             # 加上延迟
+        dy_ode[t_idx] -= k_mRNA_deg * tgt           # 减去降解项
+
+    return dy_ode
 
 
 # =============================================================================
@@ -267,6 +279,13 @@ def solve_oscillatory():
 # =============================================================================
 if __name__ == "__main__":
     t_arr, y_arr = solve_oscillatory()
+
+    # BIO_CHECK: simulation_complete, n_species=N_SP, n_steps=len(t_arr)
+    # BIO_CHECK: max_conc={max(y_arr[:,i]) for i in range(N_SP)}
+    # BIO_CHECK: min_conc={min(y_arr[:,i]) for i in range(N_SP)}
+    print(f"# BIO_CHECK: simulation_complete, n_species={N_SP}, n_steps={len(t_arr)}")
+    print(f"# BIO_CHECK: max_conc={[float(np.max(y_arr[:, i])) for i in range(N_SP)]}")
+    print(f"# BIO_CHECK: min_conc={[float(np.min(y_arr[:, i])) for i in range(N_SP)]}")
 
     # 仿真结果保存
     import json

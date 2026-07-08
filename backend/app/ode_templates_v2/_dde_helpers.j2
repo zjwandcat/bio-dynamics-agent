@@ -31,6 +31,7 @@ except ImportError:
     )
 
 DDE_DELAY = {{ dde_delay_minutes }}  # 转录延迟（分钟）
+# BIO_CHECK: dde_helpers_included, requires_dde=true, jitcdde_available=_JITCDDE_AVAILABLE
 
 def _history(t):
     """DDE 历史函数：t < 0 时的初始值（稳态）。"""

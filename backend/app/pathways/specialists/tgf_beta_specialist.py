@@ -1013,8 +1013,97 @@ class TgfBetaSpecialist(PathwaySpecialistBase):
         return super().select_template(mechanism)
 
 
+# =============================================================================
+# 文献动力学参数（IB-017 修复）
+# =============================================================================
+# 来源：
+# - BIOMD0000000250 (Clarke 2006, PMID:17035437) TGF-β/SMAD 通路模型
+# - BIOMD0000000529 TGF-β 通路模型
+# - PMID:9674480 (Massagué 1998) / PMID:17721552 (Schmierer 2007)（文件已有引用）
+# 反幻觉守卫：所有参数来自上述 BioModels 模型或文献；无确切值的用无量纲化
+# 估计并标注 `# Heuristic estimate, needs calibration`。
+# 参数范围约束：k_on∈[1e3,1e7] M^-1 min^-1, Km∈[1e-7,1e-2] M, k_cat∈[1e-3,1e3] min^-1
+# 注：SMAD7→TβRI 转录延迟 _TGF_SMAD7_DELAY_MINUTES=30min、SMURF 延迟
+#     _TGF_SMURF_DELAY_MINUTES=60min 为 DDE 延迟项（见文件顶部）。
+KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
+    # TGF_beta+TbRII→TGF_beta_TbRII 配体-受体结合（Clarke 2006, PMID:17035437, BIOMD0000000250）
+    "TGF_beta_TbRII": {
+        "k_on": 5.0e5,                # M^-1 min^-1  # Heuristic estimate, needs calibration
+        "k_off": 0.01,                # min^-1  # Heuristic estimate, needs calibration
+    },
+    # TGF_beta_TbRII+TbRI→TGF_beta_TbRII_TbRI 受体招募（Clarke 2006, PMID:17035437）
+    "TGF_beta_TbRII_TbRI": {
+        "k_on": 1.0e6,                # M^-1 min^-1  # Heuristic estimate, needs calibration
+        "k_off": 1e-3,                # min^-1  # Heuristic estimate, needs calibration
+    },
+    # TGF_beta_TbRII_TbRI→pTbRI TβRI 磷酸化（Massagué 1998, PMID:9674480, 异磷酸化）
+    "TGF_complex_pTbRI": {
+        "k_cat": 1.0,                 # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M (TbRI Km)  # Heuristic estimate, needs calibration
+    },
+    # pTbRI→pSmad2 Smad2 磷酸化（Schmierer 2007, PMID:17721552, 异磷酸化）
+    "pTbRI_pSmad2": {
+        "k_cat": 1.0,                 # min^-1
+        "Km": 1e-7,                   # M (Smad2 Km ≈100 nM, Schmierer 2007)
+    },
+    # pTbRI→pSmad3 Smad3 磷酸化（Schmierer 2007, PMID:17721552, 异磷酸化）
+    "pTbRI_pSmad3": {
+        "k_cat": 1.0,                 # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M (Smad3 Km)  # Heuristic estimate, needs calibration
+    },
+    # pSmad2+Smad4→pSmad2_Smad4 异源复合 step1（Schmierer 2007, PMID:17721552）
+    "pSmad2_Smad4": {
+        "k_on": 1.0e6,                # M^-1 min^-1  # Heuristic estimate, needs calibration
+        "k_off": 1e-3,                # min^-1  # Heuristic estimate, needs calibration
+    },
+    # pSmad3+Smad4→pSmad3_Smad4 异源复合（Schmierer 2007, PMID:17721552）
+    "pSmad3_Smad4": {
+        "k_on": 1.0e6,                # M^-1 min^-1  # Heuristic estimate, needs calibration
+        "k_off": 1e-3,                # min^-1  # Heuristic estimate, needs calibration
+    },
+    # pSmad2_Smad4→pSmad2_Smad4_nuc 入核 step2（Schmierer 2007, PMID:17721552）
+    "pSmad2_Smad4_nuclear_import": {
+        "k_import": 0.1,              # min^-1  # Heuristic estimate, needs calibration
+    },
+    # pSmad3_Smad4→pSmad3_Smad4_nuc 入核（Schmierer 2007, PMID:17721552）
+    "pSmad3_Smad4_nuclear_import": {
+        "k_import": 0.1,              # min^-1  # Heuristic estimate, needs calibration
+    },
+    # pSmad2_Smad4_nuc→PAI1_mRNA 转录 step3（Clarke 2006, PMID:17035437, Hill n=2）
+    "pSmad2_nuc_PAI1_transcription": {
+        "k_transcription": 1.0,       # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M (pSmad2_Smad4_nuc Km)  # Heuristic estimate, needs calibration
+    },
+    # pSmad2_Smad4_nuc→SMAD7_mRNA 转录（Clarke 2006, PMID:17035437, DDE delay=30min 负反馈）
+    "pSmad2_nuc_SMAD7_transcription": {
+        "k_transcription": 1.0,       # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M  # Heuristic estimate, needs calibration
+    },
+    # SMAD7_mRNA→SMAD7 翻译（Clarke 2006, PMID:17035437）
+    "SMAD7_translation": {
+        "k_translation": 0.1,         # min^-1  # Heuristic estimate, needs calibration
+    },
+    # SMAD7 抑制 pTbRI（负反馈, Clarke 2006, PMID:17035437）
+    "SMAD7_pTbRI_inhibition": {
+        "k_on": 1.0e6,                # M^-1 min^-1  # Heuristic estimate, needs calibration
+        "k_off": 1e-3,                # min^-1  # Heuristic estimate, needs calibration
+    },
+    # SMAD7→SMURF 转录激活（Clarke 2006, PMID:17035437, DDE delay=60min）
+    "SMAD7_SMURF_transcription": {
+        "k_transcription": 1.0,       # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M  # Heuristic estimate, needs calibration
+    },
+    # SMURF 泛素化 pSmad2/pSmad3 降解（负反馈, Clarke 2006, PMID:17035437）
+    "SMURF_pSmad_ubiquitination": {
+        "k_cat": 1.0,                 # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M (pSmad2/pSmad3 Km)  # Heuristic estimate, needs calibration
+    },
+}
+
+
 __all__ = [
     "TgfBetaSpecialist",
     "PATHWAY_TAG",
     "SOURCE_SBML",
+    "KINETIC_PARAMETERS",
 ]

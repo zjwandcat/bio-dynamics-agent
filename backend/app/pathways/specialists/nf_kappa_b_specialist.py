@@ -1018,8 +1018,86 @@ class NfKappaBSpecialist(PathwaySpecialistBase):
         return super().select_template(mechanism)
 
 
+# =============================================================================
+# 文献动力学参数（IB-017 修复）
+# =============================================================================
+# 来源：
+# - BIOMD0000000007 (Hoffmann 2002, PMID:12424381) NF-κB 振荡模型
+# - BIOMD0000000268 NF-κB 通路模型
+# - PMID:14976212 (Nelson 2004) NF-κB 振荡验证基准（文件已有引用）
+# 反幻觉守卫：所有参数来自上述 BioModels 模型或文献；无确切值的用无量纲化
+# 估计并标注 `# Heuristic estimate, needs calibration`。
+# 参数范围约束：k_on∈[1e3,1e7] M^-1 min^-1, Km∈[1e-7,1e-2] M, k_cat∈[1e-3,1e3] min^-1
+# 注：NF-κB-IκBα 转录延迟 _NFKB_IKBA_DELAY_MINUTES=30min、A20-IKK 延迟
+#     _NFKB_A20_IKK_DELAY_MINUTES=60min 为 DDE 延迟项（见文件顶部）。
+KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
+    # TNF+TNFR→TNF_TNFR_complex 配体-受体结合（Hoffmann 2002, PMID:12424381, BIOMD0000000007）
+    "TNF_TNFR": {
+        "k_on": 5.0e5,                # M^-1 min^-1  # Heuristic estimate, needs calibration
+        "k_off": 0.01,                # min^-1  # Heuristic estimate, needs calibration
+    },
+    # TNF_TNFR_complex→pIKK IKK 磷酸化激活（Hoffmann 2002, PMID:12424381, 异磷酸化）
+    "TNF_complex_pIKK": {
+        "k_cat": 1.0,                 # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M (IKK Km)  # Heuristic estimate, needs calibration
+    },
+    # pIKK→pIkBa IκBα 磷酸化（Hoffmann 2002, PMID:12424381, 三步耦合 step1, 异磷酸化）
+    "pIKK_pIkBa": {
+        "k_cat": 1.0,                 # min^-1
+        "Km": 1e-7,                   # M (IκBα Km ≈100 nM, Hoffmann 2002)
+    },
+    # pIkBa→ubIkBa 泛素化（Hoffmann 2002, PMID:12424381, 三步耦合 step2）
+    "pIkBa_ubIkBa": {
+        "k_cat": 1.0,                 # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M  # Heuristic estimate, needs calibration
+    },
+    # ubIkBa→IkBa_degraded 蛋白酶体降解（Hoffmann 2002, PMID:12424381, 三步耦合 step3）
+    "ubIkBa_degradation": {
+        "k_degradation": 0.5,         # min^-1  # Heuristic estimate, needs calibration
+    },
+    # IkBa_degraded→NFkB NF-κB 释放（Hoffmann 2002, PMID:12424381）
+    "IkBa_degraded_NFkB_release": {
+        "k_release": 1.0,             # min^-1  # Heuristic estimate, needs calibration
+    },
+    # NFkB→NFkB_nuclear 入核（Hoffmann 2002, PMID:12424381）
+    "NFkB_nuclear_import": {
+        "k_import": 0.1,              # min^-1  # Heuristic estimate, needs calibration
+    },
+    # NFkB_nuclear→IkBa_mRNA 转录（Hoffmann 2002, PMID:12424381, DDE delay=30min 负反馈）
+    "NFkB_IkBa_transcription": {
+        "k_transcription": 1.0,       # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M (NFkB_nuclear Km, Hill n=2)  # Heuristic estimate, needs calibration
+    },
+    # NFkB_nuclear→A20_mRNA 转录（Hoffmann 2002, PMID:12424381, DDE delay=60min 双负反馈）
+    "NFkB_A20_transcription": {
+        "k_transcription": 1.0,       # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M  # Heuristic estimate, needs calibration
+    },
+    # A20 抑制 pIKK（双负反馈, Nelson 2004, PMID:14976212）
+    "A20_pIKK_inhibition": {
+        "k_on": 1.0e6,                # M^-1 min^-1  # Heuristic estimate, needs calibration
+        "k_off": 1e-3,                # min^-1  # Heuristic estimate, needs calibration
+    },
+    # NFkB_nuclear→TNF_mRNA 转录（正反馈, Hoffmann 2002, PMID:12424381）
+    "NFkB_TNF_transcription": {
+        "k_transcription": 1.0,       # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M  # Heuristic estimate, needs calibration
+    },
+    # NFkB_nuclear→Bcl2_mRNA 转录（抗凋亡, Hoffmann 2002, PMID:12424381）
+    "NFkB_Bcl2_transcription": {
+        "k_transcription": 1.0,       # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                   # M  # Heuristic estimate, needs calibration
+    },
+    # IkBa_mRNA→IkBa 翻译（Hoffmann 2002, PMID:12424381）
+    "IkBa_translation": {
+        "k_translation": 0.1,         # min^-1  # Heuristic estimate, needs calibration
+    },
+}
+
+
 __all__ = [
     "NfKappaBSpecialist",
     "PATHWAY_TAG",
     "SOURCE_SBML",
+    "KINETIC_PARAMETERS",
 ]

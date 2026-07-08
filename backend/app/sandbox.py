@@ -11,9 +11,11 @@
 
 import ast
 import base64
+import csv
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -560,3 +562,202 @@ def execute_simulation_code_v2(code: str, timeout: int | None = None, allow_stoc
         }
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+# -----------------------------------------------------------------------------
+# IB-014 修复：仿真后质量守恒验证 + 负浓度 / NaN / Inf / 爆炸检测
+# -----------------------------------------------------------------------------
+# 负浓度容差：避免浮点误差导致的误报（小于此值视为数值噪声）
+_NEGATIVE_TOLERANCE = 1e-9
+# 爆炸阈值：最大浓度超过此值视为数值爆炸（超出生物合理范围）
+_EXPLOSION_THRESHOLD = 1e6
+
+
+def post_simulation_validation(csv_path: str, species_names: list[str],
+                                constraints: list[dict] | None = None) -> dict:
+    """仿真后验证：检测负浓度、NaN、Inf、质量守恒。
+
+    IB-014 修复：sandbox 仿真后应检测：
+    1. 负浓度（任何时间点任何物种 < -tolerance）
+    2. NaN / Inf（数值发散标志）
+    3. 质量守恒（基于 constraints 中的 mass_conservation 约束）
+    4. 爆炸检测（最大浓度 > 1e6，超出生物合理范围）
+
+    Args:
+        csv_path: 仿真输出 CSV 文件路径，应包含 time 列与各物种浓度列。
+        species_names: 待校验的物种名列表（需与 CSV 列名一致）。
+        constraints: 约束列表，每项形如
+            {"type": "mass_conservation", "species": ["A", "B"], "tolerance": 1e-6}。
+
+    Returns:
+        dict: {
+            "passed": bool,
+            "negative_concentrations": list[dict],  # [{species, time, value}]
+            "nan_detected": bool,
+            "inf_detected": bool,
+            "explosion_detected": bool,
+            "mass_conservation_violations": list[dict],
+            "max_concentrations": dict[str, float],
+        }
+    """
+    # 初始化结果字典
+    result: dict = {
+        "passed": True,
+        "negative_concentrations": [],
+        "nan_detected": False,
+        "inf_detected": False,
+        "explosion_detected": False,
+        "mass_conservation_violations": [],
+        "max_concentrations": {},
+    }
+
+    # 1. 读取 CSV 文件（使用标准库 csv 模块，避免引入 pandas 依赖）
+    try:
+        with open(csv_path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+    except (FileNotFoundError, OSError) as exc:
+        logger.warning("post_simulation_validation 读取 CSV 失败: %s", exc)
+        result["passed"] = False
+        return result
+
+    # 空文件直接判定失败
+    if not rows:
+        logger.warning("post_simulation_validation CSV 为空: %s", csv_path)
+        result["passed"] = False
+        return result
+
+    # 2. 识别时间列（兼容 time / t / Time / T）
+    time_col: str | None = None
+    for candidate in ("time", "t", "Time", "T"):
+        if candidate in rows[0]:
+            time_col = candidate
+            break
+
+    # 3. 筛选 CSV 中实际存在的物种列
+    available_species = [s for s in species_names if s in rows[0]]
+    if not available_species:
+        logger.warning(
+            "post_simulation_validation 未在 CSV 中找到任何指定物种列: %s",
+            species_names,
+        )
+        result["passed"] = False
+        return result
+
+    # 收集每个物种的 (time, value) 序列，用于后续质量守恒与爆炸检测
+    species_data: dict[str, list[tuple[float, float]]] = {s: [] for s in available_species}
+
+    # 4. 逐行扫描：检测负浓度 / NaN / Inf
+    for row in rows:
+        # 解析当前行的时间值
+        time_value = 0.0
+        if time_col is not None:
+            try:
+                time_value = float(row[time_col])
+            except (ValueError, TypeError):
+                time_value = 0.0
+
+        # 逐个物种检测
+        for species in available_species:
+            raw_value = row.get(species, "")
+            # 先尝试直接转 float（覆盖正常数值与 "nan"/"inf" 字面量）
+            try:
+                value = float(raw_value)
+            except (ValueError, TypeError):
+                # 无法解析的字符串：检测是否为 NaN / Inf 文本
+                if isinstance(raw_value, str):
+                    lower = raw_value.strip().lower()
+                    if "nan" in lower:
+                        result["nan_detected"] = True
+                    elif "inf" in lower:
+                        result["inf_detected"] = True
+                continue
+
+            # NaN 检测
+            if math.isnan(value):
+                result["nan_detected"] = True
+                continue
+            # Inf 检测
+            if math.isinf(value):
+                result["inf_detected"] = True
+                continue
+
+            # 记录有效数值（用于爆炸检测与质量守恒）
+            species_data[species].append((time_value, value))
+
+            # 负浓度检测（小于负容差即判定违规）
+            if value < -_NEGATIVE_TOLERANCE:
+                result["negative_concentrations"].append({
+                    "species": species,
+                    "time": time_value,
+                    "value": value,
+                })
+
+    # 5. 计算各物种最大浓度，并执行爆炸检测
+    for species, data_points in species_data.items():
+        if data_points:
+            max_val = max(v for _, v in data_points)
+            result["max_concentrations"][species] = max_val
+            if max_val > _EXPLOSION_THRESHOLD:
+                result["explosion_detected"] = True
+        else:
+            result["max_concentrations"][species] = 0.0
+
+    # 6. 质量守恒检测（基于 constraints 中的 mass_conservation 约束）
+    if constraints:
+        for constraint in constraints:
+            if not isinstance(constraint, dict):
+                continue
+            if constraint.get("type") != "mass_conservation":
+                continue
+
+            # 约束涉及的物种与容差
+            cons_species = constraint.get("species", [])
+            cons_tolerance = constraint.get("tolerance", 1e-6)
+
+            # 仅保留有数据的物种
+            valid_species = [
+                s for s in cons_species
+                if s in species_data and species_data[s]
+            ]
+            if not valid_species:
+                continue
+
+            # 按时间点聚合各物种浓度
+            time_to_values: dict[float, dict[str, float]] = {}
+            for s in valid_species:
+                for t, v in species_data[s]:
+                    time_to_values.setdefault(t, {})[s] = v
+
+            sorted_times = sorted(time_to_values.keys())
+            if not sorted_times:
+                continue
+
+            # 以第一个时间点的总量作为基准
+            initial_total = None
+            for t in sorted_times:
+                values_at_t = time_to_values[t]
+                # 仅在所有涉及物种均有值时才计算总量
+                if len(values_at_t) != len(valid_species):
+                    continue
+                total = sum(values_at_t.values())
+                if initial_total is None:
+                    initial_total = total
+                elif abs(total - initial_total) > cons_tolerance:
+                    result["mass_conservation_violations"].append({
+                        "time": t,
+                        "expected": initial_total,
+                        "actual": total,
+                        "deviation": total - initial_total,
+                    })
+
+    # 7. 综合判定：任一检查项不通过则整体失败
+    result["passed"] = (
+        not result["negative_concentrations"]
+        and not result["nan_detected"]
+        and not result["inf_detected"]
+        and not result["explosion_detected"]
+        and not result["mass_conservation_violations"]
+    )
+
+    return result
