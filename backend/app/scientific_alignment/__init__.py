@@ -79,6 +79,26 @@ from app.scientific_alignment.seven_axis_validator import (
     SevenAxisReport,
     run_seven_axis_validation,
 )
+from app.scientific_alignment.evidence_fuser import (
+    EvidenceFusionReport,
+    EvidenceItem,
+    EvidenceSource,
+    FusedAssertion,
+    evidence_docs_to_items,
+    fuse_evidence,
+)
+from app.scientific_alignment.multi_dim_confidence import (
+    DimensionScore,
+    MultiDimConfidenceReport,
+    compute_multi_dim_confidence,
+    format_confidence_table,
+    write_breakdown_json,
+)
+from app.scientific_alignment.rca import (
+    RCAReport,
+    RootCause,
+    run_rca,
+)
 
 __all__ = [
     "EvidenceType",
@@ -116,4 +136,21 @@ __all__ = [
     "AxisScore",
     "SevenAxisReport",
     "run_seven_axis_validation",
+    # Task 9 Evidence Fusion
+    "EvidenceSource",
+    "EvidenceItem",
+    "FusedAssertion",
+    "EvidenceFusionReport",
+    "fuse_evidence",
+    "evidence_docs_to_items",
+    # Task 25 Multi-dimensional Confidence
+    "DimensionScore",
+    "MultiDimConfidenceReport",
+    "compute_multi_dim_confidence",
+    "write_breakdown_json",
+    "format_confidence_table",
+    # Task 13 RCA
+    "RootCause",
+    "RCAReport",
+    "run_rca",
 ]

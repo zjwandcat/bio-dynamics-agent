@@ -445,6 +445,15 @@ class Settings:
         "SA_SCIENTIFIC_CRITIC", "false"
     ).lower() == "true"
 
+    # SA_MULTI_DIM_CONFIDENCE：Multi-dimensional Confidence（Task 25 ★★★★★）
+    #   - false（默认）：报告仅输出单一 Confidence 数字（v3 行为）
+    #   - true：在 SA 总开关开启时，输出 6 维 Confidence（Mechanism / Simulation /
+    #     Evidence / BioModels / Discussion / Experiment），综合 = min(6 维) × 0.9
+    # 铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时本子 Flag 永远不生效
+    SA_MULTI_DIM_CONFIDENCE: bool = os.getenv(
+        "SA_MULTI_DIM_CONFIDENCE", "false"
+    ).lower() == "true"
+
     # SA 子能力名称 → Settings 属性名映射（供 is_sa_feature_enabled 查询）
     _SA_FEATURE_ATTRS: dict[str, str] = {
         "MECHANISM_GRAPH": "SA_MECHANISM_GRAPH",
@@ -457,6 +466,7 @@ class Settings:
         "CONSISTENCY_CHECKER": "SA_CONSISTENCY_CHECKER",
         "PARAMETER_CONFIDENCE": "SA_PARAMETER_CONFIDENCE",
         "SCIENTIFIC_CRITIC": "SA_SCIENTIFIC_CRITIC",
+        "MULTI_DIM_CONFIDENCE": "SA_MULTI_DIM_CONFIDENCE",
     }
 
     # =============================================================================
