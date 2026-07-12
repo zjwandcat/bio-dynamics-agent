@@ -454,6 +454,28 @@ class Settings:
         "SA_MULTI_DIM_CONFIDENCE", "false"
     ).lower() == "true"
 
+    # =============================================================================
+    # Benchmark Runner 模式开关（Task 18）
+    # 控制 BenchmarkRunner.run_benchmark() 的后端执行模式。
+    # 非 SA 子能力——这些 flag 控制 benchmark 测试基础设施，不影响 v3 核心流水线。
+    # =============================================================================
+    # BENCHMARK_REAL_ORCHESTRATOR: 委托真实端到端编排器（推荐）
+    #   - true: BenchmarkRunner.run_benchmark() 委托 ScientificBenchmarkOrchestrator，
+    #     调用 compiled_workflow_v3.ainvoke 跑完真实 LangGraph 全链，产出真实
+    #     simulation.csv / report.md，并按 SA flag 叠加科学对齐字段
+    #   - false（默认）: 不委托，走 legacy synthetic 或返回 no-backend 错误
+    BENCHMARK_REAL_ORCHESTRATOR: bool = os.getenv(
+        "BENCHMARK_REAL_ORCHESTRATOR", "false"
+    ).lower() == "true"
+
+    # BENCHMARK_LEGACY_SYNTHETIC: 允许使用已废弃的 synthetic metrics 路径
+    #   - true: 显式 opt-in legacy synthetic 路径（@deprecated，仅用于快速 schema 检查）
+    #   - false（默认）: synthetic 路径不可用，run_benchmark 返回 no-backend 错误
+    #   铁律：BENCHMARK_REAL_ORCHESTRATOR=true 时本 flag 被忽略（真实编排器优先）
+    BENCHMARK_LEGACY_SYNTHETIC: bool = os.getenv(
+        "BENCHMARK_LEGACY_SYNTHETIC", "false"
+    ).lower() == "true"
+
     # SA 子能力名称 → Settings 属性名映射（供 is_sa_feature_enabled 查询）
     _SA_FEATURE_ATTRS: dict[str, str] = {
         "MECHANISM_GRAPH": "SA_MECHANISM_GRAPH",

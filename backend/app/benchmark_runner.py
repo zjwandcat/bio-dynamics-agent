@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import time
+import warnings
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -210,6 +211,30 @@ class BenchmarkRunner:
                     "canonical_reference": dict | None,
                 }
         """
+        # =========================================================
+        # Task 18: Benchmark 后端模式分发
+        # =========================================================
+        # BENCHMARK_REAL_ORCHESTRATOR=true（推荐）→ 委托真实端到端编排器
+        # BENCHMARK_LEGACY_SYNTHETIC=true → 走 synthetic 路径（无警告）
+        # 两者均 false（默认）→ 走 synthetic 路径 + DeprecationWarning
+        #   （向后兼容：既有测试与 SSE 端点不中断，但用警告推动迁移）
+        # =========================================================
+        from app.config import settings as _settings
+
+        if _settings.BENCHMARK_REAL_ORCHESTRATOR:
+            return self._run_via_orchestrator(pathway_class)
+
+        # Synthetic 路径（deprecated）
+        if not _settings.BENCHMARK_LEGACY_SYNTHETIC:
+            # 两个 flag 均关闭：走 synthetic 但发出 DeprecationWarning
+            warnings.warn(
+                "_build_synthetic_metrics is deprecated; set BENCHMARK_REAL_ORCHESTRATOR=true "
+                "for real pipeline metrics, or BENCHMARK_LEGACY_SYNTHETIC=true to silence "
+                "this warning.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         start_ts = time.perf_counter()
         result: dict[str, Any] = {
             "pathway_class": pathway_class,
@@ -219,6 +244,7 @@ class BenchmarkRunner:
             "runtime_seconds": 0.0,
             "errors": [],
             "canonical_reference": None,
+            "backend": "legacy_synthetic",
         }
 
         try:
@@ -327,6 +353,217 @@ class BenchmarkRunner:
         benchmarks = self.load_all()
         for pathway_class in sorted(benchmarks.keys()):
             yield self.run_benchmark(pathway_class)
+
+    # =========================================================================
+    # Task 18: 真实编排器委托 + Markdown 报告
+    # =========================================================================
+    def _run_via_orchestrator(self, pathway_class: str) -> dict[str, Any]:
+        """委托 ScientificBenchmarkOrchestrator 执行真实端到端 benchmark。
+
+        Task 18 SubTask 18.1：当 ``BENCHMARK_REAL_ORCHESTRATOR=true`` 时，
+        ``run_benchmark()`` 调用本方法委托真实编排器，跑完 v3 LangGraph 全链，
+        产出真实 simulation.csv / report.md，并按 SA flag 叠加科学对齐字段。
+
+        返回结构在既有 BenchmarkRunner 结果格式基础上叠加 SA 字段，保持向后兼容：
+        - 既有字段：pathway_class / name / status / checks / runtime_seconds /
+          errors / canonical_reference
+        - 新增字段：backend / simulation_csv_path / report_path /
+          final_report_markdown / real_metrics / real_metrics_flat / confidence /
+          stages / log_dir / mechanism_graph / parameter_priors /
+          biomodels_comparison / evidence_fusion / seven_axis_validation /
+          consistency_report / critic_report / multi_dim_confidence /
+          acceptance_report / scientific_alignment
+
+        pass_criteria 从 YAML spec 加载，对真实 metrics_flat 求值（替代 synthetic）。
+        """
+        # 延迟导入避免循环依赖（orchestrator 导入 app.graph_v3 等）
+        from benchmarks.runner.orchestrator import ScientificBenchmarkOrchestrator
+
+        orch = ScientificBenchmarkOrchestrator(self.benchmarks_dir)
+        orch_result = orch.run_sync(pathway_class)
+
+        # 转换为 BenchmarkRunner 结果格式（向后兼容）+ 叠加真实 artifacts 与 SA 字段
+        result: dict[str, Any] = {
+            # --- 既有字段（向后兼容）---
+            "pathway_class": orch_result.pathway_class,
+            "name": orch_result.name,
+            "status": orch_result.status,
+            "checks": [],
+            "runtime_seconds": orch_result.runtime_seconds,
+            "errors": list(orch_result.errors),
+            "canonical_reference": self._load_canonical_safe(pathway_class),
+            # --- 真实 pipeline artifacts（Task 17/18 新增）---
+            "backend": "real_orchestrator",
+            "simulation_csv_path": orch_result.simulation_csv_path,
+            "report_path": orch_result.report_path,
+            "final_report_markdown": orch_result.final_report_markdown,
+            "real_metrics": orch_result.real_metrics,
+            "real_metrics_flat": orch_result.real_metrics_flat,
+            "confidence": orch_result.confidence,
+            "stages": orch_result.stages,
+            "log_dir": orch_result.log_dir,
+            # --- SA 叠加字段（对应 flag OFF 时为 None）---
+            "mechanism_graph": orch_result.mechanism_graph,
+            "parameter_priors": orch_result.parameter_priors,
+            "biomodels_comparison": orch_result.biomodels_comparison,
+            "evidence_fusion": orch_result.evidence_fusion,
+            "seven_axis_validation": orch_result.seven_axis_validation,
+            "consistency_report": orch_result.consistency_report,
+            "critic_report": orch_result.critic_report,
+            "multi_dim_confidence": orch_result.multi_dim_confidence,
+            "acceptance_report": orch_result.acceptance_report,
+            "scientific_alignment": orch_result.scientific_alignment,
+        }
+
+        # 从真实 metrics 评估 pass_criteria（替代 synthetic metrics）
+        spec = self.load_all().get(pathway_class, {})
+        if spec and orch_result.real_metrics_flat:
+            checks: list[dict[str, Any]] = []
+            for criterion_spec in spec.get("pass_criteria", []) or []:
+                check = self._evaluate_criterion(
+                    criterion_spec, orch_result.real_metrics_flat
+                )
+                checks.append(check)
+            result["checks"] = checks
+            # 有 checks 时，checks 全 pass 是 status=pass 的必要条件
+            if checks:
+                all_passed = all(c.get("passed", False) for c in checks)
+                if not all_passed and result["status"] == "pass":
+                    result["status"] = "fail"
+                    result["errors"].append(
+                        "pass_criteria evaluation failed against real metrics"
+                    )
+
+        return result
+
+    def run_all_to_markdown(
+        self, output_path: str | Path = "benchmark_results.md"
+    ) -> dict[str, Any]:
+        """运行全部 benchmark 并将结果写入 Markdown 文件（Task 18 SubTask 18.2）。
+
+        供 ``make benchmark`` Makefile target 调用。在 ``run_all()`` 基础上
+        增加 Markdown 报告输出，含总览表 + 每通路详情（checks / stages / SA 字段）。
+
+        Args:
+            output_path: 输出 Markdown 文件路径（默认 ``benchmark_results.md``）。
+
+        Returns:
+            ``run_all()`` 返回的 summary dict。
+        """
+        summary = self.run_all()
+        md = self._format_results_markdown(summary)
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(md, encoding="utf-8")
+        logger.info("Benchmark results written to %s", out)
+        return summary
+
+    def _format_results_markdown(self, summary: dict[str, Any]) -> str:
+        """将 ``run_all()`` summary 格式化为 Markdown 报告。
+
+        Args:
+            summary: ``run_all()`` 返回的 summary dict。
+
+        Returns:
+            Markdown 字符串。
+        """
+        from datetime import datetime
+
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lines: list[str] = [
+            "# BioDynamics Benchmark Results",
+            "",
+            f"> Generated: {ts}",
+            "",
+            "## Summary",
+            "",
+            f"| Metric | Value |",
+            f"|--------|-------|",
+            f"| Total | {summary.get('total', 0)} |",
+            f"| Passed | {summary.get('passed', 0)} |",
+            f"| Failed | {summary.get('failed', 0)} |",
+            f"| Runtime | {summary.get('runtime_seconds', 0)}s |",
+            "",
+            "## Per-Pathway Results",
+            "",
+        ]
+
+        for r in summary.get("results", []):
+            status = r.get("status", "fail")
+            status_label = "PASS" if status == "pass" else "FAIL"
+            pathway = r.get("pathway_class", "?")
+            name = r.get("name", "")
+            backend = r.get("backend", "unknown")
+            lines.append(f"### {pathway} — {status_label}")
+            lines.append("")
+            lines.append(f"- **Name**: {name}")
+            lines.append(f"- **Backend**: {backend}")
+            lines.append(f"- **Runtime**: {r.get('runtime_seconds', 0)}s")
+
+            if r.get("errors"):
+                lines.append(f"- **Errors**:")
+                for err in r["errors"]:
+                    lines.append(f"  - {err}")
+
+            # pass_criteria checks
+            checks = r.get("checks", [])
+            if checks:
+                lines.append("")
+                lines.append("| Criterion | Metric | Passed | Detail |")
+                lines.append("|-----------|--------|--------|--------|")
+                for c in checks:
+                    c_pass = "PASS" if c.get("passed") else "FAIL"
+                    lines.append(
+                        f"| {c.get('criterion', '')} | {c.get('metric_name', '')} "
+                        f"| {c_pass} | {c.get('detail', '')} |"
+                    )
+
+            # Real orchestrator artifacts
+            if backend == "real_orchestrator":
+                lines.append("")
+                lines.append("**Real Artifacts**:")
+                if r.get("simulation_csv_path"):
+                    lines.append(f"- Simulation CSV: `{r['simulation_csv_path']}`")
+                if r.get("report_path"):
+                    lines.append(f"- Report: `{r['report_path']}`")
+                lines.append(f"- Confidence: {r.get('confidence', 0)}")
+                if r.get("log_dir"):
+                    lines.append(f"- Log dir: `{r['log_dir']}`")
+
+                # Pipeline stages
+                stages = r.get("stages", [])
+                if stages:
+                    lines.append("")
+                    lines.append("**Pipeline Stages**:")
+                    lines.append("")
+                    lines.append("| Stage | Status | Reason |")
+                    lines.append("|-------|--------|--------|")
+                    for s in stages:
+                        s_name = s.get("name", "")
+                        s_status = s.get("status", "")
+                        s_reason = s.get("reason", "")
+                        lines.append(f"| {s_name} | {s_status} | {s_reason} |")
+
+                # SA fields (non-None only)
+                sa_fields = [
+                    ("consistency_report", "Consistency"),
+                    ("seven_axis_validation", "Seven-Axis"),
+                    ("critic_report", "Critic"),
+                    ("multi_dim_confidence", "Multi-Dim Confidence"),
+                    ("acceptance_report", "Acceptance"),
+                ]
+                sa_present = [
+                    label
+                    for key, label in sa_fields
+                    if r.get(key) is not None
+                ]
+                if sa_present:
+                    lines.append("")
+                    lines.append(f"**SA Reports**: {', '.join(sa_present)}")
+
+            lines.append("")
+
+        return "\n".join(lines)
 
     # =========================================================================
     # Helpers
@@ -448,6 +685,12 @@ class BenchmarkRunner:
         validation_rules: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Build a synthetic metrics payload for criterion evaluation.
+
+        .. deprecated:: Task 18
+            本方法已废弃，仅当 ``BENCHMARK_LEGACY_SYNTHETIC=true`` 时可用。
+            推荐使用 ``BENCHMARK_REAL_ORCHESTRATOR=true`` 走真实端到端编排器，
+            从真实仿真产出 metrics。Synthetic 路径仅用于快速 schema 检查，
+            不能验证真实动力学行为。
 
         The runner is READ-ONLY with respect to scientific code, so it does
         not run an actual ODE simulation. Instead it derives expected
