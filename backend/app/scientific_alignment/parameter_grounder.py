@@ -14,6 +14,9 @@
 #
 # Feature Flag 守护：
 #   SA_PARAMETER_PRIOR 默认 OFF。关闭时返回空 Prior 报告（skipped=True），不阻塞主流程。
+#   SA_PARAMETER_CONFIDENCE 默认 OFF。关闭时 build_parameter_prior 保持 Task 7 行为，
+#       不填充 provenance_complete / defect / audit_trail（向后兼容）；
+#       开启时自动校验并填充 provenance 字段。
 #   铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时，子 Flag 永远不生效
 #         （由 settings.is_sa_feature_enabled 强制校验）。
 #
@@ -37,7 +40,21 @@
 #       ParameterPriorReport,
 #       build_parameter_prior,
 #       get_reaction_type_prior,
+#       validate_parameter_provenance,
+#       validate_parameter_report,
+#       get_low_confidence_params,
+#       compute_confidence_weight,
 #   )
+#
+# Task 23 SubTask 23.1 + 23.3 扩展（Parameter Confidence & Provenance ★★★★★）：
+#   - ParameterPrior 新增 provenance_complete / defect / audit_trail 三字段，
+#     使其成为完整的"参数身份证"
+#   - 新增 validate_parameter_provenance / validate_parameter_report 校验器，
+#     检测"裸数值参数"（缺 value/confidence/source/distribution/reference 之一）
+#   - 新增 get_low_confidence_params / compute_confidence_weight 用于 7 轴
+#     Validation 的 Dynamics/Evidence 轴降权
+#   - build_parameter_prior 在 SA_PARAMETER_CONFIDENCE 开启时自动填充 provenance
+#     字段；关闭时保持 Task 7 行为完全不变（向后兼容）
 
 from __future__ import annotations
 
@@ -45,6 +62,7 @@ import logging
 import math
 import statistics
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.config import settings
 
@@ -102,7 +120,7 @@ _REACTION_TYPE_PRIORS: dict[str, dict] = {
 # =============================================================================
 @dataclass
 class ParameterPrior:
-    """单个参数的先验分布。
+    """单个参数的先验分布（"参数身份证"）。
 
     Attributes:
         param_name: 参数名（如 "k_bind_EGF_EGFR"）。
@@ -119,6 +137,15 @@ class ParameterPrior:
         reference: PMID 或 BIOMD ID。
         range_min: 文献/反应类型范围下限（如有），已归一化。
         range_max: 文献/反应类型范围上限（如有），已归一化。
+        provenance_complete: 五字段（value/confidence/source/distribution/reference）
+            是否齐全。由 validate_parameter_provenance 校验后填充。Feature Flag
+            SA_PARAMETER_CONFIDENCE 关闭时保持默认值 False（向后兼容 Task 7）。
+        defect: 缺陷标记，如 "parameter_unprovenanced"（缺字段）/
+            "low_confidence_unflagged"（Low confidence 未在报告标注）。
+            Feature Flag 关闭时保持默认值空字符串。
+        audit_trail: 审计轨迹，记录参数来源链（如
+            ["BioModels_median", "BIOMD0000000010 median", "reference=BIOMD0000000010"]）。
+            Feature Flag 关闭时保持默认值空列表。
     """
 
     param_name: str = ""
@@ -132,6 +159,13 @@ class ParameterPrior:
     reference: str = ""
     range_min: float | None = None
     range_max: float | None = None
+    # ----- Task 23 SubTask 23.1：Provenance 字段（Feature Flag 守护自动填充）-----
+    # provenance_complete：五字段齐全性标记（由 validate_parameter_provenance 校验）
+    provenance_complete: bool = False
+    # defect：缺陷标记（"parameter_unprovenanced" / "low_confidence_unflagged" 等）
+    defect: str = ""
+    # audit_trail：审计轨迹，记录参数来源链（source → source_detail → reference）
+    audit_trail: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -690,6 +724,33 @@ def build_parameter_prior(
     # -------------------------------------------------------------------------
     high_confidence_count = sum(1 for p in merged if p.confidence == "High")
 
+    # -------------------------------------------------------------------------
+    # 6. Task 23 SubTask 23.1：Feature Flag 守护下自动填充 provenance 字段
+    #    - Flag 关闭（默认）：保持 Task 7 行为，不填充 provenance_complete /
+    #      defect / audit_trail（三者保持默认值 False / "" / []，向后兼容）
+    #    - Flag 开启：调用 validate_parameter_provenance 校验每个 prior，
+    #      填充 provenance_complete / defect / audit_trail，使其成为"参数身份证"
+    #    - 铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时本子 Flag 永不生效
+    #      （由 settings.is_sa_feature_enabled 强制校验）
+    # -------------------------------------------------------------------------
+    if settings.is_sa_feature_enabled("PARAMETER_CONFIDENCE"):
+        for p in merged:
+            # 校验 provenance 完整性，返回缺陷列表（空列表表示无缺陷）
+            defects = validate_parameter_provenance(p)
+            if defects:
+                # defects[0] 恒为 "parameter_unprovenanced"（缺字段统一标记）
+                p.defect = defects[0]
+            p.provenance_complete = (len(defects) == 0)
+            # 构造审计轨迹：记录参数来源链（source → source_detail → reference）
+            trail: list[str] = []
+            if p.source:
+                trail.append(p.source)
+            if p.source_detail:
+                trail.append(p.source_detail)
+            if p.reference:
+                trail.append(f"reference={p.reference}")
+            p.audit_trail = trail
+
     logger.debug(
         "parameter prior built: pathway=%s reaction_type=%s priors=%d "
         "biomodels=%d literature=%d fallback=%d high_conf=%d",
@@ -713,9 +774,227 @@ def build_parameter_prior(
     )
 
 
+# =============================================================================
+# Task 23 SubTask 23.1 + 23.3：Parameter Confidence & Provenance 校验
+# =============================================================================
+# 以下四个函数均为纯函数，不受 Feature Flag 守护，随时可调用。
+# build_parameter_prior 中是否自动调用它们受 SA_PARAMETER_CONFIDENCE 守护，
+# 以保证 Flag 关闭时 Task 7 行为完全不变（向后兼容）。
+# -----------------------------------------------------------------------------
+# 合法置信度与分布枚举（与 spec SubTask 23.2 一致）
+_VALID_CONFIDENCES: tuple[str, ...] = ("High", "Medium", "Low")
+_VALID_DISTRIBUTIONS: tuple[str, ...] = ("LogNormal", "Uniform", "Point")
+
+
+def validate_parameter_provenance(prior: ParameterPrior) -> list[str]:
+    """校验单个参数的 provenance 完整性，返回缺陷列表（空列表表示无缺陷）。
+
+    纯函数，不受 Feature Flag 守护，随时可调用。
+
+    校验规则（spec SubTask 23.2）：
+      - value 必须存在且为数值（非 None、非 NaN）
+      - confidence 必须为 High/Medium/Low 之一
+      - source 必须非空
+      - distribution 必须为 LogNormal/Uniform/Point 之一
+      - reference 必须非空（PMID:xxx 或 BIOMDxxxxxxxxx）
+
+    任一缺失 → 返回 ["parameter_unprovenanced"] + 具体缺失字段。
+    例如缺 reference 时返回：
+        ["parameter_unprovenanced", "reference"]
+
+    Args:
+        prior: 待校验的 ParameterPrior。
+
+    Returns:
+        缺陷列表；空列表表示 provenance 完整无缺陷。
+    """
+    missing_fields: list[str] = []
+
+    # value 必须为数值且非 NaN（float(None) 会抛 TypeError，float("abc") 抛 ValueError）
+    try:
+        v = float(prior.value)
+        if math.isnan(v):
+            missing_fields.append("value=NaN")
+    except (TypeError, ValueError):
+        missing_fields.append("value")
+
+    # confidence 必须为 High/Medium/Low 之一
+    if prior.confidence not in _VALID_CONFIDENCES:
+        missing_fields.append(f"confidence={prior.confidence!r}")
+
+    # source 必须非空
+    if not (prior.source or "").strip():
+        missing_fields.append("source")
+
+    # distribution 必须为 LogNormal/Uniform/Point 之一
+    if prior.distribution not in _VALID_DISTRIBUTIONS:
+        missing_fields.append(f"distribution={prior.distribution!r}")
+
+    # reference 必须非空（PMID:xxx 或 BIOMDxxxxxxxxx）
+    if not (prior.reference or "").strip():
+        missing_fields.append("reference")
+
+    # 任一字段缺失 → 头部追加 "parameter_unprovenanced" 标记
+    if missing_fields:
+        return ["parameter_unprovenanced"] + missing_fields
+    return []
+
+
+def validate_parameter_report(report: ParameterPriorReport) -> dict[str, Any]:
+    """校验整个参数报告，返回汇总字典。
+
+    纯函数，不受 Feature Flag 守护，随时可调用。
+    即使 SA_PARAMETER_CONFIDENCE 关闭（provenance 字段未填充）也可调用，
+    此时 provenanced_count / unprovenanced_count 均为 0（因字段保持默认值）。
+
+    Args:
+        report: ParameterPriorReport（含 priors 列表）。
+
+    Returns:
+        汇总字典，结构如下：
+        {
+            "total_params": int,                # 参数总数
+            "provenanced_count": int,           # provenance_complete=True 数量
+            "unprovenanced_count": int,         # defect=parameter_unprovenanced 数量
+            "high_confidence_count": int,
+            "medium_confidence_count": int,
+            "low_confidence_count": int,
+            "fallback_count": int,              # source=estimation_fallback 数量
+            "defects": list[str],               # 所有缺陷标记（去重保持顺序）
+            "confidence_breakdown": {
+                "high": float,                  # High 参数占比（0.0-1.0）
+                "medium": float,
+                "low": float,
+            },
+            "overall_provenance_score": float,  # provenanced_count / total_params
+        }
+    """
+    priors = report.priors or []
+    total = len(priors)
+
+    provenanced_count = sum(1 for p in priors if p.provenance_complete)
+    unprovenanced_count = sum(
+        1 for p in priors if p.defect == "parameter_unprovenanced"
+    )
+    high_count = sum(1 for p in priors if p.confidence == "High")
+    medium_count = sum(1 for p in priors if p.confidence == "Medium")
+    low_count = sum(1 for p in priors if p.confidence == "Low")
+    fallback_count = sum(
+        1 for p in priors if p.source == "estimation_fallback"
+    )
+
+    # 收集所有缺陷标记（去重并保持首次出现顺序）
+    defects: list[str] = []
+    seen: set[str] = set()
+    for p in priors:
+        d = (p.defect or "").strip()
+        if d and d not in seen:
+            defects.append(d)
+            seen.add(d)
+
+    # 置信度占比与 provenance 得分（空报告全为 0.0）
+    if total > 0:
+        high_ratio = high_count / total
+        medium_ratio = medium_count / total
+        low_ratio = low_count / total
+        score = provenanced_count / total
+    else:
+        high_ratio = 0.0
+        medium_ratio = 0.0
+        low_ratio = 0.0
+        score = 0.0
+
+    return {
+        "total_params": total,
+        "provenanced_count": provenanced_count,
+        "unprovenanced_count": unprovenanced_count,
+        "high_confidence_count": high_count,
+        "medium_confidence_count": medium_count,
+        "low_confidence_count": low_count,
+        "fallback_count": fallback_count,
+        "defects": defects,
+        "confidence_breakdown": {
+            "high": high_ratio,
+            "medium": medium_ratio,
+            "low": low_ratio,
+        },
+        "overall_provenance_score": score,
+    }
+
+
+def get_low_confidence_params(
+    report: ParameterPriorReport,
+) -> list[ParameterPrior]:
+    """返回所有 confidence=Low 或 source=estimation_fallback 的参数。
+
+    这些参数在 7 轴 Validation 的 Dynamics/Evidence 轴应降权。
+    纯函数，不受 Feature Flag 守护。
+
+    Args:
+        report: ParameterPriorReport。
+
+    Returns:
+        Low confidence 或 fallback 参数列表（保持原 priors 顺序）。
+    """
+    return [
+        p
+        for p in (report.priors or [])
+        if p.confidence == "Low" or p.source == "estimation_fallback"
+    ]
+
+
+def compute_confidence_weight(report: ParameterPriorReport) -> float:
+    """计算参数整体置信度权重（0.0-1.0），用于 7 轴 Dynamics 轴降权。
+
+    纯函数，不受 Feature Flag 守护。
+
+    规则：
+      - 全部 High → 1.0
+      - 全部 Low 或 fallback → 0.5
+      - 混合 → (high_count * 1.0 + medium_count * 0.7 + low_count * 0.4) / total
+      - 空报告 → 0.5（保守，避免过度惩罚未提供参数先验的场景）
+
+    Args:
+        report: ParameterPriorReport。
+
+    Returns:
+        置信度权重，混合时最低 0.4，纯 Low/fallback 时 0.5，纯 High 时 1.0。
+    """
+    priors = report.priors or []
+    total = len(priors)
+    if total == 0:
+        # 空报告保守返回 0.5
+        return 0.5
+
+    high_count = sum(1 for p in priors if p.confidence == "High")
+    medium_count = sum(1 for p in priors if p.confidence == "Medium")
+    # Low 或 fallback 均视为低置信度（fallback 本身就是 confidence=Low）
+    low_count = sum(
+        1
+        for p in priors
+        if p.confidence == "Low" or p.source == "estimation_fallback"
+    )
+
+    # 全部 High → 1.0
+    if high_count == total:
+        return 1.0
+    # 全部 Low 或 fallback → 0.5
+    if low_count == total:
+        return 0.5
+    # 混合：加权平均（high=1.0 / medium=0.7 / low=0.4）
+    weight = (
+        high_count * 1.0 + medium_count * 0.7 + low_count * 0.4
+    ) / total
+    return weight
+
+
 __all__ = [
     "ParameterPrior",
     "ParameterPriorReport",
     "build_parameter_prior",
     "get_reaction_type_prior",
+    "validate_parameter_provenance",
+    "validate_parameter_report",
+    "get_low_confidence_params",
+    "compute_confidence_weight",
 ]

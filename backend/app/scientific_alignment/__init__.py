@@ -64,6 +64,15 @@ from app.scientific_alignment.parameter_grounder import (
     ParameterPrior,
     ParameterPriorReport,
     build_parameter_prior,
+    compute_confidence_weight,
+    get_low_confidence_params,
+    validate_parameter_provenance,
+    validate_parameter_report,
+)
+from app.scientific_alignment.scientific_critic import (
+    CriticFinding,
+    CriticReport,
+    run_scientific_critic,
 )
 from app.scientific_alignment.seven_axis_validator import (
     AxisScore,
@@ -97,6 +106,13 @@ __all__ = [
     "ParameterPrior",
     "ParameterPriorReport",
     "build_parameter_prior",
+    "compute_confidence_weight",
+    "get_low_confidence_params",
+    "validate_parameter_provenance",
+    "validate_parameter_report",
+    "CriticFinding",
+    "CriticReport",
+    "run_scientific_critic",
     "AxisScore",
     "SevenAxisReport",
     "run_seven_axis_validation",

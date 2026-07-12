@@ -426,6 +426,25 @@ class Settings:
         "SA_CONSISTENCY_CHECKER", "false"
     ).lower() == "true"
 
+    # SA_PARAMETER_CONFIDENCE：Parameter Confidence & Provenance（Task 23 ★★★★★）
+    #   - false（默认）：参数无强制 provenance 字段，LLM 可生成裸数值
+    #   - true：在 SA 总开关开启时，参数必须携带 value/confidence/source/distribution/reference
+    #     五字段，缺字段标记 defect=parameter_unprovenanced，benchmark 判 Fail
+    # 铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时本子 Flag 永远不生效
+    SA_PARAMETER_CONFIDENCE: bool = os.getenv(
+        "SA_PARAMETER_CONFIDENCE", "false"
+    ).lower() == "true"
+
+    # SA_SCIENTIFIC_CRITIC：Scientific Critic Agent（Task 26 ★★★★★）
+    #   - false（默认）：Pipeline 末尾不插入独立审稿节点
+    #   - true：在 SA 总开关开启时，Report 生成后插入 Scientific Critic 节点，
+    #     审查 Mechanism/Evidence/BioModels/Consistency/Experiments/References 六项，
+    #     任一 fail 触发 Report 重生成（最大 2 次），超限降 Confidence 标 critic_unresolved
+    # 铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时本子 Flag 永远不生效
+    SA_SCIENTIFIC_CRITIC: bool = os.getenv(
+        "SA_SCIENTIFIC_CRITIC", "false"
+    ).lower() == "true"
+
     # SA 子能力名称 → Settings 属性名映射（供 is_sa_feature_enabled 查询）
     _SA_FEATURE_ATTRS: dict[str, str] = {
         "MECHANISM_GRAPH": "SA_MECHANISM_GRAPH",
@@ -436,6 +455,8 @@ class Settings:
         "LOOP_TERMINATION": "SA_LOOP_TERMINATION",
         "CANONICAL": "SA_CANONICAL",
         "CONSISTENCY_CHECKER": "SA_CONSISTENCY_CHECKER",
+        "PARAMETER_CONFIDENCE": "SA_PARAMETER_CONFIDENCE",
+        "SCIENTIFIC_CRITIC": "SA_SCIENTIFIC_CRITIC",
     }
 
     # =============================================================================
