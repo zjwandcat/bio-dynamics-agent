@@ -109,9 +109,43 @@ jobs:
           name: coverage-report
           path: backend/htmlcov/
 
+  # 阶段 9a：Scientific Alignment Benchmark 回归闸门（Task 20）
+  # 运行 make benchmark（BENCHMARK_REAL_ORCHESTRATOR=true），任一 Fail 使 exit code ≠ 0
+  scientific-alignment-benchmark:
+    needs: scientific-benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - name: Run Scientific Alignment Benchmark
+        env:
+          BENCHMARK_REAL_ORCHESTRATOR: "true"
+        run: make benchmark
+      - name: Upload benchmark_results.md
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: backend/benchmark_results.md
+      - name: Upload Scientific Alignment Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scientific-alignment-report
+          path: backend/data/sa_logs/run_*/Scientific_Alignment_Report.md
+      - name: Upload benchmark output log
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-output-log
+          path: benchmark_output.log
+
   # 阶段 9：发布门禁（全部阶段通过后方可发布）
   release-gate:
-    needs: [unit-tests, integration-tests, scientific-benchmarks, biomodels-regression, parameter-stress, playwright-ui, performance-benchmark]
+    needs: [unit-tests, integration-tests, scientific-benchmarks, biomodels-regression, parameter-stress, playwright-ui, performance-benchmark, scientific-alignment-benchmark]
     runs-on: ubuntu-latest
     steps:
       - name: Release Gate
