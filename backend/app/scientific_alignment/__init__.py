@@ -99,6 +99,41 @@ from app.scientific_alignment.rca import (
     RootCause,
     run_rca,
 )
+from app.scientific_alignment.regression_monitor import (
+    AxisChange,
+    ChangeType,
+    RegressionMonitor,
+    RegressionReport,
+    run_regression_check,
+)
+from app.scientific_alignment.acceptance_gate import (
+    AcceptanceReport,
+    CriterionResult,
+    check_acceptance,
+)
+from app.scientific_alignment.discussion_prompt import (
+    TEMPLATE_VIOLATION_PATTERNS,
+    REQUIRED_QUESTIONS,
+    DiscussionCheckReport,
+    DiscussionViolation,
+    check_discussion,
+    get_scientific_discussion_prompt,
+)
+from app.scientific_alignment.experiment_planner import (
+    ExperimentPlan,
+    MechanismExperiment,
+    check_experiments,
+    get_experiment_chain_template,
+    plan_experiments,
+)
+from app.scientific_alignment.report_sections import (
+    ReportSections,
+    render_all_sections,
+    render_biomodels_comparison,
+    render_biomodels_discussion,
+    render_confidence_table,
+    render_parameter_table,
+)
 
 __all__ = [
     "EvidenceType",
@@ -153,4 +188,34 @@ __all__ = [
     "RootCause",
     "RCAReport",
     "run_rca",
+    # Task 14 Regression Monitor
+    "ChangeType",
+    "AxisChange",
+    "RegressionReport",
+    "RegressionMonitor",
+    "run_regression_check",
+    # Task 15 Acceptance Gate
+    "CriterionResult",
+    "AcceptanceReport",
+    "check_acceptance",
+    # Task 10 Discussion Prompt
+    "REQUIRED_QUESTIONS",
+    "TEMPLATE_VIOLATION_PATTERNS",
+    "DiscussionViolation",
+    "DiscussionCheckReport",
+    "get_scientific_discussion_prompt",
+    "check_discussion",
+    # Task 11 Experiment Planner
+    "MechanismExperiment",
+    "ExperimentPlan",
+    "plan_experiments",
+    "check_experiments",
+    "get_experiment_chain_template",
+    # Task 6 Report Sections
+    "ReportSections",
+    "render_biomodels_comparison",
+    "render_biomodels_discussion",
+    "render_confidence_table",
+    "render_parameter_table",
+    "render_all_sections",
 ]
