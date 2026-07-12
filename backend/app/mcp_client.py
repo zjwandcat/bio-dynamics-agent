@@ -486,7 +486,13 @@ class MCPBioClient:
 
         离线或失败时返回空列表，不阻塞主流程。
         """
-        import xml.etree.ElementTree as ET
+        # Task 19 SEC-1.3: 使用 defusedxml 防御 XXE/实体扩展攻击
+        # defusedxml 不可用时降级到 xml.etree（离线开发场景，风险可接受）
+        try:
+            from defusedxml import ElementTree as ET  # type: ignore
+        except ImportError:
+            import xml.etree.ElementTree as ET  # type: ignore
+            logger.warning("defusedxml 未安装，NCBI XML 解降级到 xml.etree（有实体扩展风险）")
 
         try:
             import requests

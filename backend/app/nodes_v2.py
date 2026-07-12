@@ -59,7 +59,7 @@ from app.rag_client import RagClient
 from app.rag_collections import get_rag_collections
 from app.report_renderer import ReportRenderer
 from app.rule_engine import RuleEngine
-from app.sandbox import execute_simulation_code_v2
+from app.sandbox import execute_simulation_code_v2, execute_with_stability_retry
 from app.state import BioDynamicsState
 from app.supervisor import orchestrator
 from app.token_usage import (
@@ -281,6 +281,53 @@ def _filter_contaminated_evidence(
 # =============================================================================
 # N0 — SBML Loader（用户输入含 BIOMD* / MODEL* 或通路关键词时加载 SBML）
 # =============================================================================
+# [v5 Recovery Sprint 2 / RC13] 通路关键词 → BioModels ID 自动匹配
+# 旧实现：仅当用户输入显式含 BIOMD*/MODEL* ID 时触发，99% 自然语言场景跳过。
+# 修复：基于 10 个 specialist 的 SOURCE_SBML 字段构建关键词映射，自然语言假设
+# 含通路关键词时自动匹配 BIOMD ID，使 BioModels 99%→100% 场景参与。
+# 映射来源：各 specialist 的 PATHWAY_TAG + SOURCE_SBML + 通路特征关键词
+_PATHWAY_TO_BIOMD: dict[str, str] = {
+    # EGFR/RTK + MAPK/ERK 通路（Schoeberl 2002, BIOMD0000000010, PMID:12451189）
+    # [RC30] 修复：BIOMD0000000022 实际为昼夜节律钟模型（Leloup 2003），
+    #   非EGFR通路。Schoeberl 2002 EGF/MAPK 级联模型正确 ID 为 BIOMD0000000010
+    #   （与 egfr_specialist.py / mapk_specialist.py 注释一致）。
+    "BIOMD0000000010": ["egf", "egfr", "rtk", "receptor tyrosine kinase", "shc", "grb2", "sos", "rasgtp",
+                         "mapk", "erk", "raf", "mek", "dusp", "sprouty", "zero-order ultrasensitivity"],
+    # PI3K-AKT-mTOR 通路 (BIOMD0000000250)
+    "BIOMD0000000250": ["pi3k", "akt", "mtor", "pten", "pip3", "tsc", "rheb"],
+    # p53 通路 (BIOMD0000000382)
+    "BIOMD0000000382": ["p53", "mdm2", "nutlin", "atm", "chk2", "p21"],
+    # Apoptosis 通路 (BIOMD0000000332)
+    "BIOMD0000000332": ["apoptosis", "caspase", "bcl-2", "bcl2", "bax", "cytochrome c", "bid", "bak"],
+    # Cell Cycle 通路 (BIOMD0000000055)
+    "BIOMD0000000055": ["cell cycle", "cyclin", "cdk", "rb", "e2f", "p27", "apc", "cdc20"],
+    # JAK-STAT 通路 (BIOMD0000000224)
+    "BIOMD0000000224": ["jak", "stat", "interleukin", "il-6", "il6", "socs", "ifn"],
+    # NF-κB 通路 (BIOMD0000000258)
+    "BIOMD0000000258": ["nf-kb", "nf-κb", "nfkb", "ikb", "iκb", "ikk", "tnf", "rela"],
+    # Wnt 通路 (BIOMD0000000008)
+    "BIOMD0000000008": ["wnt", "beta-catenin", "β-catenin", "catenin", "apc", "axin", "gsk3", "tcf"],
+    # TGF-β 通路 (BIOMD0000000252)
+    "BIOMD0000000252": ["tgf", "smad", "tgf-beta", "tgf-β", "tgfb", "inhibin", "activin"],
+}
+
+
+def _auto_match_biomodel_id(user_input: str) -> str:
+    """RC13: 基于通路关键词自动匹配 BioModels ID。
+
+    扫描用户输入（小写），返回首个匹配的 BIOMD ID；无匹配时返回空字符串。
+    匹配优先级：按 _PATHWAY_TO_BIOMD 字典顺序（EGFR > MAPK > ... > TGF-β）。
+    """
+    if not user_input:
+        return ""
+    text_lower = user_input.lower()
+    for biomd_id, keywords in _PATHWAY_TO_BIOMD.items():
+        for kw in keywords:
+            if kw in text_lower:
+                return biomd_id
+    return ""
+
+
 def n0_sbml_loader(state: BioDynamicsState) -> dict:
     """N0 SBML Loader：从用户输入识别 BIOMD*/MODEL* ID 或通路关键词，
     通过 EBI BioModels REST API 加载对应 SBML 文本。
@@ -306,10 +353,21 @@ def n0_sbml_loader(state: BioDynamicsState) -> dict:
     # 提取 BIOMD*/MODEL* ID
     model_id = extract_biomodel_id(user_input)
     if not model_id:
-        # 用户未显式提到 BIOMD*，但可能提到通路关键词
-        # 仅当用户明确引用模型 ID 时才下载，避免无谓的网络请求
-        logger.info("N0 SBML Loader：用户输入未含 BIOMD*/MODEL* ID，跳过")
-        return {}
+        # [v5 Recovery Sprint 2 / RC13] 通路关键词自动匹配 BioModels ID
+        # 旧实现：用户未显式提到 BIOMD* 时直接跳过，99% 自然语言场景不加载 BioModels。
+        # 修复：基于通路关键词（EGF/ERK/p53/caspase/cyclin/JAK/STAT/NF-kB/Wnt/SMAD 等）
+        # 自动匹配 specialist 的 SOURCE_SBML ID，使 BioModels 99%→100% 场景参与。
+        model_id = _auto_match_biomodel_id(user_input)
+        if model_id:
+            logger.info(
+                "RC13 BioModels 自动匹配：用户输入含通路关键词，匹配 BIOMD ID=%s",
+                model_id,
+            )
+        else:
+            logger.info(
+                "N0 SBML Loader：用户输入未含 BIOMD*/MODEL* ID 或通路关键词，跳过"
+            )
+            return {}
 
     logger.info("N0 SBML Loader：检测到 model_id=%s，开始下载 SBML", model_id)
     client = get_biomodels_client()
@@ -1316,6 +1374,23 @@ def n6_ode_generator(state: BioDynamicsState) -> dict:
     mechanism = state.get("mechanism", {}) or {}
     edges = kg.get("edges", []) or []
     nodes = kg.get("nodes", []) or []
+    # auto_fast 兼容修复：worker_mechanism 的 Fast 分支只调用 node1_parse_network，
+    # 产出 network_json 但不构建 knowledge_graph（n4_kg_builder 仅 Standard/Manual 走）。
+    # 若 KG 为空而 network_json 有边，回退到 network_json 的拓扑，避免 n6 看到空
+    # edges 误降级到单物种 else 分支（曾导致 SPECIES_NAMES=['Species'] 与 _ode
+    # 二元解包维度不匹配，solve_ivp 崩溃 → 仿真无输出）。
+    if not edges:
+        network_json_fallback = state.get("network_json", {}) or {}
+        nj_edges = network_json_fallback.get("edges", []) or []
+        if nj_edges:
+            edges = nj_edges
+            if not nodes:
+                nodes = network_json_fallback.get("nodes", []) or []
+            logger.info(
+                "n6_ode_generator: knowledge_graph 为空，回退 network_json "
+                "(nodes=%d, edges=%d)",
+                len(nodes), len(edges),
+            )
     user_input = state.get("user_input", "")
     sbml_model_id = state.get("sbml_model_id", "") or extract_biomodel_id(user_input)
 
@@ -1853,6 +1928,17 @@ def n6_ode_generator(state: BioDynamicsState) -> dict:
             "degradation":      {"k_deg": 0.01},
             "activation":       {"k_cat": 0.1,  "degradation": 0.01},
             "inhibition":       {"k_on": 0.1,   "k_off": 0.01},
+            # [RC23] 新增：按生物学时间尺度设定默认值，解决级联过慢问题
+            # 原因：gtp_gdp_exchange/nuclear_import/反馈机制均落入 activation 默认 k_cat=0.1，
+            #   导致 RasGTP 25min 才达峰、ERK 120min 仍未达峰下降。
+            #   生物学合理值：Ras 活化 1-5min、核转位 1-5min、DUSP 反馈需较强才能抑制 ERK
+            "gtp_gdp_exchange": {"k_cat": 0.5,  "degradation": 0.01},   # Ras GEF 活性 1-5 min
+            "nuclear_import":   {"k_cat": 0.5,  "degradation": 0.01},   # 核转位 1-5 min
+            "transcription":    {"k_trans": 0.3, "k_mRNA_deg": 0.02},   # mRNA 转录 10-15 min
+            "translation":      {"k_transl": 0.2, "k_prot_deg": 0.01},  # 蛋白翻译 5-10 min
+            "feedback_propagation": {"k_act": 0.2, "k_deg": 0.02},      # 反馈环前向传播（DUSP 转录/翻译）
+            "feedback_regulation": {"k_cat": 2.0, "degradation": 0.01}, # 反馈调控（DUSP 抑制 ERK，需较强）
+            "negative_feedback":   {"k_cat": 2.0, "degradation": 0.01}, # 负反馈闭环
         }
         for edge in edges:
             target_raw = edge.get("target", "")
@@ -2067,6 +2153,11 @@ def n6_ode_generator(state: BioDynamicsState) -> dict:
         ],
         # P0-2: 时间尺度分层信息
         "time_unit": _time_unit,
+        # [RC20] 修复：存储 t_end/n_eval 供 v4 ODE 渲染器使用
+        # 原因：N6 计算 t_end=120.0（Signaling_Cascade_Phos），但 _ode_template_v2_hook
+        #   不读取此值，v4 渲染器默认 t_end=60.0，导致仿真时长不足，ERK 无法达峰后下降
+        "t_end": _t_end,
+        "n_eval": _n_eval,
     }
 
     return {
@@ -2106,7 +2197,10 @@ def n7_sandbox_execute(state: BioDynamicsState) -> dict:
         }
 
     # 2. 沙箱执行（v2 入口：AST 已通过 + 自动错误分类 + CSV 路径）
-    result = execute_simulation_code_v2(code)
+    # [v5 Recovery Sprint 3 / RC6] 使用 execute_with_stability_retry 替代直接调用
+    # 旧实现：LSODA 崩溃后直接返回错误（62.5% 崩溃率），无 BDF/Radau 回退。
+    # 修复：包装函数在 runtime_error/numerical_error 时自动按阶梯策略重试。
+    result = execute_with_stability_retry(code)
     error_class = result.get("error_class", "runtime_error")
 
     return {
@@ -2139,6 +2233,13 @@ def n8_scientific_features(state: BioDynamicsState) -> dict:
     metadata: dict = {"method": "none", "version": "v2.0", "confidence": None, "warnings": []}
     confidence = None  # 区分"仿真失败"（None）与"仿真成功但低置信度"（0.0）
 
+    # [v5 Recovery Sprint 3 / RC20] 置信度与仿真状态关联
+    # 旧实现：仿真失败但 CSV 存在时，置信度仍可高达 0.83（与仿真状态脱节）。
+    # 修复：仿真失败（status != success 或 error_class != none）时置信度 ≤ 0.3。
+    _sim_status = execution_result.get("status", "")
+    _sim_error = execution_result.get("error_class", "none")
+    _sim_failed = (_sim_status != "success") or (_sim_error not in ("none", "", None))
+
     if csv_path:
         try:
             extractor = ScientificFeatureExtractor()
@@ -2146,6 +2247,17 @@ def n8_scientific_features(state: BioDynamicsState) -> dict:
                 csv_path, kg=kg, time_unit=time_unit, is_transient=is_transient
             )
             confidence = float(metadata.get("confidence", 0.0))
+            # [v5 RC20] 仿真失败时置信度上限 0.3
+            if _sim_failed and confidence > 0.3:
+                logger.warning(
+                    "[v5 RC20] 仿真失败（status=%s, error=%s）但置信度=%.3f，限制为 0.3",
+                    _sim_status, _sim_error, confidence,
+                )
+                confidence = 0.3
+                metadata["confidence"] = 0.3
+                metadata["warnings"].append(
+                    f"confidence_capped: simulation failed ({_sim_error}), capped to 0.3"
+                )
             # TASK 5: 质量守恒检查（< 5% 误差，CONSERVATION_VIOLATION 警告）
             try:
                 from app.conservation_checker import (
@@ -2188,8 +2300,38 @@ def n8_scientific_features(state: BioDynamicsState) -> dict:
 # =============================================================================
 # N9 — Experiment RAG
 # =============================================================================
+def _pubmed_protocols_for_targets(targets: list[str], top_k_per_target: int = 2) -> list[dict]:
+    """用 PubMed 在线搜索为每个靶点构建实验方案 fallback。
+
+    返回与本地 experiment collection 兼容的 dict 列表，字段包括：
+    name, target, detection_method, pmid, cell_line, species, description。
+    """
+    protocols: list[dict] = []
+    seen_pmids: set[str] = set()
+    for target in targets:
+        if not target:
+            continue
+        query = f"{target} experimental protocol assay"
+        articles = _fetch_pubmed_evidence_sync(query, top_k=top_k_per_target)
+        for art in articles:
+            pmid = art.get("pmid", "")
+            if not pmid or pmid in seen_pmids:
+                continue
+            seen_pmids.add(pmid)
+            protocols.append({
+                "name": art.get("title", f"{target} experimental protocol"),
+                "target": target,
+                "detection_method": "PubMed literature",
+                "pmid": pmid,
+                "cell_line": art.get("cell_line", ""),
+                "species": "",
+                "description": art.get("abstract", "")[:500],
+            })
+    return protocols
+
+
 def n9_experiment_rag(state: BioDynamicsState) -> dict:
-    """为关键靶点检索实验方案。"""
+    """为关键靶点检索实验方案（本地 + PubMed 在线 fallback）。"""
     _emit_in("n9_experiment_rag")
     kg = state.get("knowledge_graph", {}) or {}
     mechanism = state.get("mechanism", {}) or {}
@@ -2197,13 +2339,14 @@ def n9_experiment_rag(state: BioDynamicsState) -> dict:
 
     rag = get_rag_collections()
     protocols: list[dict] = []
-    if rag.available:
-        # 选前 3 个节点（蛋白/分子）作为靶点
-        targets = [
-            n.get("name", n.get("id", ""))
-            for n in nodes[:3]
-            if n.get("type") in ("Protein", "Gene", "Molecule", "Cytokine")
-        ]
+    # 选前 3 个节点（蛋白/分子）作为靶点
+    targets = [
+        n.get("name", n.get("id", ""))
+        for n in nodes[:3]
+        if n.get("type") in ("Protein", "Gene", "Molecule", "Cytokine")
+    ]
+
+    if rag.available and targets:
         seen: set[str] = set()
         for target in targets:
             try:
@@ -2226,6 +2369,15 @@ def n9_experiment_rag(state: BioDynamicsState) -> dict:
         protocols, state.get("user_input", "")
     )
 
+    # [BM 修复] PubMed 在线 fallback：本地 experiment collection 无有效方案时，
+    # 为每个 target 搜索 PubMed 文献作为实验方案推荐。
+    if not protocols and targets:
+        logger.info("N9 本地实验方案为空，触发 PubMed 在线 fallback，targets=%s", targets)
+        protocols = _pubmed_protocols_for_targets(targets, top_k_per_target=2)
+        logger.info("N9 PubMed fallback 返回 %d 个实验方案", len(protocols))
+    else:
+        logger.info("N9 本地实验方案命中 %d 个，跳过 PubMed fallback", len(protocols))
+
     return {
         "experiment_protocols": protocols,
         "agent_dispatches": [orchestrator.complete_dispatch(
@@ -2237,17 +2389,162 @@ def n9_experiment_rag(state: BioDynamicsState) -> dict:
 # =============================================================================
 # N10 — Evidence RAG
 # =============================================================================
+
+def _fetch_pubmed_evidence_sync(query: str, top_k: int = 3) -> list[dict]:
+    """同步调用 NCBI E-utilities 检索 PubMed 文献（N10 在线 fallback）。
+
+    N10 是同步函数，运行在 async event loop 中，不能用 asyncio.run()。
+    直接用 requests 同步调用 NCBI esearch + efetch。
+    超时或失败时返回空列表，不阻塞主流程。
+    """
+    try:
+        import requests as _requests
+    except ImportError:
+        return []
+
+    try:
+        from app.config import settings as _settings
+        ncbi_email = getattr(_settings, "NCBI_EMAIL", "")
+        ncbi_api_key = getattr(_settings, "NCBI_API_KEY", "")
+    except Exception:
+        ncbi_email = ""
+        ncbi_api_key = ""
+
+    # 步骤 1: esearch 获取 PMID 列表
+    esearch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    params = {
+        "db": "pubmed",
+        "term": query[:200],  # NCBI 限长
+        "retmax": str(top_k),
+        "retmode": "json",
+        "sort": "relevance",
+    }
+    if ncbi_email:
+        params["email"] = ncbi_email
+        params["tool"] = "BioDynamicsAgent"
+    if ncbi_api_key:
+        params["api_key"] = ncbi_api_key
+
+    try:
+        # NO_PROXY=* 已在 main.py 启动时设置，绕过系统代理
+        resp = _requests.get(esearch_url, params=params, timeout=10)
+        resp.raise_for_status()
+        id_list = resp.json().get("esearchresult", {}).get("idlist", [])
+        logger.info(
+            "N10 PubMed esearch 成功: query=%s status=%d idlist=%d",
+            query[:80], resp.status_code, len(id_list),
+        )
+    except Exception as exc:
+        logger.warning("N10 PubMed esearch 失败：%s (query=%s)", exc, query[:80])
+        return []
+
+    if not id_list:
+        return []
+
+    # 步骤 2: efetch 获取文献详情
+    # 注意：NCBI efetch 偶发 400 Bad Request（限流或 URL 编码问题），
+    # 添加最多 2 次重试（间隔 1s），提高文献获取稳定性。
+    efetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+    params = {
+        "db": "pubmed",
+        "id": ",".join(id_list),
+        "retmode": "xml",
+    }
+    if ncbi_email:
+        params["email"] = ncbi_email
+        params["tool"] = "BioDynamicsAgent"
+    if ncbi_api_key:
+        params["api_key"] = ncbi_api_key
+
+    resp = None
+    for attempt in range(3):
+        try:
+            resp = _requests.get(efetch_url, params=params, timeout=15)
+            resp.raise_for_status()
+            break
+        except Exception as exc:
+            if attempt < 2:
+                logger.warning(
+                    "N10 PubMed efetch 第 %d 次失败（共 3 次）：%s，1s 后重试",
+                    attempt + 1, exc,
+                )
+                time.sleep(1.0)
+            else:
+                logger.warning("N10 PubMed efetch 3 次重试均失败：%s", exc)
+                return []
+    if resp is None:
+        return []
+
+    # 步骤 3: 解析 XML
+    # Task 19 SEC-1.4: 使用 defusedxml 防御 XXE/实体扩展攻击
+    try:
+        from defusedxml import ElementTree as ET  # type: ignore
+    except ImportError:
+        import xml.etree.ElementTree as ET  # type: ignore
+        logger.warning("defusedxml 未安装，NCBI XML 解降级到 xml.etree（有实体扩展风险）")
+    articles: list[dict] = []
+    try:
+        root = ET.fromstring(resp.text)
+        for article_elem in root.findall(".//PubmedArticle"):
+            pmid_elem = article_elem.find(".//PMID")
+            pmid = pmid_elem.text if pmid_elem is not None else ""
+            title_elem = article_elem.find(".//ArticleTitle")
+            title = title_elem.text if title_elem is not None else ""
+            abstract_parts = article_elem.findall(".//AbstractText")
+            abstract = " ".join(
+                "".join(p.itertext()) for p in abstract_parts
+            )[:2000]
+            if pmid:
+                articles.append({
+                    "pmid": pmid,
+                    "title": title or "",
+                    "abstract": abstract,
+                    "source": f"PMID:{pmid}",
+                    "figure_ref": "",
+                    "cell_line": "",
+                })
+    except ET.ParseError as exc:
+        logger.warning("N10 PubMed XML 解析失败：%s", exc)
+
+    if articles:
+        logger.info("N10 PubMed 在线 fallback 命中 %d 篇文献", len(articles))
+    return articles[:top_k]
+
+
+def _clean_pubmed_query(raw: str) -> str:
+    """将 pathway 内部标识符清洗为适合 PubMed 搜索的自然语言查询词。
+
+    例如：
+      'MULTI:EGFR_RTK+MAPK_ERK' -> 'EGFR MAPK ERK signaling'
+      'EGFR_RTK' -> 'EGFR RTK'
+    """
+    if not raw:
+        return ""
+    # 移除 MULTI: 等前缀
+    cleaned = re.sub(r"^[A-Z]+:", "", raw)
+    # 将 '_' 替换为空格，'+' 替换为空格
+    cleaned = cleaned.replace("_", " ").replace("+", " ")
+    # 去掉多余空格
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
 def n10_evidence_rag(state: BioDynamicsState) -> dict:
     """检索支持性文献证据，含正向实体白名单 + 防御性过滤 + PMID 提取。"""
     _emit_in("n10_evidence_rag")
     mechanism = state.get("mechanism", {}) or {}
-    query = mechanism.get("pathway") or state.get("user_input", "")
+    user_input = state.get("user_input", "")
+    # 本地 ChromaDB 查询：优先用 v4_pathway_class（注册表键，如 "APOPTOSIS"），
+    # 其次用 mechanism.pathway（LLM 自然语言），最后用 user_input
+    # PubMed fallback 优先用自然语言 user_input（更适合 PubMed 搜索）
+    pathway_query = state.get("v4_pathway_class", "") or mechanism.get("pathway") or user_input
+    pubmed_query = user_input or _clean_pubmed_query(pathway_query)
 
     rag = get_rag_collections()
     evidence: list[dict] = []
-    if rag.available and query:
+    if rag.available and pathway_query:
         try:
-            hits = rag.search_evidence(query, top_k=5)
+            hits = rag.search_evidence(pathway_query, top_k=5)
             evidence = [
                 {k: v for k, v in h.items() if not k.startswith("_")}
                 for h in hits
@@ -2328,6 +2625,63 @@ def n10_evidence_rag(state: BioDynamicsState) -> dict:
                 ev["pmid"],
             )
 
+    # [v5 Recovery Sprint 2 / RC4] 空 PMID 过滤——消除 Scientific Hallucination
+    # 旧实现：PMID 提取失败后 ev["pmid"]="" 仍保留在 evidence 列表中，
+    # 报告模板渲染 "PMID: ,图 ,细胞系 "（全空），伪装有文献支撑。
+    # 修复：PMID 为空的条目不加入 evidence 列表；全部为空时返回空列表 + 标记无文献。
+    _evidence_with_pmid: list[dict] = []
+    _evidence_no_pmid_count = 0
+    for ev in evidence:
+        if ev.get("pmid", ""):
+            _evidence_with_pmid.append(ev)
+        else:
+            _evidence_no_pmid_count += 1
+    if _evidence_no_pmid_count > 0:
+        logger.info(
+            "RC4 空 PMID 过滤：%d 条证据无 PMID 已丢弃（Scientific Hallucination 消除）",
+            _evidence_no_pmid_count,
+        )
+    evidence = _evidence_with_pmid
+
+    # [BM 修复] 在线 PubMed fallback：本地 ChromaDB 无有效文献时直连 NCBI
+    # 根因：evidence collection 存的是参数记录而非文献，且无 PMID → RC4 过滤后为空。
+    # 修复：evidence 为空时用同步 requests 调用 NCBI E-utilities 检索 PubMed 文献。
+    # 注意：PubMed 更适合自然语言查询，因此优先用 user_input；若为空再清洗 pathway。
+    _n10_diag = {
+        "local_evidence_count": len(evidence),
+        "rc4_filtered_count": _evidence_no_pmid_count,
+        "pubmed_fallback_triggered": False,
+        "pubmed_queries_tried": [],
+        "pubmed_fallback_count": 0,
+        "final_evidence_count": 0,
+    }
+    if not evidence:
+        _n10_diag["pubmed_fallback_triggered"] = True
+        _n10_diag["pubmed_queries_tried"].append(pubmed_query[:200])
+        logger.info("N10 本地 evidence 为空，触发 PubMed 在线 fallback，query=%s", pubmed_query)
+        evidence = _fetch_pubmed_evidence_sync(pubmed_query, top_k=3)
+        _n10_diag["pubmed_fallback_count"] = len(evidence)
+        # 若 user_input 未命中，再尝试清洗后的 pathway 标识符
+        if not evidence and pubmed_query != _clean_pubmed_query(pathway_query):
+            fallback_query = _clean_pubmed_query(pathway_query)
+            _n10_diag["pubmed_queries_tried"].append(fallback_query[:200])
+            logger.info("N10 PubMed fallback 第 2 轮，query=%s", fallback_query)
+            evidence = _fetch_pubmed_evidence_sync(fallback_query, top_k=3)
+            _n10_diag["pubmed_fallback_count"] = len(evidence)
+        logger.info("N10 PubMed fallback 返回 %d 条文献", len(evidence))
+    else:
+        logger.info("N10 本地 evidence 命中 %d 条，跳过 PubMed fallback", len(evidence))
+
+    _n10_diag["final_evidence_count"] = len(evidence)
+    logger.info(
+        "N10 诊断: local=%d rc4_filtered=%d pubmed_triggered=%s pubmed_count=%d final=%d",
+        _n10_diag["local_evidence_count"],
+        _n10_diag["rc4_filtered_count"],
+        _n10_diag["pubmed_fallback_triggered"],
+        _n10_diag["pubmed_fallback_count"],
+        _n10_diag["final_evidence_count"],
+    )
+
     # TODO: P1-3 — 显式补全 figure_ref / cell_line 字段（依赖原始记录透传，缺失时填空字符串）
     for ev in evidence:
         ev.setdefault("figure_ref", "")
@@ -2335,6 +2689,7 @@ def n10_evidence_rag(state: BioDynamicsState) -> dict:
 
     return {
         "paper_evidence": evidence,
+        "n10_diagnostic": _n10_diag,
         "agent_dispatches": [orchestrator.complete_dispatch(
             "n10_evidence_rag", latency_ms=0.0
         )],
@@ -2404,6 +2759,8 @@ def n11_scientific_report(state: BioDynamicsState) -> dict:
     # 2. Python 模板渲染 Markdown
     renderer = ReportRenderer()
     sandbox_failure_reason = state.get("sandbox_failure_reason", "")
+    # [P0-4] LLM 自动决策记录（超时未响应时由 LLM 代为决策）
+    llm_auto_decisions = state.get("llm_auto_decisions", []) or []
     try:
         markdown = renderer.render(
             llm_filled=llm_filled,
@@ -2414,6 +2771,7 @@ def n11_scientific_report(state: BioDynamicsState) -> dict:
             confidence=confidence,
             sandbox_failure_reason=sandbox_failure_reason,
             time_unit=time_unit,
+            llm_auto_decisions=llm_auto_decisions,
         )
         forbidden_violations = renderer.check_forbidden_terms(llm_filled)
     except Exception as exc:
@@ -2421,11 +2779,18 @@ def n11_scientific_report(state: BioDynamicsState) -> dict:
         markdown = f"# 报告生成失败\n\n{llm_filled}\n\n错误：{exc}"
         forbidden_violations = []
 
+    # [v5 Recovery Sprint 4 / RC18] 报告落盘持久化
+    _user_input = state.get("user_input", "")
+    _persisted_path = ReportRenderer.persist_report(markdown, _user_input)
+    if _persisted_path:
+        logger.info("RC18 报告已落盘：%s", _persisted_path)
+
     return {
         "report": {
             "markdown": markdown,
             "llm_filled_json": llm_filled,
             "forbidden_terms_violations": forbidden_violations,
+            "persisted_path": _persisted_path,  # RC18: 落盘文件路径
         },
         "final_report": markdown,  # 与 v1 兼容
         "agent_dispatches": [orchestrator.complete_dispatch(

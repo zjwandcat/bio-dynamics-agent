@@ -164,10 +164,13 @@ class SBMLParserV2:
         if isinstance(sbml_content, str):
             sbml_content = sbml_content.encode("utf-8")
         # recover=False 严格模式；XML 错误时抛 XMLSyntaxError（被 parse 捕获降级）
+        # Task 19 SEC-1.2: 显式禁用实体解析与网络访问（深度防御）
         parser = lxml_etree.XMLParser(
             remove_blank_text=False,
             remove_comments=False,
             recover=False,
+            resolve_entities=False,
+            no_network=True,
         )
         root = lxml_etree.fromstring(sbml_content, parser=parser)
         return self._build_document(root, backend="lxml")
@@ -176,14 +179,28 @@ class SBMLParserV2:
     # ElementTree 后端（标准库后备）
     # -------------------------------------------------------------------------
     def _parse_with_elementtree(self, sbml_content: str | bytes) -> SBMLDocument:
-        """用 xml.etree.ElementTree 解析 SBML（标准库后备）。"""
-        import xml.etree.ElementTree as ET
+        """用 defusedxml.ElementTree 解析 SBML（安全后备）。
+
+        Task 19 SEC-1.1: 原 xml.etree.ElementTree 不防御内部实体扩展（Billion Laughs），
+        改用 defusedxml.ElementTree。defusedxml 不可用时降级到正则解析，
+        绝不回退到 xml.etree（与 biomodels_client.py 安全硬约束一致）。
+        """
+        try:
+            from defusedxml import ElementTree as ET  # type: ignore
+        except ImportError:
+            # defusedxml 不可用：降级到正则解析，不回退到 xml.etree
+            logger.warning(
+                "defusedxml 未安装，SBML ElementTree 后备降级到正则解析"
+            )
+            if isinstance(sbml_content, bytes):
+                sbml_content = sbml_content.decode("utf-8", errors="replace")
+            return self._parse_with_regex(sbml_content)
 
         if isinstance(sbml_content, bytes):
             root = ET.fromstring(sbml_content)
         else:
             root = ET.fromstring(sbml_content)
-        return self._build_document(root, backend="elementtree")
+        return self._build_document(root, backend="defusedxml")
 
     # -------------------------------------------------------------------------
     # 正则兜底（XML 解析全失败时）

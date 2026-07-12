@@ -452,10 +452,21 @@ class BenchmarkRunner:
         """
         summary = self.run_all()
         md = self._format_results_markdown(summary)
-        out = Path(output_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(md, encoding="utf-8")
-        logger.info("Benchmark results written to %s", out)
+
+        # Task 19 SubTask 19.4: 路径遍历防护
+        # spec.md 第 279-282 行：写入文件时 SHALL 校验路径不包含 `..` / 绝对路径注入。
+        # output_path 为公开方法参数，若含 `..` 或为绝对路径则降级到默认文件名。
+        _out_path = Path(output_path)
+        if _out_path.is_absolute() or ".." in _out_path.parts:
+            logger.warning(
+                "run_all_to_markdown: output_path 含绝对路径或 '..' 遍历，降级到默认: %s",
+                output_path,
+            )
+            _out_path = Path("benchmark_results.md")
+
+        _out_path.parent.mkdir(parents=True, exist_ok=True)
+        _out_path.write_text(md, encoding="utf-8")
+        logger.info("Benchmark results written to %s", _out_path)
         return summary
 
     def _format_results_markdown(self, summary: dict[str, Any]) -> str:

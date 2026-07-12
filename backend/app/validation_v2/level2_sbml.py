@@ -366,6 +366,39 @@ class Level2SBMLValidator:
     # =========================================================================
     # SubTask 5.3.5: 物种对齐（用 ontology ID，不用字符串匹配）
     # =========================================================================
+    @staticmethod
+    def _normalize_species_name(name: str) -> str:
+        """[RC27] 规范化 species 名字，用于 ontology KB 查询和兜底字符串匹配。
+
+        剥离磷酸化前缀（p/pp）和亚细胞定位/修饰后缀，使修饰形式（如 pEGFR、
+        ppERK_nuclear、RasGTP）能映射到基础蛋白名（EGFR、ERK、RAS）。
+
+        规范化步骤：
+        1. 去掉前缀 p/PP（磷酸化标记）
+        2. 去掉后缀 _nuclear/_mRNA/_GTP/_GDP/_phosphorylation/_activation
+        3. 大写化
+
+        Examples:
+            "pEGFR" → "EGFR"
+            "ppERK_nuclear" → "ERK"
+            "RasGTP" → "RAS"
+            "DUSP_mRNA" → "DUSP"
+        """
+        if not name:
+            return ""
+        n = name.strip()
+        # 去掉磷酸化前缀 p/pp（后接大写字母，避免误剥 pip3 等小写名）
+        import re
+        n = re.sub(r"^(p|P){1,2}(?=[A-Z])", "", n)
+        # 去掉修饰/定位后缀
+        n = re.sub(
+            r"_(nuclear|mRNA|GTP|GDP|phosphorylation|activation|cytosol|membrane)$",
+            "",
+            n,
+            flags=re.IGNORECASE,
+        )
+        return n.upper()
+
     def _align_species_by_ontology(
         self,
         v4_species: list[dict[str, Any]],
@@ -380,7 +413,8 @@ class Level2SBMLValidator:
         匹配优先级：
         1. HGNC ID 完全匹配（最高优先级）
         2. UniProt accession 完全匹配（次优先级）
-        3. 无 ontology ID 的 species 标记 unmatched（不强制对齐）
+        3. [RC27] 规范化名字兜底匹配（当 ontology ID 不可用时）
+        4. 无 ontology ID 且规范化名字也不匹配 → 标记 unmatched
 
         Args:
             v4_species: v4 species 列表，每项含 {id, canonical_name, ontology?}
@@ -394,6 +428,8 @@ class Level2SBMLValidator:
         # 构建 SBML ontology 索引：hgnc_id → sbml_species_id, uniprot_id → sbml_species_id
         hgnc_to_sbml: dict[str, str] = {}
         uniprot_to_sbml: dict[str, str] = {}
+        # [RC27] 同时构建规范化名字索引作为兜底
+        normname_to_sbml: dict[str, str] = {}
         for sp in sbml_species or []:
             sp_id = (
                 sp.get("species_id")
@@ -411,10 +447,17 @@ class Level2SBMLValidator:
                 hgnc_to_sbml[hgnc] = sp_id
             if uniprot:
                 uniprot_to_sbml[uniprot] = sp_id
+            # [RC27] 规范化名字索引
+            sbml_canonical = sp.get("canonical_name", "") or sp_id
+            norm = self._normalize_species_name(sbml_canonical)
+            if norm and norm not in normname_to_sbml:
+                normname_to_sbml[norm] = sp_id
 
         # 构建 v4 ontology 索引：从 grounding_ledger 或本地 KB 查 ontology ID
         hgnc_to_v4: dict[str, str] = {}
         uniprot_to_v4: dict[str, str] = {}
+        # [RC27] 同时记录未通过 ontology 匹配的 v4 species 供兜底
+        v4_unmatched: list[tuple[str, str]] = []  # (v4_id, normalized_name)
         for sp in v4_species or []:
             sp_id = sp.get("id") or sp.get("canonical_name") or ""
             if not sp_id:
@@ -423,9 +466,10 @@ class Level2SBMLValidator:
             hgnc = ont.get("hgnc_id")
             uniprot = ont.get("uniprot_id")
 
-            # 无 ontology ID → 查本地 KB（_LOCAL_ONTOLOGY）
+            # 无 ontology ID → 查本地 KB（_LOCAL_ONTOLOGY），使用规范化名字
             if not (hgnc or uniprot):
-                local_ont = self._lookup_local_ontology(sp.get("canonical_name", ""))
+                canonical = sp.get("canonical_name", "") or sp_id
+                local_ont = self._lookup_local_ontology(canonical)
                 if local_ont:
                     hgnc = local_ont.get("hgnc_id")
                     uniprot = local_ont.get("uniprot_id")
@@ -434,6 +478,13 @@ class Level2SBMLValidator:
                 hgnc_to_v4[hgnc] = sp_id
             if uniprot:
                 uniprot_to_v4[uniprot] = sp_id
+
+            # [RC27] 记录未通过 ontology 匹配的 v4 species
+            if not (hgnc or uniprot):
+                canonical = sp.get("canonical_name", "") or sp_id
+                norm = self._normalize_species_name(canonical)
+                if norm:
+                    v4_unmatched.append((sp_id, norm))
 
         # 按 ontology ID 匹配（HGNC 优先，UniProt 次之）
         mapping: dict[str, str] = {}
@@ -446,6 +497,14 @@ class Level2SBMLValidator:
             if v4_id in mapping:
                 continue
             sbml_id = uniprot_to_sbml.get(uniprot)
+            if sbml_id:
+                mapping[v4_id] = sbml_id
+
+        # [RC27] 兜底：对未通过 ontology 匹配的 v4 species，用规范化名字匹配 SBML
+        for v4_id, norm_name in v4_unmatched:
+            if v4_id in mapping:
+                continue
+            sbml_id = normname_to_sbml.get(norm_name)
             if sbml_id:
                 mapping[v4_id] = sbml_id
 
@@ -552,6 +611,7 @@ class Level2SBMLValidator:
 
         用于 v4 species 无 ontology_ref 时的兜底（修复审计 §10.3：
         不依赖字符串匹配对齐，但允许从 canonical_name 查 ontology ID）。
+        [RC27] 使用规范化名字查询，使 pEGFR/ppERK_nuclear 等修饰形式能匹配。
         """
         if not canonical_name:
             return {}
@@ -559,7 +619,17 @@ class Level2SBMLValidator:
             # 延迟导入避免循环依赖
             from app.sbml_grounder.ontology_grounding import _LOCAL_ONTOLOGY
 
-            return _LOCAL_ONTOLOGY.get(canonical_name.upper(), {}) or {}
+            # 先用原始名字大写查询
+            result = _LOCAL_ONTOLOGY.get(canonical_name.upper(), {}) or {}
+            if result:
+                return result
+            # [RC27] 再用规范化名字查询（剥离 p/pp 前缀和修饰后缀）
+            norm = self._normalize_species_name(canonical_name)
+            if norm and norm != canonical_name.upper():
+                result = _LOCAL_ONTOLOGY.get(norm, {}) or {}
+                if result:
+                    return result
+            return {}
         except Exception:
             return {}
 
@@ -582,7 +652,7 @@ class Level2SBMLValidator:
             # 提取每个 species 的时间序列
             species_data: dict[str, list[tuple[float, float]]] = {}
             col_names = result.colnames if hasattr(result, "colnames") else []
-            for col in col_names:
+            for col_idx, col in enumerate(col_names):
                 # roadrunner 列名形如 "EGF", "[EGF]", "compartment/EGF" 等
                 # 简化：取最后一段作为 species_id
                 sp_id = col.replace("[", "").replace("]", "").split("/")[-1]
@@ -590,7 +660,7 @@ class Level2SBMLValidator:
                     continue
                 series = list(zip(
                     [float(t) for t in result[:, 0]],
-                    [float(v) for v in result[:, col]],
+                    [float(v) for v in result[:, col_idx]],
                 ))
                 species_data[sp_id] = series
             return species_data
@@ -623,6 +693,21 @@ class Level2SBMLValidator:
             import numpy as np
             from scipy.integrate import solve_ivp
 
+            # Task 19 SEC-3.1: exec() 前必须做静态安全扫描 + AST 预检
+            # 原因：ode_code 是 LLM 生成的代码，直接在主进程 exec() 会绕过
+            # sandbox 的 subprocess 隔离。虽然 ode_code 在 node3_execute_sandbox
+            # 阶段已通过 sandbox 执行过一次，但作为深度防御，Level2 重新执行
+            # 时必须再次静态扫描，防止 LLM 在不同阶段生成不同危险代码。
+            from app import sandbox as _sandbox
+
+            _ast_ok, _ast_msg = _sandbox._ast_precheck(ode_code)
+            if not _ast_ok:
+                return {"method": "failed", "error": f"安全拦截：{_ast_msg}"}
+
+            _sec_ok, _sec_msg = _sandbox._check_code_security(ode_code)
+            if not _sec_ok:
+                return {"method": "failed", "error": f"安全拦截：{_sec_msg}"}
+
             # 准备 exec 命名空间：单一 dict 兼作 globals 与 locals，
             # 确保 ode_code 顶层定义的 _ode_rhs 其 __globals__ 能查到
             # SPECIES_NAMES / EDGES / SP_IDX / _get_param 等同名字典内变量
@@ -634,6 +719,7 @@ class Level2SBMLValidator:
             }
 
             # 执行 ode_code，期望其定义 _ode_rhs(t, y) 及 SPECIES_NAMES / Y0 / T_END 等
+            # SEC-3.1: exec 前已完成静态安全扫描 + AST 预检
             exec(ode_code, namespace)
 
             # 从命名空间提取 rhs 函数与仿真配置（优先 ode_code 定义，回退 ode_system 字段）

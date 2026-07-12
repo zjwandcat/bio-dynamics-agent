@@ -202,12 +202,16 @@ class BioModelsAPIClient:
             models = data.get("models", []) or []
             results: list[dict[str, Any]] = []
             for m in models[:top_k]:
+                # Task 19 SubTask 19.2: per-item isinstance 守卫，防止单条异常导致整批丢失
+                if not isinstance(m, dict):
+                    logger.warning("BioModels search 跳过非 dict 候选: %r", type(m))
+                    continue
                 results.append({
-                    "model_id": m.get("id", ""),
-                    "name": m.get("name", ""),
-                    "format": m.get("format", ""),
-                    "submissionDate": m.get("submissionDate", ""),
-                    "publication_id": m.get("publicationId", ""),
+                    "model_id": m.get("id", "") or "",
+                    "name": m.get("name", "") or "",
+                    "format": m.get("format", "") or "",
+                    "submissionDate": m.get("submissionDate", "") or "",
+                    "publication_id": m.get("publicationId", "") or "",
                 })
             return results
         except Exception as exc:
@@ -236,9 +240,10 @@ class BioModelsAPIClient:
                 timeout=self.timeout,
             )
             if resp.status_code == 200 and resp.text.strip():
-                # 简单校验是否是 XML
+                # Task 19 SubTask 19.2: schema 校验 — 用 defusedxml 实际 parse 验证
+                # 旧实现仅用字符串包含判断（"<sbml" in text），可被错误页绕过。
                 text = resp.text
-                if "<sbml" in text[:2000].lower() or "<?xml" in text[:200]:
+                if self._validate_sbml_schema(text):
                     logger.info("BioModels 下载成功: %s (size=%d)", model_id, len(text))
                     self._cache_to_local(model_id, text)
                     return text
@@ -357,6 +362,40 @@ class BioModelsAPIClient:
                 s += 1
             return s
         return max(candidates, key=_score)
+
+    @staticmethod
+    def _validate_sbml_schema(text: str) -> bool:
+        """Task 19 SubTask 19.2: 校验下载内容是否为合法 SBML XML。
+
+        用 defusedxml 实际 parse 验证 XML 结构（取代旧字符串包含判断），
+        并检查根元素是否为 sbml 标签。defusedxml 不可用时降级到字符串校验。
+
+        Args:
+            text: 待校验的文本
+
+        Returns:
+            True 表示是合法 SBML XML，False 表示不是
+        """
+        if not text or not text.strip():
+            return False
+        # 优先用 defusedxml 实际 parse
+        if DEFUSEDXML_AVAILABLE and DefusedET is not None:
+            try:
+                root = DefusedET.fromstring(text)
+                # 检查根元素标签是否为 sbml（含命名空间）
+                tag = root.tag
+                if isinstance(tag, str) and (
+                    tag == "sbml" or tag.endswith("}sbml")
+                ):
+                    return True
+                logger.warning("SBML schema 校验：根元素非 <sbml>，实际为 %s", tag)
+                return False
+            except Exception as exc:
+                logger.warning("SBML schema 校验：XML 解析失败: %s", exc)
+                return False
+        # defusedxml 不可用时降级到字符串校验（已有 try/except 兜底）
+        logger.warning("defusedxml 不可用，SBML schema 校验降级到字符串判断")
+        return "<sbml" in text[:2000].lower()
 
     @staticmethod
     def _load_from_local_cache(model_id: str) -> str:

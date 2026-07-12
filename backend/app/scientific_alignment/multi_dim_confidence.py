@@ -618,6 +618,23 @@ def write_breakdown_json(
     if log_dir is None:
         log_dir = _DEFAULT_LOG_DIR
 
+    # Task 19 SubTask 19.4: 路径遍历防护
+    # 校验 log_dir 不含 `..` 且不为绝对路径，防止任意目录写入。
+    # spec.md 第 279-282 行：写入 logs/run_<timestamp>/ 时 SHALL 校验路径
+    # 不包含 `..` / 绝对路径注入，文件名 SHALL 仅允许白名单字符集。
+    from pathlib import Path as _Path
+    _log_dir_path = _Path(log_dir)
+    if _log_dir_path.is_absolute():
+        logger.warning(
+            "write_breakdown_json: log_dir 为绝对路径，降级到默认目录: %s", log_dir
+        )
+        log_dir = _DEFAULT_LOG_DIR
+    elif ".." in _log_dir_path.parts:
+        logger.warning(
+            "write_breakdown_json: log_dir 含 '..' 路径遍历，降级到默认目录: %s", log_dir
+        )
+        log_dir = _DEFAULT_LOG_DIR
+
     # 构造时间戳子目录
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = os.path.join(log_dir, f"run_{timestamp}")

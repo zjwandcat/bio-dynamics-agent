@@ -232,28 +232,48 @@ def _query_clinical_trials(drug_name: str) -> list[dict]:
         response = requests.get(url, params=params, timeout=8)
         response.raise_for_status()
         data = response.json()
-        studies = data.get("studies", [])
+        studies = data.get("studies", []) or []
         results: list[dict] = []
         for study in studies:
-            protocol = study.get("protocolSection", {})
-            identification = protocol.get("identification", {})
-            status_module = protocol.get("statusModule", {})
-            conditions_module = protocol.get("conditionsModule", {})
-            nct_id = identification.get("nctId", "")
-            phase = status_module.get("phase", "Unknown")
-            if isinstance(phase, list):
-                phase = "/".join(phase)
-            status = status_module.get("overallStatus", "Unknown")
-            conditions = conditions_module.get("conditions", [])
-            condition = conditions[0] if conditions else ""
-            results.append(
-                {
-                    "nct_id": nct_id,
-                    "phase": phase,
-                    "condition": condition,
-                    "status": status,
-                }
-            )
+            # Task 19 SubTask 19.2: per-study isinstance 守卫
+            # 防止单条非 dict study 导致整批结果丢失（被外层 try/except 静默吞掉）
+            if not isinstance(study, dict):
+                logger.warning("ClinicalTrials 跳过非 dict study: %r", type(study))
+                continue
+            try:
+                protocol = study.get("protocolSection", {}) or {}
+                if not isinstance(protocol, dict):
+                    protocol = {}
+                identification = protocol.get("identification", {}) or {}
+                if not isinstance(identification, dict):
+                    identification = {}
+                status_module = protocol.get("statusModule", {}) or {}
+                if not isinstance(status_module, dict):
+                    status_module = {}
+                conditions_module = protocol.get("conditionsModule", {}) or {}
+                if not isinstance(conditions_module, dict):
+                    conditions_module = {}
+                nct_id = identification.get("nctId", "") or ""
+                phase = status_module.get("phase", "Unknown") or "Unknown"
+                if isinstance(phase, list):
+                    phase = "/".join(str(p) for p in phase)
+                status = status_module.get("overallStatus", "Unknown") or "Unknown"
+                conditions = conditions_module.get("conditions", []) or []
+                if not isinstance(conditions, list):
+                    conditions = []
+                condition = conditions[0] if conditions else ""
+                results.append(
+                    {
+                        "nct_id": nct_id,
+                        "phase": phase,
+                        "condition": condition,
+                        "status": status,
+                    }
+                )
+            except Exception as exc:
+                # per-study 容错：单条解析失败不影响其他 study
+                logger.warning("ClinicalTrials 单条 study 解析失败，跳过: %s", exc)
+                continue
         return results
     except Exception as exc:
         logger.warning("ClinicalTrials.gov 查询失败（%s）：%s", drug_name, exc)
