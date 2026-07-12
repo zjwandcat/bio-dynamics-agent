@@ -134,6 +134,30 @@ from app.scientific_alignment.report_sections import (
     render_confidence_table,
     render_parameter_table,
 )
+from app.scientific_alignment.loop_controller import (
+    LoopController,
+    LoopIteration,
+    LoopResult,
+    LoopStatus,
+)
+from app.scientific_alignment.rag_evidence_boost import (
+    BoostedCandidate,
+    EvidenceBoostReport,
+    RAGCandidate,
+    apply_boost_to_rerank_results,
+    boost_from_dicts,
+    boost_rag_candidates,
+)
+from app.scientific_alignment.benchmark_criteria import (
+    SCIENTIFIC_ALIGNMENT_FIELDS,
+    BenchmarkCriteria,
+    CriteriaCheckReport,
+    ForbiddenPattern,
+    SemanticCriterion,
+    check_benchmark_criteria,
+    get_benchmark_criteria,
+    validate_yaml_fields,
+)
 
 __all__ = [
     "EvidenceType",
@@ -218,4 +242,25 @@ __all__ = [
     "render_confidence_table",
     "render_parameter_table",
     "render_all_sections",
+    # Task 16 Loop Controller
+    "LoopStatus",
+    "LoopIteration",
+    "LoopResult",
+    "LoopController",
+    # Task 4 RAG Evidence Boost
+    "RAGCandidate",
+    "BoostedCandidate",
+    "EvidenceBoostReport",
+    "boost_rag_candidates",
+    "boost_from_dicts",
+    "apply_boost_to_rerank_results",
+    # Task 2 Benchmark Criteria
+    "SCIENTIFIC_ALIGNMENT_FIELDS",
+    "SemanticCriterion",
+    "ForbiddenPattern",
+    "BenchmarkCriteria",
+    "CriteriaCheckReport",
+    "get_benchmark_criteria",
+    "check_benchmark_criteria",
+    "validate_yaml_fields",
 ]
