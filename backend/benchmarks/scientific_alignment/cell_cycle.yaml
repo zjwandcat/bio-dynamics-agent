@@ -1,0 +1,42 @@
+# BioDynamics Scientific Alignment Gold Standard — Cell Cycle 通路
+# 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
+# 参考：Novak 2001 (PMID:11381155) / Tyson 2001 — Tyson-Novak cell cycle 模型
+# TODO: verify PMID — Tyson 2001、Morgan 2007、Malumbres 2009
+pathway: CELL_CYCLE
+name: "Eukaryotic Cell Cycle Control"
+expected_dynamics:
+  Cyclin_CDK_oscillation: "periodic, phase-locked"
+  RB_phosphorylation: "bistable G1/S transition"
+  bistable_switch: "Start/Restriction point switch"
+  APC_C_destruction: "cyclin degradation, anaphase"
+required_mechanisms:
+  - Cyclin_D_CDK46
+  - Cyclin_E_CDK2
+  - Cyclin_B_CDK1
+  - RB_phosphorylation
+  - APC_C_Cdc20
+  - SAC_checkpoints
+required_biomodels:
+  - BIOMD0000000056   # Tyson-Novak 2001 cell cycle model
+required_reviews:
+  - PMID:11381155     # Novak 2001 (Tyson-Novak model) (confirmed)
+  - PMID:xxxxxxxx     # TODO: verify Tyson 2001 PMID
+  - PMID:xxxxxxxx     # TODO: verify Morgan 2007 PMID
+  - PMID:xxxxxxxx     # TODO: verify Malumbres 2009 PMID
+required_experiments:
+  - Flow cytometry cell cycle (PI/BrdU)
+  - Cyclin B1 Western blot
+  - CDK1 kinase assay
+  - Roscovitine treatment (CDK inhibitor)
+  - time course across cell cycle phases
+forbidden_patterns:
+  - "No PubMed evidence"
+  - "No BioModels comparison"
+  - "cell cycle without APC/C degradation"
+key_time_scales:
+  G1_S_transition: "hours"
+  Mitotic_exit: "minutes (APC/C dependent)"
+key_feedbacks:
+  - "Cyclin-CDK positive feedback on RB phosphorylation"
+  - "APC/C-Cdc20 negative feedback on cyclin B"
+  - "SAC negative feedback on APC/C"

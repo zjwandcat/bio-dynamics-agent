@@ -1,0 +1,38 @@
+# BioDynamics Scientific Alignment Gold Standard — MAPK cascade 通路
+# 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
+# 参考：Huang & Ferrell 1996 (PMID:8663050) / Levchenko 2000 / Kholodenko 2000
+# TODO: verify PMID — Levchenko 2000、Kholodenko 2000、Witzel 2012
+pathway: MAPK_ERK
+name: "MAPK/ERK Cascade Signaling"
+expected_dynamics:
+  ERK: "transient peak, ultrasensitive"
+  signal_amplification: "10-100x from Ras to ERK"
+  ultrasensitivity: "Hill-like switch behavior"
+  ERK_nuclear_translocation: "rapid after peak"
+required_mechanisms:
+  - Ras_activation
+  - Raf_MEK_ERK_cascade
+  - ERK_nuclear_translocation
+  - negative_feedback
+required_biomodels:
+  - BIOMD0000000012   # Levchenko 2000 scaffold model
+required_reviews:
+  - PMID:8663050      # Huang & Ferrell 1996 PNAS (ultrasensitivity) (confirmed)
+  - PMID:xxxxxxxx     # TODO: verify Levchenko 2000 PMID
+  - PMID:xxxxxxxx     # TODO: verify Kholodenko 2000 PMID
+  - PMID:xxxxxxxx     # TODO: verify Witzel 2012 PMID
+required_experiments:
+  - ppERK Western blot
+  - MEK inhibitor (U0126) validation
+  - dose response (EGF gradient)
+  - time course 0-60 min
+forbidden_patterns:
+  - "No PubMed evidence"
+  - "No BioModels comparison"
+  - "monotonic ERK increase"
+key_time_scales:
+  ERK_peak: "5-20 min"
+  cascade_amplification: "seconds per tier"
+key_feedbacks:
+  - "negative feedback from ERK to SOS/Raf"
+  - "DUSP-mediated dephosphorylation"

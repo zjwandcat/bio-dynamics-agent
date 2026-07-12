@@ -1,0 +1,56 @@
+# BioDynamics Canonical Reference Library — JAK-STAT 通路
+# Task 22: 每通路唯一权威参考，所有 Benchmark "标准答案"必须基于 Canonical。
+pathway: JAK_STAT
+name: "JAK-STAT Cytokine Signaling"
+
+canonical_reviews: []      # TODO: verify PMID — Swameye 2003 / Schindler 2008 / Aaronson 2002
+
+canonical_models:           # 权威 BioModels ID 列表
+  - "BIOMD0000000026"       # Swameye 2003 STAT5 model
+
+canonical_mechanism:
+  required_nodes:           # 机制节点链（大写蛋白名）
+    - CytokineReceptor
+    - JAK
+    - STAT5
+    - SOCS3
+    - CIS
+  edges:                    # 机制边（因果描述）
+    - from: Cytokine
+      to: JAK
+      relation: activation
+    - from: JAK
+      to: STAT5
+      relation: phosphorylation
+    - from: STAT5
+      to: STAT5_dimer
+      relation: dimerization
+    - from: STAT5_dimer
+      to: STAT5_nuclear
+      relation: nuclear_translocation
+    - from: STAT5_nuclear
+      to: SOCS3
+      relation: transcription
+    - from: STAT5_nuclear
+      to: CIS
+      relation: transcription
+    - from: SOCS3
+      to: JAK
+      relation: inhibition  # 负反馈
+
+expected_behavior:          # 动力学行为预期
+  stat_nuclear_translocation: "5-30 min"
+  socs_feedback: "required"
+  transient: true
+
+known_negative_feedback:    # 已知负反馈
+  - SOCS3
+  - CIS
+
+consistency_rules:          # 供 Consistency Checker 加载的自洽规则
+  - rule: "STAT5 nuclear translocation 不能晚于 SOCS3 表达"
+    assertion: "stat5_nuclear_time < socs3_expression_time"
+    violation_label: "stat_nuclear_after_socs3"
+  - rule: "SOCS3 表达晚于 STAT5 Peak"
+    assertion: "socs3_expression_time > stat5_peak_time"
+    violation_label: "socs3_before_stat5_peak"

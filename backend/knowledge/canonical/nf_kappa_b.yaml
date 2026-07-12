@@ -1,0 +1,60 @@
+# BioDynamics Canonical Reference Library — NF-κB 通路
+# Task 22: 每通路唯一权威参考，所有 Benchmark "标准答案"必须基于 Canonical。
+pathway: NF_KB_SIGNALING
+name: "NF-κB Inflammatory Signaling"
+
+canonical_reviews:          # 权威综述 PMID 列表
+  - "PMID:12124261"         # Hoffmann 2002 Science（NF-κB 振荡）
+
+canonical_models:           # 权威 BioModels ID 列表
+  - "BIOMD0000000072"       # Hoffmann 2002 NF-κB model
+
+canonical_mechanism:
+  required_nodes:           # 机制节点链（大写蛋白名）
+    - IKK
+    - IkB_alpha
+    - NFkB_p65
+    - A20
+  edges:                    # 机制边（因果描述）
+    - from: TNF
+      to: IKK
+      relation: activation
+    - from: IKK
+      to: IkB_alpha
+      relation: degradation
+    - from: IkB_alpha
+      to: NFkB_p65
+      relation: inhibition  # 胞质滞留
+    - from: NFkB_p65
+      to: NFkB_nuclear
+      relation: nuclear_translocation
+    - from: NFkB_p65
+      to: IkB_alpha
+      relation: transcription  # 负反馈
+    - from: NFkB_p65
+      to: A20
+      relation: transcription  # 负反馈
+    - from: A20
+      to: IKK
+      relation: inhibition
+    - from: IkB_alpha
+      to: NFkB_nuclear
+      relation: nuclear_export
+
+expected_behavior:          # 动力学行为预期
+  nfkb_nuclear_oscillation: true
+  ikb_degradation: true
+  pulse_period: "2 hours"
+  a20_feedback: "required"
+
+known_negative_feedback:    # 已知负反馈
+  - IkB_alpha
+  - A20
+
+consistency_rules:          # 供 Consistency Checker 加载的自洽规则
+  - rule: "IkB resynthesis 晚于 NFkB nuclear translocation"
+    assertion: "ikb_resynthesis_time > nfkb_nuclear_time"
+    violation_label: "ikb_resynthesis_before_nfkb_nuclear"
+  - rule: "A20 表达晚于 NFkB Peak"
+    assertion: "a20_expression_time > nfkb_peak_time"
+    violation_label: "a20_before_nfkb_peak"

@@ -1,0 +1,57 @@
+# BioDynamics Canonical Reference Library — Apoptosis 通路
+# Task 22: 每通路唯一权威参考，所有 Benchmark "标准答案"必须基于 Canonical。
+pathway: APOPTOSIS
+name: "Extrinsic & Intrinsic Apoptosis Signaling"
+
+canonical_reviews: []      # TODO: verify PMID — Taylor 2008 / Danial 2004 / Green 2004
+
+canonical_models:           # 权威 BioModels ID 列表
+  - "BIOMD0000000205"       # caspase cascade model
+
+canonical_mechanism:
+  required_nodes:           # 机制节点链（大写蛋白名）
+    - Fas
+    - Caspase8
+    - Caspase3
+    - BAX
+    - BAK
+    - tBID
+    - XIAP
+  edges:                    # 机制边（因果描述）
+    - from: Fas
+      to: Caspase8
+      relation: activation
+    - from: Caspase8
+      to: tBID
+      relation: cleavage
+    - from: tBID
+      to: BAX
+      relation: activation
+    - from: BAX
+      to: MOMP
+      relation: activation
+    - from: MOMP
+      to: Caspase3
+      relation: activation
+    - from: Caspase3
+      to: XIAP
+      relation: activation
+    - from: XIAP
+      to: Caspase3
+      relation: inhibition  # 负反馈
+
+expected_behavior:          # 动力学行为预期
+  caspase_activation: "bistable"
+  momp: "irreversible"
+  tBid_amplification: true
+
+known_negative_feedback:    # 已知负反馈
+  - XIAP-Caspase3
+
+consistency_rules:          # 供 Consistency Checker 加载的自洽规则
+  - rule: "MOMP 后 Caspase3 不可逆激活"
+    assertion: "momp_commitment implies caspase3_irreversible"
+    violation_label: "reversible_caspase_after_momp"
+  - rule: "Caspase 激活呈双稳态开关"
+    assertion: "caspase_bistable_switch == true"
+    violation_label: "no_bistable_switch"

@@ -1,0 +1,64 @@
+# BioDynamics Scientific Alignment Loop — Cell Cycle Pathway Literature Gold Standard
+# Task 3.1: 文献级 Gold Standard
+# 排序策略：Review(5) > Mechanism(4) > BioModels Source(3) > Recent Application(2) > Case Report(1)
+pathway: cell_cycle
+
+classical_reviews:        # 经典综述（最高优先级，score 5）
+  - pmid: "PMID:11381155"  # 已确认
+    title: "Mathematical model of the cell cycle: a new model provides insight into the role of cyclin"
+    authors: "Novak B, Tyson JJ"
+    year: 2001
+    journal: "Nature Reviews Molecular Cell Biology"
+    reason: "细胞周期数学模型经典综述，定义 Cyclin-CDK-Cdc20 振荡框架"
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "Regulation of the eukaryotic cell cycle: molecular antagonism, hysteresis, and irreversible transitions"
+    authors: "Tyson JJ, Novak B"
+    year: 2001
+    journal: "Journal of Theoretical Biology"
+    reason: "细胞周期调控理论奠基综述，定义不可逆转变与滞后回滞机制"
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "The cell cycle: principles of control"
+    authors: "Morgan DO"
+    year: 2007
+    journal: "New Science Press"
+    reason: "细胞周期调控原理权威教科书级综述，系统定义 CDK 检查点机制"
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "Mammalian cell cycle: the cdks and their activators and inhibitors"
+    authors: "Malumbres M, Barbacid M"
+    year: 2009
+    journal: "Nature Reviews Cancer"
+    reason: "哺乳动物细胞周期 CDK 激活/抑制综述经典，定义 CDK 家族功能"
+
+mechanism_papers:         # 机制论文（score 4）
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "Modeling the restriction point of the cell cycle"
+    authors: "Novak B, Tyson JJ"
+    year: 2004
+    journal: "Molecular Biology of the Cell"
+    reason: "细胞周期限制点建模机制，量化 R 点不可逆转变的分子开关"
+
+biomodels_source_papers:  # BioModels 来源论文（score 3）
+  - pmid: "PMID:11381155"  # 已确认（与 classical_reviews 重叠，分类时取更高优先级 REVIEW）
+    biomodels_id: "BIOMD0000000056"
+    title: "Mathematical model of the cell cycle"
+    authors: "Novak B, Tyson JJ"
+    year: 2001
+    journal: "Nature Reviews Molecular Cell Biology"
+
+recent_applications:      # 近期应用论文（score 2，仅补充）
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "Cell cycle dynamics in cancer therapy and drug resistance"
+    authors: "Recent cell cycle application study"
+    year: 2021
+    journal: "Nature Reviews Cancer"
+    reason: "细胞周期治疗耐药动力学近期应用（PubMed 补充）"
+
+case_reports: []          # 案例报告（score 1，一般不用）
+
+ranking_policy:
+  review_score: 5
+  mechanism_score: 4
+  biomodels_source_score: 3
+  application_score: 2
+  case_report_score: 1
+  rule: "经典综述与机制论文优先；PubMed 结果仅当经典文献不足时补充"

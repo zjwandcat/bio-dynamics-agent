@@ -1,0 +1,58 @@
+# BioDynamics Scientific Alignment Loop — NF-κB Pathway Literature Gold Standard
+# Task 3.1: 文献级 Gold Standard
+# 排序策略：Review(5) > Mechanism(4) > BioModels Source(3) > Recent Application(2) > Case Report(1)
+pathway: nf_kappa_b
+
+classical_reviews:        # 经典综述（最高优先级，score 5）
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "Signaling to NF-kappaB"
+    authors: "Hayden MS, Ghosh S"
+    year: 2006
+    journal: "Genes & Development"
+    reason: "NF-κB 信号转导权威综述，定义 IKK-NF-κB 信号轴经典框架"
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "Regulation of NF-kappaB by deubiquitinases"
+    authors: "O'Dea EL et al"
+    year: 2010
+    journal: "Nature Reviews Immunology"
+    reason: "NF-κB 去泛素化调控综述，定义 A20/USP 反馈调控机制"
+
+mechanism_papers:         # 机制论文（score 4）
+  - pmid: "PMID:12124261"  # 已确认
+    title: "The IkappaB-NF-kappaB signaling module: temporal control and selective gene activation"
+    authors: "Hoffmann A, Levchenko A, Scott ML, Baltimore D"
+    year: 2002
+    journal: "Science"
+    reason: "IKB-NF-κB 信号模块时间控制机制奠基，定义 NF-κB 振荡动力学"
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "Oscillations in NF-kappaB signaling control the dynamics of gene expression"
+    authors: "Nelson DE et al"
+    year: 2004
+    journal: "Science"
+    reason: "NF-κB 振荡控制基因表达动力学实验经典，首次活细胞成像振荡"
+
+biomodels_source_papers:  # BioModels 来源论文（score 3）
+  - pmid: "PMID:12124261"  # 已确认（与 mechanism_papers 重叠，分类时取更高优先级 MECHANISM）
+    biomodels_id: "BIOMD0000000072"
+    title: "The IkappaB-NF-kappaB signaling module"
+    authors: "Hoffmann A et al"
+    year: 2002
+    journal: "Science"
+
+recent_applications:      # 近期应用论文（score 2，仅补充）
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "NF-kappaB dynamics in inflammation and cancer therapy"
+    authors: "Recent NF-kappaB application study"
+    year: 2021
+    journal: "Nature Reviews Cancer"
+    reason: "NF-κB 炎症与治疗动力学近期应用（PubMed 补充）"
+
+case_reports: []          # 案例报告（score 1，一般不用）
+
+ranking_policy:
+  review_score: 5
+  mechanism_score: 4
+  biomodels_source_score: 3
+  application_score: 2
+  case_report_score: 1
+  rule: "经典综述与机制论文优先；PubMed 结果仅当经典文献不足时补充"

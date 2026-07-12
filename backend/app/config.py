@@ -294,6 +294,29 @@ class Settings:
         "V4_CROSSTALK_COORDINATOR_ENABLED", "false"
     ).lower() == "true"
 
+    # [P1-4] V4_SPECIALIST_KG_FEEDBACK_ENABLED: 控制 Specialist feedback_loops 回写 v3 KG
+    #   - false（默认）：Specialist 输出仅写入 v4_specialist_outputs，不修改 v3 KG（原铁律行为）
+    #   - true：将 Specialist 的 feedback_loops 转换为 KG edges 注入 v3 knowledge_graph +
+    #     network_json，使 DUSP/MDM2 等负反馈环进入 LLM ODE 生成的输入
+    # 铁律：flag=false 时 v3 KG 完全由 LLM 驱动，行为与原系统一致
+    # 依赖：V4_PATHWAY_SPECIALIST_ENABLED=true（Specialist 必须先执行）
+    V4_SPECIALIST_KG_FEEDBACK_ENABLED: bool = os.getenv(
+        "V4_SPECIALIST_KG_FEEDBACK_ENABLED", "false"
+    ).lower() == "true"
+
+    # [BM2-BM8 修复] V4_SPECIALIST_KG_WRITEBACK_MODE: Specialist KG 回写模式选择
+    #   - "none"（默认）：仅 feedback_loops 回写（等价修复前行为，用于回退）
+    #   - "mode_a": Specialist 核心 species/reactions 注入 v3 KG（让 N6 ODE 生成器
+    #     看到完整通路拓扑：MDM2/β-catenin/MOMP/STAT3 dimer 等）
+    #   - "mode_b": worker_sandbox 优先执行 v4_ode_system.ode_code（Specialist
+    #     渲染的 ODE，绕过 LLM ODE 生成）
+    #   - "both":  同时启用 mode_a + mode_b（mode_a 增强 KG，mode_b 作为 ODE 源）
+    # 铁律：mode=none 时行为完全等价修复前（v3 LLM KG + v3 ode_model.code）
+    # 依赖：V4_PATHWAY_SPECIALIST_ENABLED=true + V4_SPECIALIST_KG_FEEDBACK_ENABLED=true
+    V4_SPECIALIST_KG_WRITEBACK_MODE: str = os.getenv(
+        "V4_SPECIALIST_KG_WRITEBACK_MODE", "none"
+    ).lower()
+
     # =============================================================================
     # Phase 5 Feature Flags（SBML Grounding + Validation Pyramid）
     # =============================================================================
@@ -339,6 +362,81 @@ class Settings:
     V4_DYNAMIC_ROUTING_ENABLED: bool = os.getenv(
         "V4_DYNAMIC_ROUTING_ENABLED", "false"
     ).lower() == "true"
+
+    # =============================================================================
+    # Scientific Alignment Loop Feature Flags（Task 0：科学对齐闭环）
+    # =============================================================================
+    # 设计原则：所有 SA（Scientific Alignment）能力受总开关保护，默认全部 false。
+    # 铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时，所有 SA 子能力均不触发，
+    #       系统完全回退 v3/v4 行为（关闭所有 V4 Flags 后等价 v3）。
+    # 子 Flag 仅当总 Flag 开启时方可启用（由 is_sa_feature_enabled 强制校验）。
+    # 详见 spec：Scientific Alignment Loop
+    # =============================================================================
+
+    # V4_SCIENTIFIC_ALIGNMENT_ENABLED：Scientific Alignment Loop 总开关
+    #   - false（默认）：所有 SA 子能力全部关闭，系统行为与 v3/v4 一致
+    #   - true：允许各 SA 子 Flag 单独控制对应能力
+    V4_SCIENTIFIC_ALIGNMENT_ENABLED: bool = os.getenv(
+        "V4_SCIENTIFIC_ALIGNMENT_ENABLED", "false"
+    ).lower() == "true"
+
+    # SA_MECHANISM_GRAPH：机制图检查（Mechanism Graph Verification）
+    SA_MECHANISM_GRAPH: bool = os.getenv(
+        "SA_MECHANISM_GRAPH", "false"
+    ).lower() == "true"
+
+    # SA_PARAMETER_PRIOR：参数先验（Parameter Prior Distribution）
+    SA_PARAMETER_PRIOR: bool = os.getenv(
+        "SA_PARAMETER_PRIOR", "false"
+    ).lower() == "true"
+
+    # SA_BIOMODELS_ORACLE：BioModels 仿真对比（Simulation Oracle）
+    SA_BIOMODELS_ORACLE: bool = os.getenv(
+        "SA_BIOMODELS_ORACLE", "false"
+    ).lower() == "true"
+
+    # SA_EVIDENCE_FUSION：证据五源融合（Five-Source Evidence Fusion）
+    SA_EVIDENCE_FUSION: bool = os.getenv(
+        "SA_EVIDENCE_FUSION", "false"
+    ).lower() == "true"
+
+    # SA_SEVEN_AXIS：7 轴验证金字塔（Seven-Axis Validation Pyramid）
+    SA_SEVEN_AXIS: bool = os.getenv(
+        "SA_SEVEN_AXIS", "false"
+    ).lower() == "true"
+
+    # SA_LOOP_TERMINATION：循环终止（Loop Termination Criteria）
+    SA_LOOP_TERMINATION: bool = os.getenv(
+        "SA_LOOP_TERMINATION", "false"
+    ).lower() == "true"
+
+    # SA_CANONICAL：Canonical Reference Library（Task 22）
+    #   - false（默认）：BenchmarkRunner 不强制加载 Canonical，canonical_reference 字段为 None
+    #   - true：在 SA 总开关开启时，BenchmarkRunner 加载 Canonical 并注入 result
+    # 铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时本子 Flag 永远不生效（由 is_sa_feature_enabled 强制）
+    SA_CANONICAL: bool = os.getenv(
+        "SA_CANONICAL", "false"
+    ).lower() == "true"
+
+    # SA_CONSISTENCY_CHECKER：Scientific Consistency Checker（Task 24）
+    #   - false（默认）：Consistency Checker 不执行，仿真结果只走数值 Validation
+    #   - true：在 SA 总开关开启时，加载 Canonical consistency_rules 并对仿真 metrics 做机制级校验
+    # 铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时本子 Flag 永远不生效（由 is_sa_feature_enabled 强制）
+    SA_CONSISTENCY_CHECKER: bool = os.getenv(
+        "SA_CONSISTENCY_CHECKER", "false"
+    ).lower() == "true"
+
+    # SA 子能力名称 → Settings 属性名映射（供 is_sa_feature_enabled 查询）
+    _SA_FEATURE_ATTRS: dict[str, str] = {
+        "MECHANISM_GRAPH": "SA_MECHANISM_GRAPH",
+        "PARAMETER_PRIOR": "SA_PARAMETER_PRIOR",
+        "BIOMODELS_ORACLE": "SA_BIOMODELS_ORACLE",
+        "EVIDENCE_FUSION": "SA_EVIDENCE_FUSION",
+        "SEVEN_AXIS": "SA_SEVEN_AXIS",
+        "LOOP_TERMINATION": "SA_LOOP_TERMINATION",
+        "CANONICAL": "SA_CANONICAL",
+        "CONSISTENCY_CHECKER": "SA_CONSISTENCY_CHECKER",
+    }
 
     # =============================================================================
     # Task B.3: 粗粒度 flag 聚合逻辑
@@ -433,6 +531,34 @@ class Settings:
             self.V4_CROSSTALK_COORDINATOR_ENABLED,
         )
 
+    # [P1-4] Specialist KG 回写有效 flag：必须 Specialist 已启用且回写 flag 开启
+    # 铁律：effective_v4_pathway_specialist_enabled()=false 时回写永远 false
+    def effective_v4_specialist_kg_feedback_enabled(self) -> bool:
+        if not self.effective_v4_pathway_specialist_enabled():
+            return False
+        return self.V4_SPECIALIST_KG_FEEDBACK_ENABLED
+
+    # [BM2-BM8 修复] Specialist KG 回写模式有效判断
+    # 返回当前生效的 writeback mode（"none" / "mode_a" / "mode_b" / "both"）
+    # 铁律：当 Specialist 或 feedback flag 关闭时，永远返回 "none"
+    def effective_v4_specialist_kg_writeback_mode(self) -> str:
+        if not self.effective_v4_specialist_kg_feedback_enabled():
+            return "none"
+        mode = self.V4_SPECIALIST_KG_WRITEBACK_MODE.strip().lower()
+        if mode not in ("none", "mode_a", "mode_b", "both"):
+            return "none"
+        return mode
+
+    # 便捷方法：是否启用 Mode A（Specialist 核心 species/reactions 注入 v3 KG）
+    def specialist_writeback_mode_a_enabled(self) -> bool:
+        m = self.effective_v4_specialist_kg_writeback_mode()
+        return m in ("mode_a", "both")
+
+    # 便捷方法：是否启用 Mode B（worker_sandbox 优先执行 v4_ode_system.ode_code）
+    def specialist_writeback_mode_b_enabled(self) -> bool:
+        m = self.effective_v4_specialist_kg_writeback_mode()
+        return m in ("mode_b", "both")
+
     # --- P5 验证层（粗粒度：V4_VALIDATION_ENABLED）---
     def effective_v4_sbml_grounder_enabled(self) -> bool:
         return self._resolve_v4_flag(
@@ -469,6 +595,31 @@ class Settings:
             "V4_DYNAMIC_ROUTING_ENABLED",
             self.V4_DYNAMIC_ROUTING_ENABLED,
         )
+
+    # --- Scientific Alignment Loop 辅助方法 ---
+    def is_scientific_alignment_enabled(self) -> bool:
+        """返回 Scientific Alignment Loop 总开关状态。"""
+        return self.V4_SCIENTIFIC_ALIGNMENT_ENABLED
+
+    def is_sa_feature_enabled(self, feature: str) -> bool:
+        """校验 SA 子能力是否启用（总开关 + 子开关均需为 True）。
+
+        Args:
+            feature: 子能力名称（不区分大小写），可选值：
+                MECHANISM_GRAPH / PARAMETER_PRIOR / BIOMODELS_ORACLE /
+                EVIDENCE_FUSION / SEVEN_AXIS / LOOP_TERMINATION / CANONICAL
+
+        Returns:
+            总开关关闭或 feature 未知时返回 False；否则返回子开关值。
+            铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时永远返回 False，
+                  即使子 Flag 被显式设为 true 也不生效。
+        """
+        if not self.V4_SCIENTIFIC_ALIGNMENT_ENABLED:
+            return False
+        attr = self._SA_FEATURE_ATTRS.get(feature.upper())
+        if attr is None:
+            return False
+        return bool(getattr(self, attr, False))
 
 
 # =============================================================================
@@ -1235,13 +1386,14 @@ def _make_openrouter_headers(base_url: str) -> dict[str, str] | None:
     return None
 
 
-# 全局主 LLM 实例（max_retries=2，让 OpenAI 客户端在限流时自动指数退避重试）
+# 全局主 LLM 实例（max_retries=0，OpenRouter 限流时立即 fallback 到备用 LLM，
+# 避免指数退避重试阻塞 workflow）
 _primary_llm = ChatOpenAI(
     api_key=settings.OPENAI_API_KEY,
     base_url=settings.OPENAI_BASE_URL,
     model=settings.OPENAI_MODEL,
     temperature=0.2,
-    max_retries=2,
+    max_retries=0,
     default_headers=_make_openrouter_headers(settings.OPENAI_BASE_URL),
 )
 
@@ -1253,7 +1405,7 @@ if settings.BACKUP_API_KEY and settings.BACKUP_BASE_URL and settings.BACKUP_MODE
         base_url=settings.BACKUP_BASE_URL,
         model=settings.BACKUP_MODEL,
         temperature=0.2,
-        max_retries=2,
+        max_retries=0,
         default_headers=_make_openrouter_headers(settings.BACKUP_BASE_URL),
     )
 

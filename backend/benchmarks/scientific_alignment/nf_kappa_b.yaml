@@ -1,0 +1,41 @@
+# BioDynamics Scientific Alignment Gold Standard — NF-κB 通路
+# 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
+# 参考：Hoffmann 2002 (PMID:12124261) Science — NF-κB oscillation 模型
+# TODO: verify PMID — Hayden 2006、Nelson 2004、O'Dea 2010
+pathway: NF_KB
+name: "NF-κB Inflammatory Signaling"
+expected_dynamics:
+  NFkB_nuclear_oscillation: "damped oscillation"
+  IkB_degradation: "rapid, within minutes"
+  A20_feedback: "induced, negative feedback"
+  pulse_period: "~2 hours"
+  NFkB_nuclear_translocation: "5-15 min after TNF"
+required_mechanisms:
+  - IKK_activation
+  - IkB_alpha_degradation
+  - NFkB_nuclear_translocation
+  - IkB_resynthesis_negative_feedback
+  - A20_feedback
+required_biomodels:
+  - BIOMD0000000072   # Hoffmann 2002 NF-κB model
+required_reviews:
+  - PMID:12124261     # Hoffmann 2002 Science (NF-κB oscillations) (confirmed)
+  - PMID:xxxxxxxx     # TODO: verify Hayden 2006 PMID
+  - PMID:xxxxxxxx     # TODO: verify Nelson 2004 PMID
+  - PMID:xxxxxxxx     # TODO: verify O'Dea 2010 PMID
+required_experiments:
+  - p65 Western blot nuclear fraction
+  - IkB alpha Western blot
+  - A20 qPCR
+  - IKK inhibitor BMS-345541 validation
+  - time course 0-6 hours
+forbidden_patterns:
+  - "No PubMed evidence"
+  - "No BioModels comparison"
+  - "monotonic NF-κB nuclear accumulation without IκB feedback"
+key_time_scales:
+  IkB_degradation: "5-15 min"
+  NFkB_oscillation_period: "~2 hours"
+key_feedbacks:
+  - "IκBα resynthesis negative feedback (NF-κB dependent)"
+  - "A20 negative feedback on IKK"

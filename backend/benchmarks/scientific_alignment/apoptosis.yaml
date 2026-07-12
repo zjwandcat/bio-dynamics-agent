@@ -1,0 +1,42 @@
+# BioDynamics Scientific Alignment Gold Standard — Apoptosis 通路
+# 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
+# 参考：Taylor 2008 Nature Reviews MCB / Danial 2004 / Green 2004
+# TODO: verify PMID — Taylor 2008、Danial 2004、Green 2004、Bhatt 2019
+pathway: APOPTOSIS
+name: "Extrinsic & Intrinsic Apoptosis Signaling"
+expected_dynamics:
+  Caspase_activation: "rapid, bistable switch"
+  MOMP: "mitochondrial outer membrane permeabilization"
+  BAX_translocation: "pore formation on mitochondria"
+  bistable_switch: "all-or-none commitment"
+  tBID_amplification: "crosstalk extrinsic->intrinsic"
+required_mechanisms:
+  - Death_receptor_Fas
+  - Caspase_8_initiator
+  - Caspase_3_effector
+  - BAX_BAK_MOMP
+  - tBID_BAX_amplification
+  - XIAP_inhibition
+required_biomodels:
+  - BIOMD0000000205   # caspase cascade model
+required_reviews:
+  - PMID:xxxxxxxx     # TODO: verify Taylor 2008 Nature Reviews MCB PMID
+  - PMID:xxxxxxxx     # TODO: verify Danial 2004 PMID
+  - PMID:xxxxxxxx     # TODO: verify Green 2004 PMID
+  - PMID:xxxxxxxx     # TODO: verify Bhatt 2019 PMID
+required_experiments:
+  - Caspase-3/7 activity assay
+  - Annexin V flow cytometry
+  - BAX translocation immunofluorescence
+  - MOMP JC-1 assay
+  - cytochrome c release Western blot
+forbidden_patterns:
+  - "No PubMed evidence"
+  - "No BioModels comparison"
+  - "apoptosis without MOMP/caspase commitment"
+key_time_scales:
+  Caspase_cascade: "minutes after MOMP"
+  MOMP_commitment: "irreversible within ~30 min"
+key_feedbacks:
+  - "tBID amplification loop (extrinsic -> intrinsic)"
+  - "XIAP inhibition of caspase-3/9"

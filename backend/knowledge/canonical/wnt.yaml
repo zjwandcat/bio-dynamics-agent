@@ -1,0 +1,69 @@
+# BioDynamics Canonical Reference Library — Wnt 通路
+# Task 22: 每通路唯一权威参考，所有 Benchmark "标准答案"必须基于 Canonical。
+pathway: WNT_SIGNALING
+name: "Wnt/β-catenin Signaling"
+
+canonical_reviews: []      # TODO: verify PMID — Lee 2003 / Clevers 2006 / Stamos 2013
+
+canonical_models:           # 权威 BioModels ID 列表
+  - "BIOMD0000000256"       # Lee 2003 Wnt model
+  # TODO: verify BIOMD — 确认 Lee 2003 模型 ID
+
+canonical_mechanism:
+  required_nodes:           # 机制节点链（大写蛋白名）
+    - Wnt
+    - Frizzled
+    - LRP6
+    - Axin
+    - APC
+    - GSK3
+    - beta_catenin
+    - TCF_LEF
+    - Axin2
+  edges:                    # 机制边（因果描述）
+    - from: Wnt
+      to: Frizzled
+      relation: binding
+    - from: Wnt
+      to: LRP6
+      relation: binding
+    - from: LRP6
+      to: Axin
+      relation: recruitment
+    - from: Axin
+      to: beta_catenin
+      relation: degradation  # destruction complex
+    - from: APC
+      to: beta_catenin
+      relation: degradation  # destruction complex
+    - from: GSK3
+      to: beta_catenin
+      relation: phosphorylation  # destruction complex
+    - from: Wnt
+      to: beta_catenin
+      relation: stabilization
+    - from: beta_catenin
+      to: TCF_LEF
+      relation: transcription
+    - from: TCF_LEF
+      to: Axin2
+      relation: transcription  # 负反馈
+    - from: Axin2
+      to: Axin
+      relation: activation  # 正反馈至 destruction complex
+
+expected_behavior:          # 动力学行为预期
+  beta_catenin_accumulation: "30-120 min"
+  axin2_feedback: "required"
+  destruction_complex: true
+
+known_negative_feedback:    # 已知负反馈
+  - Axin2
+
+consistency_rules:          # 供 Consistency Checker 加载的自洽规则
+  - rule: "beta_catenin accumulation 不能晚于 Axin2 表达"
+    assertion: "beta_catenin_peak_time < axin2_expression_time"
+    violation_label: "beta_catenin_after_axin2"
+  - rule: "Axin2 表达晚于 beta_catenin Peak"
+    assertion: "axin2_expression_time > beta_catenin_peak_time"
+    violation_label: "axin2_before_beta_catenin_peak"

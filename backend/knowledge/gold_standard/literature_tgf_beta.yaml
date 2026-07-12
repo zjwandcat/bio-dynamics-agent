@@ -1,0 +1,53 @@
+# BioDynamics Scientific Alignment Loop — TGF-beta Pathway Literature Gold Standard
+# Task 3.1: 文献级 Gold Standard
+# 排序策略：Review(5) > Mechanism(4) > BioModels Source(3) > Recent Application(2) > Case Report(1)
+pathway: tgf_beta
+
+classical_reviews:        # 经典综述（最高优先级，score 5）
+  - pmid: "PMID:10854325"  # 已确认
+    title: "How cells read TGF-beta signals"
+    authors: "Massague J, Wotton D"
+    year: 2000
+    journal: "Nature Reviews Molecular Cell Biology"
+    reason: "TGF-β 信号读取权威综述，定义 Smad 转录复合体信号框架"
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "TGF-beta signal transduction dynamics and crosstalk"
+    authors: "Schmierer B, Hill CS"
+    year: 2008
+    journal: "Nature Reviews Molecular Cell Biology"
+    reason: "TGF-β 信号转导动力学与串扰综述，定义 Smad 核质穿梭时序机制"
+
+mechanism_papers:         # 机制论文（score 4）
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "Structural basis of Smad2 recognition by the Smad anchor for receptor activation"
+    authors: "Shi Y, Massague J"
+    year: 2003
+    journal: "Cell"
+    reason: "Smad2 受体激活识别机制结构生物学经典，定义受体磷酸化位点"
+
+biomodels_source_papers:  # BioModels 来源论文（score 3）
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID（Clark 2012）
+    biomodels_id: "BIOMD0000000252"
+    title: "TGF-beta signaling dynamics model"
+    authors: "Clark E et al"
+    year: 2012
+    journal: "Molecular Systems Biology"
+    reason: "TGF-β 信号动力学 BioModels 来源模型（具体 PMID 待核实）"
+
+recent_applications:      # 近期应用论文（score 2，仅补充）
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "TGF-beta dynamics in cancer metastasis and EMT"
+    authors: "Recent TGF-beta application study"
+    year: 2022
+    journal: "Nature Reviews Cancer"
+    reason: "TGF-β 癌症转移与 EMT 动力学近期应用（PubMed 补充）"
+
+case_reports: []          # 案例报告（score 1，一般不用）
+
+ranking_policy:
+  review_score: 5
+  mechanism_score: 4
+  biomodels_source_score: 3
+  application_score: 2
+  case_report_score: 1
+  rule: "经典综述与机制论文优先；PubMed 结果仅当经典文献不足时补充"

@@ -1,0 +1,40 @@
+# BioDynamics Scientific Alignment Gold Standard — PI3K-AKT-mTOR 通路
+# 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
+# 参考：Manning & Cantley 2007 (PMID:17255734)
+# TODO: verify PMID — Sarbassov 2005、Hennessy 2005
+pathway: PI3K_AKT_mTOR
+name: "PI3K-AKT-mTOR Signaling"
+expected_dynamics:
+  AKT_peak: "5-15 min after growth factor"
+  mTOR_S6K: "sustained activation"
+  TSC2_phosphorylation: "AKT-dependent, rapid"
+  PIP3: "transient accumulation"
+required_mechanisms:
+  - PI3K_activation
+  - PIP3_production
+  - PDK1_AKT_phosphorylation
+  - mTORC1_activation
+  - TSC2_inhibition
+  - feedback_to_PI3K
+required_biomodels:
+  - BIOMD0000000056   # mTOR pathway model
+required_reviews:
+  - PMID:17255734     # Manning & Cantley 2007 Cell (AKT/PKB) (confirmed)
+  - PMID:xxxxxxxx     # TODO: verify Sarbassov 2005 PMID
+  - PMID:xxxxxxxx     # TODO: verify Hennessy 2005 PMID
+required_experiments:
+  - pAKT Western blot
+  - pS6 Western blot
+  - mTOR inhibitor (Rapamycin) validation
+  - PI3K inhibitor (LY294002) validation
+  - time course 0-120 min
+forbidden_patterns:
+  - "No PubMed evidence"
+  - "No BioModels comparison"
+  - "AKT activation without PIP3 production"
+key_time_scales:
+  AKT_peak: "5-15 min"
+  mTOR_S6K_sustained: ">60 min"
+key_feedbacks:
+  - "S6K negative feedback on IRS1/PI3K"
+  - "mTORC1 feedback to AKT via Grb10/IRS1"

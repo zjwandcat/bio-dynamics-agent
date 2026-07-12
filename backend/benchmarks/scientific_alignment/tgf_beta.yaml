@@ -1,0 +1,41 @@
+# BioDynamics Scientific Alignment Gold Standard — TGF-β 通路
+# 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
+# 参考：Massague 2000 (PMID:10854325) / Clark 2012 SMAD 模型
+# TODO: verify PMID — Shi 2003、Schmierer 2008、Wrighton 2009、Clark 2012
+pathway: TGF_BETA
+name: "TGF-β/SMAD Signaling"
+expected_dynamics:
+  SMAD_nuclear_translocation: "15-60 min after TGF-β"
+  SMAD_inhibitory_feedback: "SMAD7 induced, negative"
+  sustained_signal: "sustained adosis under ligand"
+  SMAD_phosphorylation: "rapid, within minutes"
+required_mechanisms:
+  - TGFbeta_receptor_TGFBRI_II
+  - SMAD2_3_phosphorylation
+  - SMAD4_heterodimer
+  - nuclear_translocation
+  - SMAD7_negative_feedback
+  - SnoN_inhibition
+required_biomodels:
+  - BIOMD0000000252   # Clark 2012 SMAD model
+required_reviews:
+  - PMID:10854325     # Massague 2000 Nat Cell Biol (SMAD) (confirmed)
+  - PMID:xxxxxxxx     # TODO: verify Shi 2003 PMID
+  - PMID:xxxxxxxx     # TODO: verify Schmierer 2008 PMID
+  - PMID:xxxxxxxx     # TODO: verify Wrighton 2009 PMID
+required_experiments:
+  - pSMAD2 Western blot
+  - SMAD nuclear translocation immunofluorescence
+  - SMAD7 qPCR
+  - SB431542 inhibitor validation
+  - TGF-beta time course 0-4 hours
+forbidden_patterns:
+  - "No PubMed evidence"
+  - "No BioModels comparison"
+  - "SMAD activation without receptor phosphorylation"
+key_time_scales:
+  SMAD_nuclear_translocation: "15-60 min"
+  SMAD7_induction: "1-2 hours"
+key_feedbacks:
+  - "SMAD7 negative feedback on TGF-β receptor"
+  - "SnoN inhibition of SMAD transcriptional activity"

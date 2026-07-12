@@ -1,0 +1,73 @@
+# BioDynamics Canonical Reference Library — TGF-β 通路
+# Task 22: 每通路唯一权威参考，所有 Benchmark "标准答案"必须基于 Canonical。
+pathway: TGF_BETA_SIGNALING
+name: "TGF-β/SMAD Signaling"
+
+canonical_reviews:          # 权威综述 PMID 列表
+  - "PMID:10854325"         # Massague 2000 Nature Cell Biology（SMAD 信号）
+
+canonical_models:           # 权威 BioModels ID 列表
+  - "BIOMD0000000252"       # Clark 2012 SMAD model
+  # TODO: verify BIOMD — 确认 Clark 2012 模型 ID
+
+canonical_mechanism:
+  required_nodes:           # 机制节点链（大写蛋白名）
+    - TGFbeta
+    - TGFBR1
+    - TGFBR2
+    - SMAD2
+    - SMAD3
+    - SMAD4
+    - SMAD7
+    - SnoN
+  edges:                    # 机制边（因果描述）
+    - from: TGFbeta
+      to: TGFBR1
+      relation: binding
+    - from: TGFbeta
+      to: TGFBR2
+      relation: binding
+    - from: TGFBR1
+      to: SMAD2
+      relation: phosphorylation
+    - from: TGFBR1
+      to: SMAD3
+      relation: phosphorylation
+    - from: SMAD2
+      to: SMAD4
+      relation: heterodimer
+    - from: SMAD3
+      to: SMAD4
+      relation: heterodimer
+    - from: SMAD4
+      to: SMAD_nuclear
+      relation: nuclear_translocation
+    - from: SMAD_nuclear
+      to: SMAD7
+      relation: transcription  # 负反馈
+    - from: SMAD_nuclear
+      to: SnoN
+      relation: transcription  # 负反馈
+    - from: SMAD7
+      to: TGFBR1
+      relation: inhibition
+    - from: SnoN
+      to: SMAD4
+      relation: inhibition
+
+expected_behavior:          # 动力学行为预期
+  smad_nuclear_translocation: "15-60 min"
+  smad7_feedback: "required"
+  sustained: false
+
+known_negative_feedback:    # 已知负反馈
+  - SMAD7
+  - SnoN
+
+consistency_rules:          # 供 Consistency Checker 加载的自洽规则
+  - rule: "SMAD nuclear translocation 不能晚于 SMAD7 表达"
+    assertion: "smad_nuclear_time < smad7_expression_time"
+    violation_label: "smad_nuclear_after_smad7"
+  - rule: "SMAD7 表达晚于 SMAD Peak"
+    assertion: "smad7_expression_time > smad_peak_time"
+    violation_label: "smad7_before_smad_peak"

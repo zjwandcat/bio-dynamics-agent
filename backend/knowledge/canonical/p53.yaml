@@ -1,0 +1,53 @@
+# BioDynamics Canonical Reference Library — p53 通路
+# Task 22: 每通路唯一权威参考，所有 Benchmark "标准答案"必须基于 Canonical。
+pathway: P53_SIGNALING
+name: "p53 DNA Damage Response Signaling"
+
+canonical_reviews:          # 权威综述 PMID 列表
+  - "PMID:14977579"         # Lahav 2004 Nature Genetics（p53-MDM2 动力学）
+
+canonical_models:           # 权威 BioModels ID 列表
+  - "BIOMD0000000028"       # Lev Bar-Or p53 振荡模型
+  # TODO: verify BIOMD — 确认 Lev Bar-Or 模型 ID
+
+canonical_mechanism:
+  required_nodes:           # 机制节点链（大写蛋白名）
+    - ATM
+    - p53
+    - MDM2
+    - p21
+  edges:                    # 机制边（因果描述）
+    - from: DNA_damage
+      to: ATM
+      relation: activation
+    - from: ATM
+      to: p53
+      relation: phosphorylation
+    - from: p53
+      to: MDM2
+      relation: transcription
+    - from: MDM2
+      to: p53
+      relation: degradation  # 负反馈
+    - from: p53
+      to: p21
+      relation: transcription
+    - from: p21
+      to: CDK
+      relation: inhibition
+
+expected_behavior:          # 动力学行为预期
+  p53_oscillation: true
+  pulse_period: "5-6 hours"
+  mdm2_feedback: "required"
+
+known_negative_feedback:    # 已知负反馈
+  - MDM2-p53
+
+consistency_rules:          # 供 Consistency Checker 加载的自洽规则
+  - rule: "MDM2 Peak 不能早于 p53 Peak"
+    assertion: "mdm2_peak_time > p53_peak_time"
+    violation_label: "mdm2_peak_before_p53_peak"
+  - rule: "p53 振荡周期应在 5-6 小时"
+    assertion: "5 <= p53_pulse_period <= 6"
+    violation_label: "p53_oscillation_period_out_of_range"

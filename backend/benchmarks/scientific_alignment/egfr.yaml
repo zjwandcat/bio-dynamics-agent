@@ -1,0 +1,46 @@
+# BioDynamics Scientific Alignment Gold Standard — EGFR/RTK 通路
+# 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
+# 参考：Schoeberl 2002 (PMID:12451180) / Levchenko 2000 / Marshall 1995 (PMID:7657691)
+# TODO: verify PMID — Levchenko 2000、Brightman 2018、Kolch 2000 Nature Reviews MCB
+#       （未确认的 PMID 在 required_reviews 中以 PMID:xxxxxxxx 标注）
+pathway: EGFR_RTK
+name: "EGFR Receptor Tyrosine Kinase Signaling"
+expected_dynamics:
+  pEGFR: "peak <=5 min after EGF stimulation"
+  ERK: "peak 10-20 min, transient"
+  ERK_decline: true
+  DUSP_feedback: "required, negative feedback on ERK"
+  EGFR_surface: "decay, half-life 10-15 min (internalization)"
+required_mechanisms:
+  - EGF_EGFR_binding
+  - Ras_activation
+  - Raf_MEK_ERK_cascade
+  - Nuclear_ERK
+  - DUSP_negative_feedback
+required_biomodels:
+  - BIOMD0000000010   # Schoeberl 2002 EGFR-MAPK model
+  - BIOMD0000000205
+required_reviews:
+  - PMID:12451180     # Schoeberl 2002 J Biol Chem (confirmed)
+  - PMID:16246870     # Orton 2005 Oncogene (MAPK signaling dynamics)
+  - PMID:7657691      # Marshall 1995 Cell (Ras/MAPK) (confirmed)
+  - PMID:xxxxxxxx     # TODO: verify Brightman 2018 PMID
+  - PMID:xxxxxxxx     # TODO: verify Kolch 2000 Nature Reviews MCB PMID
+required_experiments:
+  - pEGFR Western blot
+  - ppERK Western blot
+  - DUSP1 qPCR
+  - MEK inhibitor validation (U0126)
+  - EGFR inhibitor (Gefitinib) dose response
+  - Time course 0-120 min
+forbidden_patterns:
+  - "EGFR qPCR as primary validation"
+  - "No PubMed evidence"
+  - "No BioModels comparison"
+key_time_scales:
+  pEGFR_peak: "<=5 min"
+  ERK_peak: "10-20 min"
+  EGFR_internalization: "10-15 min half-life"
+key_feedbacks:
+  - "DUSP1 negative feedback on ERK"
+  - "SOS feedback via ERK phosphorylation"

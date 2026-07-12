@@ -52,6 +52,23 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "performance",
 )
 
+# pathway_class -> Canonical Reference 文件名映射（Task 22.4）
+# Canonical 文件名与 scientific_alignment Gold Standard 文件名一致，
+# 但 pathway_class（如 NF_KB）与文件名（如 nf_kappa_b）非简单 lowercase 关系，
+# 故需显式映射。未映射的 pathway_class 加载 Canonical 时返回 None（不 fail）。
+_PATHWAY_CLASS_TO_CANONICAL: dict[str, str] = {
+    "EGFR_RTK": "egfr",
+    "MAPK_ERK": "mapk",
+    "PI3K_AKT_mTOR": "pi3k_akt_mtor",
+    "p53": "p53",
+    "APOPTOSIS": "apoptosis",
+    "CELL_CYCLE": "cell_cycle",
+    "JAK_STAT": "jak_stat",
+    "NF_KB": "nf_kappa_b",
+    "WNT": "wnt",
+    "TGF_BETA": "tgf_beta",
+}
+
 
 # =============================================================================
 # BenchmarkRunner
@@ -190,6 +207,7 @@ class BenchmarkRunner:
                     ],
                     "runtime_seconds": float,
                     "errors": list[str],
+                    "canonical_reference": dict | None,
                 }
         """
         start_ts = time.perf_counter()
@@ -200,6 +218,7 @@ class BenchmarkRunner:
             "checks": [],
             "runtime_seconds": 0.0,
             "errors": [],
+            "canonical_reference": None,
         }
 
         try:
@@ -213,6 +232,11 @@ class BenchmarkRunner:
 
             spec = benchmarks[pathway_class]
             result["name"] = str(spec.get("name", ""))
+
+            # 0. Task 22.4: 加载 Canonical Reference（受 Feature Flag 保护）。
+            #    仅当 Scientific Alignment 总开关开启时才加载；
+            #    加载失败仅记 warning，不改变 pass/fail 逻辑。
+            result["canonical_reference"] = self._load_canonical_safe(pathway_class)
 
             # 1. Resolve P4 specialist (READ-ONLY invocation).
             specialist = self._get_specialist(pathway_class)
@@ -534,9 +558,73 @@ class BenchmarkRunner:
                 "BenchmarkRunner: specialist auto-import failed: %s", exc
             )
 
+    def _load_canonical_safe(self, pathway_class: str) -> dict[str, Any] | None:
+        """安全加载 Canonical Reference（Task 22.4）。
+
+        受 Feature Flag 保护：仅当 ``settings.is_scientific_alignment_enabled()``
+        返回 True 时才尝试加载。加载失败（文件缺失/格式错误/路径遍历）
+        仅记 warning 日志，返回 None，不改变 Benchmark 的 pass/fail。
+
+        Args:
+            pathway_class: 通路标识（如 ``"EGFR_RTK"``）。
+
+        Returns:
+            Canonical Reference 的 dict 表示（含 pathway/name/canonical_reviews/
+            canonical_models/required_nodes/consistency_rules 等字段），
+            或 None（SA 关闭 / pathway 未映射 / 加载失败）。
+        """
+        # 1. Feature Flag 检查：SA 总开关关闭时直接返回 None
+        try:
+            from app.config import settings
+        except Exception as exc:
+            logger.warning(
+                "BenchmarkRunner: 无法导入 settings，跳过 Canonical 加载: %s", exc
+            )
+            return None
+        if not settings.is_scientific_alignment_enabled():
+            return None
+
+        # 2. pathway_class -> canonical 文件名映射
+        canonical_name = _PATHWAY_CLASS_TO_CANONICAL.get(pathway_class)
+        if not canonical_name:
+            logger.debug(
+                "BenchmarkRunner: pathway_class=%s 无 Canonical 映射，跳过",
+                pathway_class,
+            )
+            return None
+
+        # 3. 尝试加载 Canonical Reference
+        try:
+            from app.scientific_alignment.canonical_loader import load_canonical
+            cr = load_canonical(canonical_name)
+            return {
+                "pathway": cr.pathway,
+                "name": cr.name,
+                "canonical_reviews": list(cr.canonical_reviews),
+                "canonical_models": list(cr.canonical_models),
+                "required_nodes": list(cr.required_nodes),
+                "known_negative_feedback": list(cr.known_negative_feedback),
+                "consistency_rules": [
+                    {
+                        "rule": r.rule,
+                        "assertion": r.assertion,
+                        "violation_label": r.violation_label,
+                    }
+                    for r in cr.consistency_rules
+                ],
+            }
+        except Exception as exc:
+            logger.warning(
+                "BenchmarkRunner: 加载 Canonical %s 失败（不阻塞 Benchmark）: %s",
+                canonical_name,
+                exc,
+            )
+            return None
+
 
 __all__ = [
     "BenchmarkRunner",
     "BENCHMARKS_DIR",
     "REQUIRED_FIELDS",
+    "_PATHWAY_CLASS_TO_CANONICAL",
 ]

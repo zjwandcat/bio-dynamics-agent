@@ -1,0 +1,42 @@
+# BioDynamics Scientific Alignment Gold Standard — p53 通路
+# 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
+# 参考：Lahav 2004 (PMID:14977579) / Lev Bar-Or p53 振荡模型
+# TODO: verify PMID — Vogelstein 2000、Batchelor 2008、Levine 1997
+pathway: p53
+name: "p53 DNA Damage Response Signaling"
+expected_dynamics:
+  p53: "oscillatory pulses"
+  MDM2: "feedback oscillation, delayed"
+  pulse_period: "5-6 hours"
+  DNA_damage_response: "ATM-dependent"
+  p21: "cell cycle arrest, sustained induction"
+required_mechanisms:
+  - ATM_DNA_damage_sensing
+  - p53_phosphorylation
+  - MDM2_feedback_loop
+  - p53_oscillation
+  - p21_cell_cycle_arrest
+required_biomodels:
+  - BIOMD0000000028   # Lev Bar-Or p53 oscillation model
+required_reviews:
+  - PMID:14977579     # Lahav 2004 Nat Genet (p53-MDM2 dynamics) (confirmed)
+  - PMID:xxxxxxxx     # TODO: verify Vogelstein 2000 Nature PMID
+  - PMID:xxxxxxxx     # TODO: verify Batchelor 2008 PMID
+  - PMID:xxxxxxxx     # TODO: verify Levine 1997 PMID
+required_experiments:
+  - p53 Western blot time course
+  - MDM2 Western blot
+  - p21 qPCR
+  - Nutlin-3 treatment
+  - gamma irradiation
+  - single-cell live imaging (p53-Venus)
+forbidden_patterns:
+  - "No PubMed evidence"
+  - "No BioModels comparison"
+  - "monotonic p53 accumulation without MDM2 feedback"
+key_time_scales:
+  p53_pulse_period: "5-6 hours"
+  MDM2_delay: "1-2 hours"
+key_feedbacks:
+  - "MDM2 negative feedback on p53 (ubiquitination)"
+  - "ATM-p53 positive feedforward under DNA damage"

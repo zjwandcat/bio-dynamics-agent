@@ -1,0 +1,41 @@
+# BioDynamics Scientific Alignment Gold Standard — JAK-STAT 通路
+# 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
+# 参考：Swameye 2003 STAT5 模型 (BIOMD0000000026)
+# TODO: verify PMID — Schindler 2008、Aaronson 2002、Shuai 2003、Yoshimura 2018、Swameye 2003
+pathway: JAK_STAT
+name: "JAK-STAT Cytokine Signaling"
+expected_dynamics:
+  STAT_nuclear_translocation: "5-30 min"
+  SOCS_feedback: "induced, negative feedback"
+  transient_activation: "decay after peak"
+  STAT_phosphorylation: "rapid, within minutes"
+required_mechanisms:
+  - Cytokine_receptor_JAK
+  - STAT_phosphorylation
+  - STAT_dimerization
+  - nuclear_translocation
+  - SOCS_negative_feedback
+  - CIS_feedback
+required_biomodels:
+  - BIOMD0000000026   # Swameye 2003 STAT5 model
+required_reviews:
+  - PMID:xxxxxxxx     # TODO: verify Schindler 2008 PMID
+  - PMID:xxxxxxxx     # TODO: verify Aaronson 2002 PMID
+  - PMID:xxxxxxxx     # TODO: verify Shuai 2003 PMID
+  - PMID:xxxxxxxx     # TODO: verify Yoshimura 2018 PMID
+required_experiments:
+  - pSTAT5 Western blot
+  - STAT5 nuclear translocation immunofluorescence
+  - SOCS3 qPCR
+  - JAK inhibitor Ruxolitinib validation
+  - time course 0-120 min
+forbidden_patterns:
+  - "No PubMed evidence"
+  - "No BioModels comparison"
+  - "sustained STAT activation without SOCS feedback"
+key_time_scales:
+  STAT_nuclear_translocation: "5-30 min"
+  SOCS_induction: "30-90 min"
+key_feedbacks:
+  - "SOCS negative feedback on JAK/receptor"
+  - "CIS feedback on cytokine receptor"

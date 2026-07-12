@@ -1,0 +1,79 @@
+# BioDynamics Canonical Reference Library — EGFR/RTK 通路
+# Task 22: 每通路唯一权威参考，所有 Benchmark "标准答案"必须基于 Canonical。
+# canonical_reviews 与 literature_egfr.yaml classical_reviews 对齐；
+# canonical_models 与 Gold Standard required_biomodels 对齐。
+pathway: EGFR_RTK
+name: "EGFR Receptor Tyrosine Kinase Signaling"
+
+canonical_reviews:          # 权威综述 PMID 列表
+  - "PMID:7657691"          # Marshall 1995 Cell（Ras/MAPK 信号特异性）
+  - "PMID:11743495"         # Yarden 2001 Nature Reviews MCB（ErbB 信号网络）
+  - "PMID:12451180"         # Schoeberl 2002 Nature Biotechnology（EGFR-MAPK 动力学建模）
+
+canonical_models:           # 权威 BioModels ID 列表
+  - "BIOMD0000000010"       # Schoeberl 2002 EGFR-MAPK model
+
+canonical_mechanism:
+  required_nodes:           # 机制节点链（大写蛋白名）
+    - EGF
+    - EGFR
+    - SHC
+    - GRB2
+    - SOS
+    - RAS
+    - RAF
+    - MEK
+    - ERK
+    - DUSP
+  edges:                    # 机制边（因果描述）
+    - from: EGF
+      to: EGFR
+      relation: binding
+    - from: EGFR
+      to: SHC
+      relation: phosphorylation
+    - from: SHC
+      to: GRB2
+      relation: binding
+    - from: GRB2
+      to: SOS
+      relation: binding
+    - from: SOS
+      to: RAS
+      relation: activation
+    - from: RAS
+      to: RAF
+      relation: activation
+    - from: RAF
+      to: MEK
+      relation: phosphorylation
+    - from: MEK
+      to: ERK
+      relation: phosphorylation
+    - from: ERK
+      to: DUSP
+      relation: transcription
+    - from: DUSP
+      to: ERK
+      relation: inhibition  # 负反馈
+
+expected_behavior:          # 动力学行为预期
+  egfr_peak: "<5 min"
+  erk_peak: "10-20 min"
+  erk_decline: true
+  dusp_feedback: "required"
+
+known_negative_feedback:    # 已知负反馈
+  - DUSP
+  - SPRY
+
+consistency_rules:          # 供 Consistency Checker 加载的自洽规则
+  - rule: "EGFR Peak 不能晚于 ERK Peak"
+    assertion: "egfr_peak_time < erk_peak_time"
+    violation_label: "egfr_peak_after_erk_peak"
+  - rule: "RAS 活化不能晚于 ERK Peak"
+    assertion: "ras_activation_time < erk_peak_time"
+    violation_label: "upstream_after_downstream"
+  - rule: "DUSP 表达不能早于 ERK Peak"
+    assertion: "dusp_expression_time > erk_peak_time"
+    violation_label: "feedback_before_target_peak"

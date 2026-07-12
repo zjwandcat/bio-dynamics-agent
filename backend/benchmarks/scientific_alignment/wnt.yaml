@@ -1,0 +1,40 @@
+# BioDynamics Scientific Alignment Gold Standard — Wnt 通路
+# 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
+# 参考：Lee 2003 Wnt 模型 / BIOMD0000000256
+# TODO: verify PMID — Clevers 2006、Logan 2004、Macdonald 2009、Stamos 2013、Lee 2003
+pathway: WNT
+name: "Wnt/β-catenin Signaling"
+expected_dynamics:
+  beta_catenin_accumulation: "30-120 min after Wnt3a"
+  Axin2_feedback: "induced, negative feedback"
+  destruction_complex: "inhibited upon Wnt stimulation"
+  TCF_LEF_transcription: "delayed, 2-4 hours"
+required_mechanisms:
+  - Wnt_Frizzled_LRP6
+  - Destruction_complex_Axin_APC_GSK3
+  - beta_catenin_stabilization
+  - TCF_LEF_transcription
+  - Axin2_negative_feedback
+required_biomodels:
+  - BIOMD0000000256   # Lee 2003 Wnt model
+required_reviews:
+  - PMID:xxxxxxxx     # TODO: verify Clevers 2006 PMID
+  - PMID:xxxxxxxx     # TODO: verify Logan 2004 PMID
+  - PMID:xxxxxxxx     # TODO: verify Macdonald 2009 PMID
+  - PMID:xxxxxxxx     # TODO: verify Stamos 2013 PMID
+required_experiments:
+  - beta-catenin Western blot (cytosolic/nuclear)
+  - Axin2 qPCR
+  - TOPFLASH reporter assay
+  - Wnt3a treatment
+  - XAV939 tankyrase inhibitor validation
+forbidden_patterns:
+  - "No PubMed evidence"
+  - "No BioModels comparison"
+  - "β-catenin increase without destruction complex inhibition"
+key_time_scales:
+  beta_catenin_accumulation: "30-120 min"
+  Axin2_induction: "2-4 hours"
+key_feedbacks:
+  - "Axin2 negative feedback on β-catenin (destruction complex scaffold)"
+  - "LRP6 phosphorylation positive feedback"

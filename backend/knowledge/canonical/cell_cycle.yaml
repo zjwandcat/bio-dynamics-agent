@@ -1,0 +1,56 @@
+# BioDynamics Canonical Reference Library — Cell Cycle 通路
+# Task 22: 每通路唯一权威参考，所有 Benchmark "标准答案"必须基于 Canonical。
+pathway: CELL_CYCLE
+name: "Eukaryotic Cell Cycle Control"
+
+canonical_reviews:          # 权威综述 PMID 列表
+  - "PMID:11381155"         # Novak 2001（Tyson-Novak cell cycle 模型）
+
+canonical_models:           # 权威 BioModels ID 列表
+  - "BIOMD0000000056"       # Tyson-Novak 2001 cell cycle model
+
+canonical_mechanism:
+  required_nodes:           # 机制节点链（大写蛋白名）
+    - CyclinD-CDK4/6
+    - CyclinE-CDK2
+    - CyclinB-CDK1
+    - RB
+    - E2F
+    - APC_C
+    - Cdc20
+  edges:                    # 机制边（因果描述）
+    - from: CyclinD-CDK4/6
+      to: RB
+      relation: phosphorylation
+    - from: RB
+      to: E2F
+      relation: inhibition
+    - from: E2F
+      to: CyclinE-CDK2
+      relation: transcription
+    - from: CyclinE-CDK2
+      to: RB
+      relation: phosphorylation  # 正反馈
+    - from: CyclinB-CDK1
+      to: mitosis
+      relation: activation
+    - from: APC_C
+      to: CyclinB-CDK1
+      relation: degradation  # 负反馈
+
+expected_behavior:          # 动力学行为预期
+  cyclin_cdk_oscillation: true
+  bistable_switch: true
+  apc_c_destruction: true
+
+known_negative_feedback:    # 已知负反馈
+  - APC_C-CyclinB
+  - RB-E2F
+
+consistency_rules:          # 供 Consistency Checker 加载的自洽规则
+  - rule: "CyclinB Peak 应在 G2/M 期"
+    assertion: "cyclinb_peak_phase == G2_M"
+    violation_label: "cyclinb_peak_wrong_phase"
+  - rule: "APC_C 活化晚于 CyclinB Peak"
+    assertion: "apc_c_activation_time > cyclinb_peak_time"
+    violation_label: "apc_c_before_cyclinb_peak"

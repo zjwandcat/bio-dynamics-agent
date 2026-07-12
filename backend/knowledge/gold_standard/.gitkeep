@@ -1,0 +1,2 @@
+# 占位文件：保留 gold_standard 黄金标准目录到 git。
+# 后续 Task 将在此目录存放 BioModels 黄金标准仿真数据用于 SA_BIOMODELS_ORACLE 对比。

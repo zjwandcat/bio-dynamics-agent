@@ -1,0 +1,54 @@
+# BioDynamics Canonical Reference Library — MAPK cascade 通路
+# Task 22: 每通路唯一权威参考，所有 Benchmark "标准答案"必须基于 Canonical。
+pathway: MAPK_CASCADE
+name: "MAPK/ERK Cascade Signaling"
+
+canonical_reviews:          # 权威综述 PMID 列表
+  - "PMID:8663050"          # Huang & Ferrell 1996 PNAS（MAPK 级联超敏感性）
+  - "PMID:16246870"         # Orton 2005 Computational Biology and Chemistry（MAPK 级联数学建模）
+
+canonical_models:           # 权威 BioModels ID 列表
+  - "BIOMD0000000012"       # Levchenko 2000 scaffold model
+
+canonical_mechanism:
+  required_nodes:           # 机制节点链（大写蛋白名）
+    - RAS
+    - RAF
+    - MEK
+    - ERK
+    - DUSP
+  edges:                    # 机制边（因果描述）
+    - from: RAS
+      to: RAF
+      relation: activation
+    - from: RAF
+      to: MEK
+      relation: phosphorylation
+    - from: MEK
+      to: ERK
+      relation: phosphorylation
+    - from: ERK
+      to: DUSP
+      relation: transcription
+    - from: DUSP
+      to: ERK
+      relation: inhibition  # 负反馈
+
+expected_behavior:          # 动力学行为预期
+  erk_peak: "transient 10-20 min"
+  signal_amplification: "10-100x"
+  ultrasensitivity: true
+
+known_negative_feedback:    # 已知负反馈
+  - DUSP
+
+consistency_rules:          # 供 Consistency Checker 加载的自洽规则
+  - rule: "ERK Peak 应在 10-20 min 窗口内"
+    assertion: "10 <= erk_peak_time <= 20"
+    violation_label: "erk_peak_out_of_window"
+  - rule: "信号放大倍数大于 1"
+    assertion: "signal_amplification > 1"
+    violation_label: "no_signal_amplification"
+  - rule: "DUSP 表达不能早于 ERK Peak"
+    assertion: "dusp_expression_time > erk_peak_time"
+    violation_label: "feedback_before_target_peak"

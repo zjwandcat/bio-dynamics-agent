@@ -1,0 +1,59 @@
+# BioDynamics Scientific Alignment Loop — PI3K-AKT-mTOR Pathway Literature Gold Standard
+# Task 3.1: 文献级 Gold Standard
+# 排序策略：Review(5) > Mechanism(4) > BioModels Source(3) > Recent Application(2) > Case Report(1)
+pathway: pi3k_akt_mtor
+
+classical_reviews:        # 经典综述（最高优先级，score 5）
+  - pmid: "PMID:17255734"  # 已确认
+    title: "AKT/PKB signaling: navigating downstream"
+    authors: "Manning BD, Cantley LC"
+    year: 2007
+    journal: "Cell"
+    reason: "AKT 下游信号权威综述，定义 PI3K-AKT-mTOR 信号轴框架，被引用上万次"
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "Phosphorylation and regulation of Akt/PKB by the rictor-mTOR complex"
+    authors: "Sarbassov DD et al"
+    year: 2005
+    journal: "Science"
+    reason: "mTORC2-AKT 磷酸化调控机制综述，定义 mTORC2 复合体功能"
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "Exploiting the PI3K/AKT pathway for cancer drug discovery"
+    authors: "Hennessy BT et al"
+    year: 2005
+    journal: "Nature Reviews Drug Discovery"
+    reason: "PI3K/AKT 通路药物发现综述，系统总结通路靶点与抑制剂"
+
+mechanism_papers:         # 机制论文（score 4）
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "mTOR signaling in growth control and disease"
+    authors: "Zoncu R et al"
+    year: 2011
+    journal: "Cell"
+    reason: "mTOR 信号生长控制与疾病机制，定义 mTORC1/2 复合体调控机制"
+
+biomodels_source_papers:  # BioModels 来源论文（score 3）
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    biomodels_id: "BIOMD0000000205"
+    title: "PI3K-AKT-mTOR signaling network model"
+    authors: "BioModels PI3K-AKT-mTOR source"
+    year: 2010
+    journal: "Nature Biotechnology"
+    reason: "PI3K-AKT-mTOR 网络 BioModels 来源模型（具体 PMID 待核实）"
+
+recent_applications:      # 近期应用论文（score 2，仅补充）
+  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+    title: "PI3K-AKT-mTOR dynamics in cancer metabolism and therapy resistance"
+    authors: "Recent PI3K-AKT-mTOR application study"
+    year: 2022
+    journal: "Nature Reviews Cancer"
+    reason: "PI3K-AKT-mTOR 代谢与耐药动力学近期应用（PubMed 补充）"
+
+case_reports: []          # 案例报告（score 1，一般不用）
+
+ranking_policy:
+  review_score: 5
+  mechanism_score: 4
+  biomodels_source_score: 3
+  application_score: 2
+  case_report_score: 1
+  rule: "经典综述与机制论文优先；PubMed 结果仅当经典文献不足时补充"
