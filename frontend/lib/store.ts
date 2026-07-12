@@ -169,6 +169,16 @@ export interface WorkbenchStore {
   hypothesisList: unknown[];
   pathwayGraph: PathwayGraphData | null;
   agentDispatches: DispatchData[];
+  /** Markdown of the latest scientific report (set by `report`/`report_ready` SSE). */
+  reportMarkdown: string | null;
+  /** Base64 PNG of the latest simulation plot (set by `image_ready` SSE). */
+  simulationImage: string | null;
+  /** Knowledge-graph summary emitted by `knowledge_graph` SSE. */
+  knowledgeGraph: Message["knowledgeGraph"] | null;
+  /** Task 21 Step 2: Scientific Alignment 后处理报告（SA SSE 事件） */
+  saConsistencyReport: unknown;
+  saCriticReport: unknown;
+  saMultiDimConfidence: unknown;
 
   // --- AI Assistant chat state (migrated from page.tsx) ---
   messages: Message[];
@@ -483,6 +493,7 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
       case "image_ready": {
         removeTrailingStatus();
         const imageBase64 = typeof eventData === "string" ? eventData : "";
+        if (imageBase64) set({ simulationImage: imageBase64 });
         appendMessage({ role: "agent", content: imageBase64, type: "image" });
         break;
       }
@@ -564,6 +575,7 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
       case "report_ready": {
         removeTrailingStatus();
         const report = typeof eventData === "string" ? eventData : "";
+        if (report) set({ reportMarkdown: report });
         appendMessage({
           role: "agent",
           content: report,
@@ -666,6 +678,7 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
       case "knowledge_graph": {
         if (eventData && typeof eventData === "object") {
           const kg = eventData as Message["knowledgeGraph"];
+          if (kg) set({ knowledgeGraph: kg });
           removeTrailingStatus();
           appendMessage({
             role: "agent",
@@ -758,6 +771,8 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
           const data = eventData as Message["v2Report"];
           removeTrailingStatus();
           if (data?.markdown) {
+            // 同步写入顶层字段，供极简 Results Tabs 直取
+            set({ reportMarkdown: data.markdown });
             appendMessage({
               role: "agent",
               content: data.markdown,
@@ -827,6 +842,34 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
         break;
       }
 
+      // ---- Task 21 Step 2: Scientific Alignment events ----
+      case "sa_consistency_report": {
+        if (eventData && typeof eventData === "object") {
+          set({ saConsistencyReport: eventData });
+        }
+        break;
+      }
+      case "sa_critic_report": {
+        if (eventData && typeof eventData === "object") {
+          set({ saCriticReport: eventData });
+        }
+        break;
+      }
+      case "sa_multi_dim_confidence": {
+        if (eventData && typeof eventData === "object") {
+          set({ saMultiDimConfidence: eventData });
+        }
+        break;
+      }
+      case "sa_consistency_error":
+      case "sa_critic_error":
+      case "sa_multi_dim_error":
+      case "sa_postprocess_error": {
+        // SA 后处理异常：记录到 console，不影响主流程
+        console.warn(`[SA] ${eventType}:`, eventData);
+        break;
+      }
+
       default:
         break;
     }
@@ -840,6 +883,14 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
     hypothesisList: [],
     pathwayGraph: null,
     agentDispatches: [],
+    // 极简 Results 面板直取字段（不走 messages 列表反查）
+    reportMarkdown: null,
+    simulationImage: null,
+    knowledgeGraph: null,
+    // Task 21 Step 2: Scientific Alignment 后处理报告
+    saConsistencyReport: null,
+    saCriticReport: null,
+    saMultiDimConfidence: null,
 
     // --- chat state ---
     messages: [],
@@ -864,7 +915,12 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
     // --- admin / control ---
     ragStatus: null,
     modelStatus: null,
-    controlBarState: { mode: "auto_standard", manualModules: [] },
+    // 极简 Auto-Chat 默认 auto_fast：跳过慢速外部 RAG 检索
+    // （PubMed/embedding/reranker/chain.ainvoke），使用估算参数，
+    // 仍跑完整 7 步工作流（mechanism→rag→ode→sandbox→validator→report），
+    // 产出真实仿真曲线 + 验证 + 报告。配合免费 LLM 也能"开箱即用"。
+    // /advanced 高级页面可切回 auto_standard 启用完整 RAG。
+    controlBarState: { mode: "auto_fast", manualModules: [] },
     isUpdatingDb: false,
     updateDbStatus: "",
 
@@ -946,6 +1002,19 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
         pipelineTotal: 0,
         pipelineName: "v1",
         pipelineStatus: "starting",
+        // 重置上一轮 Results 直取字段，避免新旧结果混淆
+        reportMarkdown: null,
+        simulationImage: null,
+        knowledgeGraph: null,
+        simulationResult: null,
+        pathwayGraph: null,
+        validationReport: null,
+        hypothesisList: [],
+        agentDispatches: [],
+        // Task 21 Step 2: 重置 SA 后处理报告
+        saConsistencyReport: null,
+        saCriticReport: null,
+        saMultiDimConfidence: null,
       });
       mcpToolCallsAcc = [];
       streamCodeGenCount = 0;
@@ -1015,6 +1084,14 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
         pipelineName: "v1",
         pipelineStatus: "starting",
         agentDispatches: [],
+        // 清空 Results 直取字段
+        reportMarkdown: null,
+        simulationImage: null,
+        knowledgeGraph: null,
+        simulationResult: null,
+        pathwayGraph: null,
+        validationReport: null,
+        hypothesisList: [],
       });
     },
 

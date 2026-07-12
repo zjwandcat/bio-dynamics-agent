@@ -20,6 +20,7 @@ import {
   type ValidationReport,
 } from "@/components/validation/ValidationPyramid";
 import { HypothesisPanel } from "@/components/hypothesis/HypothesisPanel";
+import { ScientificAlignmentPanel } from "@/components/scientific_alignment/ScientificAlignmentPanel";
 
 /**
  * Scientific Modeling IDE four-pane workbench shell.
@@ -137,6 +138,7 @@ export function WorkbenchShell() {
               <ValidationPyramid
                 report={(validationReport as ValidationReport) ?? {}}
               />
+              <ScientificAlignmentPanel />
               <HypothesisPanel />
               <PlaceholderPanel
                 title="Evidence & Warnings"

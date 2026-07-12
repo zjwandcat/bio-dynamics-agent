@@ -3,12 +3,20 @@
 # v3 升级：默认 WORKFLOW_VERSION=v3，仅保留 v3 Supervisor-Worker 工作流。
 
 import asyncio
+import csv as csv_module
 import json
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict
+
+# 清除系统代理环境变量：避免 requests/httpx 尝试连接不可用的本地代理（如 Clash 127.0.0.1:7897）
+# 当代理软件未运行时，所有外部 API 调用（PubMed/Rerank/在线 RAG）都会因 ProxyError 失败
+# 设置 NO_PROXY=* 替代清除，兼容性更好（不影响其他可能依赖代理的场景）
+os.environ["NO_PROXY"] = "*"
+os.environ["no_proxy"] = "*"
 
 from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,6 +50,229 @@ logger = logging.getLogger(__name__)
 # uvicorn / langgraph 子 logger）均按统一格式输出。setup_logging 幂等，
 # 重复调用不会叠加 handler。
 setup_logging(level=settings.LOG_LEVEL, json_output=settings.LOG_JSON)
+
+
+# =============================================================================
+# Task 21 Step 2: Scientific Alignment 后处理（chat 流集成）
+# =============================================================================
+# pathway_class → canonical 名映射（与 orchestrator.py _PATHWAY_CLASS_TO_CANONICAL 对齐）
+_SA_PATHWAY_TO_CANONICAL: dict[str, str] = {
+    "EGFR_RTK": "egfr",
+    "MAPK_CASCADE": "mapk",
+    "PI3K_AKT_MTOR": "pi3k_akt_mtor",
+    "JAK_STAT": "jak_stat",
+    "TGF_BETA": "tgf_beta",
+    "WNT": "wnt",
+    "P53": "p53",
+    "NFKB": "nf_kappa_b",
+    "APOPTOSIS": "apoptosis",
+    "CELL_CYCLE": "cell_cycle",
+}
+
+
+def _sa_flatten_metrics(metrics: dict) -> dict[str, float]:
+    """将 nested metrics 扁平化为 {species}_{field} → value（复用 orchestrator 逻辑）。"""
+    flat: dict[str, float] = {}
+    if not isinstance(metrics, dict):
+        return flat
+    for species, fields in metrics.items():
+        if not isinstance(fields, dict):
+            try:
+                flat[str(species)] = float(fields)
+            except (TypeError, ValueError):
+                pass
+            continue
+        for field_name, value in fields.items():
+            try:
+                flat[f"{species}_{field_name}"] = float(value)
+            except (TypeError, ValueError):
+                pass
+    return flat
+
+
+def _sa_extract_node_names(knowledge_graph: dict, entities: list | None = None) -> list[str]:
+    """从 knowledge_graph 提取节点名列表（复用 orchestrator 逻辑）。"""
+    nodes: list[str] = []
+    if not isinstance(knowledge_graph, dict):
+        return nodes
+    kg_nodes = knowledge_graph.get("nodes") or []
+    if isinstance(kg_nodes, list):
+        for n in kg_nodes:
+            if isinstance(n, dict):
+                name = n.get("name") or n.get("id") or ""
+                if name:
+                    nodes.append(str(name))
+            elif isinstance(n, str):
+                nodes.append(n)
+    if not nodes and entities:
+        for e in entities:
+            if isinstance(e, dict):
+                name = e.get("name") or e.get("text") or ""
+                if name:
+                    nodes.append(str(name))
+    return nodes
+
+
+def _sa_extract_cited_pmids(paper_evidence: list) -> list[str]:
+    """从 paper_evidence 提取 PMID 列表。"""
+    pmids: list[str] = []
+    if not isinstance(paper_evidence, list):
+        return pmids
+    for ev in paper_evidence:
+        if not isinstance(ev, dict):
+            continue
+        pmid = ev.get("pmid") or ev.get("PMID") or ""
+        if pmid:
+            pmids.append(str(pmid))
+    return pmids
+
+
+async def _run_scientific_alignment_postprocess(
+    pathway_class: str,
+    metrics: dict,
+    knowledge_graph: dict,
+    paper_evidence: list,
+    report_markdown: str,
+):
+    """Scientific Alignment 后处理：Consistency Checker + Critic + Multi-dim Confidence。
+
+    在 worker_report 完成后运行，受 SA Feature Flags 守护。
+    发射 SSE 事件：sa_consistency_report / sa_critic_report / sa_multi_dim_confidence。
+    任何异常被上层 try/except 捕获，不影响主流程。
+    """
+    canonical_name = _SA_PATHWAY_TO_CANONICAL.get(pathway_class, "")
+    if not canonical_name:
+        # 通路不在映射表中，跳过 SA 后处理
+        logger.info("[SA] 通路 %s 无 canonical 映射，跳过后处理", pathway_class)
+        return
+
+    metrics_flat = _sa_flatten_metrics(metrics)
+    extracted_nodes = _sa_extract_node_names(knowledge_graph)
+    cited_pmids = _sa_extract_cited_pmids(paper_evidence)
+
+    logger.info(
+        "[SA] 后处理启动: pathway=%s canonical=%s metrics_flat=%d nodes=%d pmids=%d",
+        pathway_class, canonical_name, len(metrics_flat),
+        len(extracted_nodes), len(cited_pmids),
+    )
+
+    # --- 阶段 9: Consistency Checker ---
+    if settings.is_sa_feature_enabled("CONSISTENCY_CHECKER"):
+        try:
+            from app.scientific_alignment import check_consistency
+            report = check_consistency(
+                pathway=canonical_name,
+                simulation_metrics=metrics_flat,
+            )
+            yield _sse_event({
+                "event": "sa_consistency_report",
+                "data": {
+                    "passed": report.passed,
+                    "rules_checked": report.rules_checked,
+                    "rules_evaluated": report.rules_evaluated,
+                    "violation_count": len(report.violations),
+                    "violations": [
+                        {
+                            "rule": v.rule,
+                            "assertion": v.assertion,
+                            "violation_label": v.violation_label,
+                            "observed_values": dict(v.observed_values) if v.observed_values else {},
+                            "message": v.message,
+                        }
+                        for v in report.violations
+                    ],
+                    "pathway": canonical_name,
+                },
+            })
+            logger.info(
+                "[SA] Consistency: passed=%s violations=%d",
+                report.passed, len(report.violations),
+            )
+        except Exception as exc:
+            logger.warning("[SA] Consistency Checker 异常: %s", exc)
+            yield _sse_event({
+                "event": "sa_consistency_error",
+                "data": {"message": str(exc)},
+            })
+
+    # --- 阶段 11: Scientific Critic Agent ---
+    if settings.is_sa_feature_enabled("SCIENTIFIC_CRITIC"):
+        try:
+            from app.scientific_alignment import run_scientific_critic
+            critic_report = run_scientific_critic(
+                pathway=canonical_name,
+                extracted_nodes=extracted_nodes,
+                simulation_metrics=metrics_flat,
+                biomodels_report=None,
+                cited_pmids=cited_pmids,
+            )
+            yield _sse_event({
+                "event": "sa_critic_report",
+                "data": {
+                    "overall_status": critic_report.overall_status,
+                    "findings_count": len(critic_report.findings),
+                    "findings": [
+                        {
+                            "category": f.category,
+                            "severity": f.severity,
+                            "finding": f.finding,
+                            "evidence": f.evidence,
+                            "suggestion": f.suggestion,
+                        }
+                        for f in critic_report.findings
+                    ],
+                    "pathway": canonical_name,
+                },
+            })
+            logger.info(
+                "[SA] Critic: overall_status=%s findings=%d",
+                critic_report.overall_status, len(critic_report.findings),
+            )
+        except Exception as exc:
+            logger.warning("[SA] Critic Agent 异常: %s", exc)
+            yield _sse_event({
+                "event": "sa_critic_error",
+                "data": {"message": str(exc)},
+            })
+
+    # --- 阶段 12: Multi-dim Confidence ---
+    if settings.is_sa_feature_enabled("MULTI_DIM_CONFIDENCE"):
+        try:
+            from app.scientific_alignment import compute_multi_dim_confidence
+            md_report = compute_multi_dim_confidence(
+                pathway=canonical_name,
+                seven_axis_report=None,     # 7 轴报告未在 chat 流中计算
+                parameter_report=None,       # 参数报告未在 chat 流中计算
+                consistency_report=None,     # 已在阶段 9 计算，此处传 None 让其降级
+                critic_report=None,          # Critic 报告对象类型不匹配，传 None
+                cited_pmids=cited_pmids,
+            )
+            yield _sse_event({
+                "event": "sa_multi_dim_confidence",
+                "data": {
+                    "overall_confidence": md_report.overall_confidence,
+                    "axes": [
+                        {
+                            "axis_name": a.axis_name,
+                            "score": a.score,
+                            "status": a.status,
+                            "sub_scores": dict(a.sub_scores) if a.sub_scores else {},
+                        }
+                        for a in md_report.axes
+                    ],
+                    "pathway": canonical_name,
+                },
+            })
+            logger.info(
+                "[SA] Multi-dim Confidence: overall=%s",
+                md_report.overall_confidence,
+            )
+        except Exception as exc:
+            logger.warning("[SA] Multi-dim Confidence 异常: %s", exc)
+            yield _sse_event({
+                "event": "sa_multi_dim_error",
+                "data": {"message": str(exc)},
+            })
 
 
 @asynccontextmanager
@@ -504,6 +735,20 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
         mcp_tokens_saved: int = 0
         clarification_emitted = False
         registry_emitted = False
+        # 追踪当前 pathway_class：从 _pathway_planner_hook 输出中捕获，
+        # 替代 v4_simulation_result / v4_pathway_graph 事件中硬编码的 "egfr" 占位
+        current_pathway_class: str = ""
+        # [RC30] 修复：追踪 v4_validation_report（含 level1~level5）。
+        # validation_pyramid_hook_node 在 worker_report 之后执行，且不在
+        # NODE_NAMES_V3 中，is_actual_node 过滤会跳过其 on_chain_end 事件，
+        # 导致 level1~level5 从未发射到前端，ValidationPyramid.tsx 全部显示 "skipped"。
+        latest_validation_report: dict | None = None
+        worker_report_payload: dict = {}  # 保存 worker_report SSE 载荷供后续合并
+        # Task 21 Step 2: SA 后处理所需数据收集
+        sa_knowledge_graph: dict = {}  # 从 worker_mechanism 捕获
+        sa_paper_evidence: list = []   # 从 worker_report 捕获
+        sa_metrics: dict = {}          # 从 worker_report 捕获
+        sa_pathway_class: str = ""     # 从 _pathway_planner_hook 捕获
 
         try:
             # 在流开始时下发当前使用的模型名，供前端展示真实模型而非硬编码占位
@@ -512,7 +757,10 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
             )
             async for event in compiled_workflow_v3.astream_events(
                 initial_state,
-                {"configurable": {"thread_id": thread_id}},
+                # [P0-1 修复] recursion_limit 默认 25 不足以走完 12 节点 workflow
+                # (pre_router → supervisor → worker_mcp → ... → worker_report)，
+                # 导致 RecursionError 在 n11 之前崩溃。提升到 50。
+                {"configurable": {"thread_id": thread_id}, "recursion_limit": 50},
                 version="v2",
             ):
                 event_name = event.get("event", "")
@@ -537,6 +785,32 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
                     continue
 
                 if event_name != "on_chain_end" or not is_actual_node:
+                    # [RC30] 修复：validation_pyramid_hook_node 不在 NODE_NAMES_V3 中，
+                    # 但其 on_chain_end output 含 v4_validation_report（level1~level5）。
+                    # 在 continue 之前捕获该字段，合并 worker_report 载荷后发射 SSE。
+                    if event_name == "on_chain_end":
+                        _hook_output = event.get("data", {}).get("output", {})
+                        if isinstance(_hook_output, dict) and _hook_output.get("v4_validation_report"):
+                            latest_validation_report = _hook_output["v4_validation_report"]
+                            logger.info(
+                                "[SSE] 捕获 v4_validation_report（来源: %s, "
+                                "overall_pass=%s, failed_levels=%s）",
+                                event_chain_name,
+                                latest_validation_report.get("overall_pass"),
+                                latest_validation_report.get("failed_levels", []),
+                            )
+                            # 合并 level1~level5 + overall_pass 到 worker_report 载荷，
+                            # 重新发射 v4_validation_report SSE（覆盖之前无 level 的版本）
+                            _vp_payload = dict(worker_report_payload)
+                            for _vk in ("level1", "level2", "level3", "level4",
+                                        "level5", "overall_pass", "failed_levels",
+                                        "short_circuit", "agent_version"):
+                                if _vk in latest_validation_report:
+                                    _vp_payload[_vk] = latest_validation_report[_vk]
+                            yield _sse_event({
+                                "event": "v4_validation_report",
+                                "data": _vp_payload,
+                            })
                     continue
 
                 output = event.get("data", {}).get("output", {})
@@ -546,6 +820,24 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
                 # 累计 Token 使用量
                 if isinstance(output, dict) and output.get("token_usage"):
                     latest_token_usage = output["token_usage"]
+
+                # 追踪 v4_pathway_class：从 _pathway_planner_hook 或任何包含该字段的节点输出捕获
+                # 替代 v4_simulation_result / v4_pathway_graph 中硬编码 "egfr" 占位
+                if isinstance(output, dict):
+                    _pc = output.get("v4_pathway_class")
+                    if _pc and isinstance(_pc, str) and _pc.strip():
+                        current_pathway_class = _pc.strip()
+                        sa_pathway_class = current_pathway_class  # Task 21 Step 2: SA 后处理复用
+                        logger.info("[SSE] 捕获 v4_pathway_class=%s（来源节点: %s）", current_pathway_class, node_name)
+
+                    # Task 21 Step 2: 捕获 SA 后处理所需数据
+                    if node_name == "worker_mechanism":
+                        _kg = output.get("knowledge_graph") or {}
+                        if _kg:
+                            sa_knowledge_graph = _kg
+                    if node_name == "worker_report":
+                        sa_metrics = output.get("metrics") or {}
+                        sa_paper_evidence = output.get("paper_evidence") or []
 
                 # 在 pre_router 拿到 execution_plan 之后下发按 plan 过滤的 agent_registry
                 # 让前端只看到本次会激活的圈；仅下发一次
@@ -614,8 +906,45 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
                     })
 
                 # 各 Worker 输出映射到前端事件
-                async for sse in _emit_worker_outputs(node_name, output):
+                async for sse in _emit_worker_outputs(node_name, output, current_pathway_class):
                     yield sse
+
+                # [RC30] 保存 worker_report 载荷，供后续 _validation_pyramid_hook
+                # 的 on_chain_end 事件合并 level1~level5 后重新发射 SSE
+                if node_name == "worker_report" and isinstance(output, dict):
+                    _wr_metrics = output.get("metrics") or {}
+                    _wr_report = output.get("report") or {}
+                    worker_report_payload = {
+                        "metrics": _wr_metrics,
+                        "report_markdown": _wr_report.get("markdown", ""),
+                        "experiment_protocols": output.get("experiment_protocols") or [],
+                        "paper_evidence": output.get("paper_evidence") or [],
+                        "confidence": output.get("confidence", 0.0),
+                        "passed": bool(_wr_metrics and not _wr_metrics.get("has_errors", False)),
+                    }
+
+            # =============================================================
+            # Task 21 Step 2: Scientific Alignment 后处理
+            # 在 worker_report 完成后、流结束前运行 SA 闭环。
+            # 受 V4_SCIENTIFIC_ALIGNMENT_ENABLED + SA_* 子 Flag 守护，
+            # Flag OFF 时完全跳过（零开销，不影响 v3 行为）。
+            # =============================================================
+            if settings.is_scientific_alignment_enabled() and sa_metrics and sa_pathway_class:
+                try:
+                    async for sa_event in _run_scientific_alignment_postprocess(
+                        pathway_class=sa_pathway_class,
+                        metrics=sa_metrics,
+                        knowledge_graph=sa_knowledge_graph,
+                        paper_evidence=sa_paper_evidence,
+                        report_markdown=worker_report_payload.get("report_markdown", ""),
+                    ):
+                        yield sa_event
+                except Exception as sa_exc:
+                    logger.warning("[SA] 后处理异常（不影响主流程）: %s", sa_exc)
+                    yield _sse_event({
+                        "event": "sa_postprocess_error",
+                        "data": {"message": str(sa_exc)},
+                    })
 
         except Exception as exc:
             logger.exception("v3 工作流执行异常")
@@ -637,8 +966,59 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
     return event_stream()
 
 
-async def _emit_worker_outputs(node_name: str, output: Dict[str, Any]):
-    """将 Worker 节点的输出转换为前端 SSE 事件（异步生成器）。"""
+def _load_timeseries_from_csv(
+    csv_path: str, max_points: int = 100
+) -> tuple[list[float], dict[str, list[float]]]:
+    """从仿真 CSV 读取时间序列供前端渲染交互式曲线 + E2E 科学断言。
+
+    CSV 格式（由 ode_templates 生成）：首行 header `t,species1,species2,...`，
+    后续行为数值。降采样到 max_points 个点以控制 SSE 事件体积（图片 base64
+    已占 ~33KB，time_points×species 矩阵若全量发送会显著膨胀）。
+
+    Returns:
+        (time_points, species_data) — time_points 为时间列 list[float]；
+        species_data 为 {species_name: list[float]} 各物种浓度时序。
+        读取失败时返回 ([], {})，调用方应回退到空值。
+    """
+    try:
+        with open(csv_path, "r", newline="", encoding="utf-8") as f:
+            reader = csv_module.reader(f)
+            header = next(reader, None)
+            rows = [r for r in reader if r]
+    except Exception as exc:
+        logger.warning("读取仿真 CSV 失败 (path=%s): %s", csv_path, exc)
+        return [], {}
+    if not header or not rows or len(header) < 2:
+        return [], {}
+    species_names = [h.strip() for h in header[1:]]
+    # 降采样：等步长取样 + 保留末点，避免曲线失真
+    n = len(rows)
+    step = max(1, n // max_points)
+    sampled = rows[::step]
+    if sampled[-1] is not rows[-1]:
+        sampled.append(rows[-1])
+    time_points: list[float] = []
+    species_data: dict[str, list[float]] = {name: [] for name in species_names}
+    for row in sampled:
+        if len(row) < len(header):
+            continue
+        try:
+            time_points.append(float(row[0]))
+            for i, name in enumerate(species_names):
+                species_data[name].append(float(row[i + 1]))
+        except (ValueError, IndexError):
+            continue
+    return time_points, species_data
+
+
+async def _emit_worker_outputs(node_name: str, output: Dict[str, Any], pathway_class: str = ""):
+    """将 Worker 节点的输出转换为前端 SSE 事件（异步生成器）。
+
+    Args:
+        node_name: 当前 Worker 节点名
+        output: Worker 输出字典
+        pathway_class: 从 _pathway_planner_hook 捕获的通路类别（替代硬编码 "egfr"）
+    """
     if not isinstance(output, dict):
         return
 
@@ -690,7 +1070,7 @@ async def _emit_worker_outputs(node_name: str, output: Dict[str, Any]):
             # 降级：从 v3 network_json 构造简易 v4_pathway_graph 载荷，保证前端有图可渲染
             nj = output["network_json"]
             yield _yield("v4_pathway_graph", {
-                "pathway_class": "egfr",  # 占位；前端会按选中通路覆盖
+                "pathway_class": pathway_class or "UNKNOWN",  # 从 _pathway_planner_hook 捕获
                 "nodes": [
                     {
                         "id": n.get("id", n.get("name", f"N{i}")),
@@ -777,12 +1157,28 @@ async def _emit_worker_outputs(node_name: str, output: Dict[str, Any]):
         # worker_sandbox 输出 execution_result / image_base64 / csv_path，封装为
         # SimulationResult 载荷供前端 SimulationPanel 直接渲染。
         execution_result = output.get("execution_result") or {}
+        # sandbox v2 不返回 execution_result（仅返回 image_base64/csv_path/
+        # stdout_stderr 等），导致 v4_simulation_result 的 time_points/species
+        # 为空，前端无法画交互式曲线、E2E 无法做浓度非负断言。
+        # 修复：当 execution_result 缺失 time_points/species 但 csv_path 存在时，
+        # 从 CSV 读取时间序列填充（降采样到 100 点控制 SSE 体积）。
+        tp = execution_result.get("time_points") if isinstance(execution_result, dict) else None
+        sp = execution_result.get("species") if isinstance(execution_result, dict) else None
+        if (not tp or not sp) and csv_path:
+            csv_tp, csv_sp = _load_timeseries_from_csv(csv_path)
+            if csv_tp and csv_sp:
+                tp = tp or csv_tp
+                sp = sp or csv_sp
+                logger.info(
+                    "[v4_sim] 从 CSV 填充 time_points(%d)/species(%d)",
+                    len(tp), len(sp),
+                )
         if execution_result or image_base64 or csv_path:
             yield _yield("v4_simulation_result", {
                 "run_id": f"v3_{output.get('run_id', '')}",
-                "pathway_class": "egfr",  # 占位；前端按选中通路覆盖
-                "time_points": execution_result.get("time_points", []) if isinstance(execution_result, dict) else [],
-                "species": execution_result.get("species", {}) if isinstance(execution_result, dict) else {},
+                "pathway_class": pathway_class or "UNKNOWN",  # 从 _pathway_planner_hook 捕获
+                "time_points": tp or [],
+                "species": sp or {},
                 "metrics": output.get("metrics", {}),
                 "csv_path": csv_path,
                 "image_base64": image_base64,
@@ -798,6 +1194,10 @@ async def _emit_worker_outputs(node_name: str, output: Dict[str, Any]):
         evidence = output.get("paper_evidence") or []
         if evidence:
             yield _yield("paper_evidence", evidence)
+        # N10 诊断事件：始终发射，便于 BM 循环排查 PubMed fallback 状态
+        n10_diag = output.get("n10_diagnostic")
+        if n10_diag:
+            yield _yield("n10_diagnostic", n10_diag)
         report = output.get("report") or {}
         if report.get("markdown"):
             yield _yield("report", report)
