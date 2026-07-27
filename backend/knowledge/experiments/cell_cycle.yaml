@@ -1,0 +1,61 @@
+# Sprint 4 — Experiment Rule Engine
+# 100% Rule 驱动，Mechanism-aware，无 LLM
+pathway: CELL_CYCLE
+name: "Eukaryotic cell cycle control signaling pathway"
+
+# 实验链（Mechanism-aware，非 Keyword）
+# canonical_timeline 参考 knowledge/canonical/cell_cycle.yaml：
+#   Cyclin D accumulation 1-4h (G1 early)；CDK4/6 activation 2-6h；Rb phosphorylation 4-8h；Cyclin E peak G1/S；Cyclin B peak G2/M
+experiments:
+  - name: "Western blot Cyclin D1"
+    technique: "Western blot"
+    target_node: "Cyclin D1"
+    mechanism_step: "Mitogen → Cyclin D1 accumulation → CDK4/6 activation"
+    time_course: [0, 60, 120, 240, 360, 480, 600, 720]  # 分钟（覆盖 12h 周期）
+    cell_line: "MCF7"
+    expected_result: "Cyclin D1 在 1-4 h 累积，G1 早期达峰"
+    justification: "Cyclin D1 是 G1 早期应答蛋白，其累积反映有丝分裂原信号驱动 G1 进入"
+
+  - name: "Western blot Cyclin E"
+    technique: "Western blot"
+    target_node: "Cyclin E"
+    mechanism_step: "E2F → Cyclin E transcription → CDK2 activation (G1/S transition)"
+    time_course: [0, 60, 120, 240, 360, 480, 600, 720]  # 分钟
+    cell_line: "U2OS"
+    expected_result: "Cyclin E 在 G1/S 转换期达峰，晚于 Cyclin D1"
+    justification: "Cyclin E 是 G1/S 转换的标志物，验证 Rb→E2F 正反馈回路的执行"
+
+  - name: "Western blot Cyclin B1"
+    technique: "Western blot"
+    target_node: "Cyclin B1"
+    mechanism_step: "Cyclin B1-CDK1 accumulation → mitosis entry (G2/M)"
+    time_course: [0, 60, 120, 240, 360, 480, 600, 720]  # 分钟
+    cell_line: "MCF7"
+    expected_result: "Cyclin B1 在 G2/M 期达峰，APC/C 活化后降解"
+    justification: "Cyclin B1 是 G2/M 转换的标志物，验证 APC/C 介导的周期依赖降解"
+
+  - name: "Flow cytometry PI staining (cell cycle phase)"
+    technique: "Flow cytometry"
+    target_node: "DNA content"
+    mechanism_step: "PI staining → DNA content → G1/S/G2/M phase distribution"
+    time_course: [0, 60, 120, 240, 360, 480, 600, 720]  # 分钟
+    cell_line: "MCF7"
+    expected_result: "G1/S/G2/M 各期比例随时间变化，验证 Cyclin 时序与细胞周期同步"
+    justification: "PI 染色流式直接读出细胞周期时相分布，与 Cyclin 蛋白时序交叉验证"
+    staining: "Propidium iodide (PI)"
+
+  - name: "Live-cell fluorescent reporter for Cyclin levels"
+    technique: "Live-cell fluorescent reporter"
+    target_node: "Cyclin levels"
+    mechanism_step: "Fluorescent Cyclin fusion proteins → real-time Cyclin levels tracking across G1/S/G2/M"
+    time_course: [0, 240, 480, 720, 960, 1200, 1440]  # 分钟（覆盖 24h 周期）
+    cell_line: "U2OS"
+    expected_result: "sequential_cyclin_peaks: Cyclin D → E → A → B 时序峰值，验证 Cyclin-CDK 四阶段进展"
+    justification: "Live-cell fluorescent reporter（如 FUCCI 或 Cyclin-Venus 融合蛋白）实时追踪 Cyclin levels 动态，直接验证 Cyclin-CDK 时序激活"
+
+# 禁止的实验（Mechanism-aware 禁止）
+forbidden:
+  - name: "Cyclin D1 qPCR"
+    technique: "qPCR"
+    target_node: "Cyclin D1"
+    reason: "Cyclin D1 功能依赖蛋白累积与 CDK4/6 结合（蛋白水平调控），需用 Western blot 检测 Cyclin D1 蛋白量或流式 PI 染色验证周期时相；qPCR 仅测 CCND1 mRNA，不能反映蛋白稳定性、CDK 结合或周期时相分布"

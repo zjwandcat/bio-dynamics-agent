@@ -1,0 +1,34 @@
+name: Scientific Regression Guard
+# Scientific Alignment Sprint — Sprint 0 Task 0.3
+# 目的：检测科学指标退化，阻断导致科学正确性下降的 PR
+# 触发：与 ci.yml 相同的 pull_request / push
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+jobs:
+  scientific-regression:
+    name: Scientific Regression Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: |
+          pip install pyyaml numpy scipy
+      - name: Run Scientific Regression Check
+        working-directory: bio-dynamics-agent/backend
+        run: |
+          python benchmarks/regression/run_regression.py
+      - name: Upload regression report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scientific-regression-report
+          path: bio-dynamics-agent/backend/benchmarks/regression/regression_report.json

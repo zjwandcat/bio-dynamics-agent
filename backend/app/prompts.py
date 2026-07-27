@@ -342,7 +342,7 @@ Return your findings as a JSON object compatible with the frontend visualization
   "top_selection": {
     "parameter": "Kd",
     "value": "1.5 nM",
-    "source": "PMID: 12345678",
+    "source": "PMID: 12451180",
     "confidence_score": 0.95
   },
   "visual_data": {

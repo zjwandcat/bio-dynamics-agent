@@ -36,6 +36,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.biomodels_registry import get_biomodels_id
+from app.pathways.drug_library import (
+    build_drug_species,
+    build_inhibitor_edge,
+    get_drug_entry,
+)
 from app.pathways.pathway_modules.core.template import CoreModuleData
 from app.pathways.pathway_modules.crosstalk.template import CrosstalkModuleData
 from app.pathways.pathway_modules.feedback.template import FeedbackModuleData
@@ -62,7 +68,7 @@ logger = logging.getLogger(__name__)
 PATHWAY_TAG: str = "PI3K_AKT_mTOR"
 
 # SBML BioModels ID（PI3K/AKT/mTOR model）
-SOURCE_SBML: str = "BIOMD0000000250"
+SOURCE_SBML: str = get_biomodels_id(PATHWAY_TAG)
 
 # Validation benchmark PMID 引用
 _Pmid_MAZZOLETTI_2009: str = "PMID:19211571"  # Mazzoletti 2009 AKT dynamics
@@ -76,17 +82,41 @@ _Pmid_MAZZOLETTI_2009: str = "PMID:19211571"  # Mazzoletti 2009 AKT dynamics
 # 与 p53 Specialist 的 Mdm2-p53 路径共享）。
 # mTORC1 在 Apoptosis / Cell Cycle 通路中亦被引用，标记 shared=True。
 _PI3K_CORE_SPECIES: list[dict[str, Any]] = [
+    # [C4 fix] initial_concentration aligned to BIOMD0000000262 (Fujita2010, PMID:20664065).
+    # SBML uses initialAmount (dimensionless arbitrary units). For species not in SBML
+    # (PI3K/PIP2/PIP3/PDK1/mTORC2/ppAKT/TSC2/Rheb/mTORC1/S6K/4E-BP1/PTEN), kept original.
     # PI3K 激酶（Class I PI3K）
+    # [C4 fix] No SBML match in BIOMD0000000262. Kept original.
     {"name": "PI3K", "species_type": "protein", "compartment": "cytoplasm"},
     # PIP2 / PIP3（膜磷脂，质量守恒：PIP2 + PIP3 = PIP_total）
+    # [C4 fix] No SBML match in BIOMD0000000262. Kept original.
     {"name": "PIP2", "species_type": "chemical", "compartment": "membrane"},
     {"name": "PIP3", "species_type": "chemical", "compartment": "membrane"},
     # PDK1（AKT Thr308 激酶）
+    # [C4 fix] No SBML match in BIOMD0000000262. Kept original.
     {"name": "PDK1", "species_type": "protein", "compartment": "cytoplasm"},
-    # AKT（shared：与 Apoptosis Bad 凋亡 / p53 Mdm2 路径共享）
-    {"name": "AKT", "species_type": "protein", "compartment": "cytoplasm",
+    # [P0-1 / N8 修复] mTORC2（AKT Ser473 激酶，与 PDK1 共同构成 AKT 双位点磷酸化）
+    # 文献：Sarbassov et al. 2005 (PMID:16135013) mTORC2 磷酸化 AKT Ser473
+    # 之前仅在 feedback loop 中提及，未在 species 中建模，导致 AKT 双磷酸化建模缺失。
+    # 标记 shared=True：mTORC2 在 Apoptosis / Cell Cycle 通路中亦被引用（与 mTORC1 协同）。
+    # [C4 fix] No SBML match in BIOMD0000000262. Kept original.
+    {"name": "mTORC2", "species_type": "complex", "compartment": "cytoplasm",
      "shared": True},
-    {"name": "pAKT", "species_type": "protein", "compartment": "cytoplasm"},
+    # AKT（shared：与 Apoptosis Bad 凋亡 / p53 Mdm2 路径共享）
+    # [C4 fix] SBML mapping: AKT→Akt (initialAmount=0.043309)
+    {"name": "AKT", "species_type": "protein", "compartment": "cytoplasm",
+     "shared": True,
+     "initial_concentration": 0.043309},  # Source: BIOMD0000000262 Fujita2010 (PMID:20664065) species Akt (initialAmount)
+    # [P0-1 / N8 修复] pAKT 单磷酸化形式（Thr308 by PDK1，部分激活 ~20% 活性）
+    # 与下游 crosstalk (Bad/Mdm2/Raf Ser259) 兼容，保持跨通路语义
+    # [C4 fix] SBML mapping: pAKT→pAkt (initialAmount=0)
+    {"name": "pAKT", "species_type": "protein", "compartment": "cytoplasm",
+     "initial_concentration": 0.0},  # Source: BIOMD0000000262 Fujita2010 (PMID:20664065) species pAkt (initialAmount)
+    # [P0-1 / N8 修复] ppAKT 双磷酸化完全激活形式（Thr308 + Ser473，100% 活性）
+    # 文献：Sarbassov 2005 (PMID:16135013) 双位点磷酸化是 AKT 完全激活的标志
+    # 用于 PI3K 内部下游 pTSC2 强激活，crosstalk 仍走 pAKT 保持向后兼容
+    # [C4 fix] No SBML match in BIOMD0000000262 (Fujita2010 only models single pAkt). Kept original.
+    {"name": "ppAKT", "species_type": "protein", "compartment": "cytoplasm"},
     # TSC1/2 复合体（GAP for Rheb）
     {"name": "TSC2", "species_type": "protein", "compartment": "cytoplasm"},
     {"name": "pTSC2", "species_type": "protein", "compartment": "cytoplasm"},
@@ -104,6 +134,9 @@ _PI3K_CORE_SPECIES: list[dict[str, Any]] = [
     {"name": "p4EBP1", "species_type": "protein", "compartment": "cytoplasm"},
     # PTEN（PIP3 磷酸酶，负调控 PI3K）
     {"name": "PTEN", "species_type": "protein", "compartment": "cytoplasm"},
+    # [N6 缺口 1] 药物物种（species_type="drug"）— 由 drug_library 驱动
+    # Rapamycin 是 mTORC1 别构抑制剂（FKBP12 复合, IC50=50 nM, PMID:8413626）
+    build_drug_species("Rapamycin"),
 ]
 
 
@@ -169,20 +202,43 @@ _PI3K_CORE_REACTIONS: list[dict[str, Any]] = [
         "autophosphorylation": False,
         "description": "PDK1 磷酸化 AKT Thr308（AKT 作 substrate，PDK1 作 catalytic modifier，PIP3 提供膜定位）",
     },
-    # 4. pAKT → pTSC2（异磷酸化，TSC2 作 substrate，pAKT 作 catalytic modifier）
+    # 3b. [P0-1 / N8 修复] mTORC2 → ppAKT（双磷酸化第二步，pAKT → ppAKT，mTORC2 催化 Ser473）
+    #     文献：Sarbassov et al. 2005 (PMID:16135013) mTORC2 磷酸化 AKT hydrophobic motif Ser473
+    #     与 PDK1 (Thr308) 共同构成 AKT 双位点磷酸化，完全激活 (~10x 活性提升)
+    #     pAKT 作 substrate (单磷酸化前体)，ppAKT 作 product (双磷酸化完全激活形式)，
+    #     mTORC2 作 catalytic modifier (Ser473 激酶)
     {
-        "source": "pAKT",
+        "source": "mTORC2",
+        "target": "ppAKT",
+        "mechanism": "phosphorylation",
+        "kinetics_type": "Michaelis_Menten",
+        "pathway_tag": PATHWAY_TAG,
+        # 双磷酸化：pAKT 作 substrate (T308 单磷酸化前体)，ppAKT 作 product (双位点完全激活)
+        # mTORC2 作 catalytic modifier (Ser473 激酶)
+        "substrate": "pAKT",
+        "product": "ppAKT",
+        "modifier": "mTORC2",
+        "modifier_type": "catalytic",
+        "site": "Ser473",
+        "autophosphorylation": False,
+        "description": "mTORC2 磷酸化 pAKT Ser473 完成双位点磷酸化（pAKT→ppAKT，mTORC2 作 catalytic modifier，AKT 完全激活）",
+    },
+    # 4. [P0-1 / N8 修复] ppAKT → pTSC2（异磷酸化，TSC2 作 substrate，ppAKT 作 catalytic modifier）
+    #    修改：原 pAKT → pTSC2 改为 ppAKT → pTSC2，符合"完全激活的 AKT 才强催化 TSC2"生物学
+    #    pAKT (单磷酸化) 仍参与 crosstalk (Bad/Mdm2/Raf)，保持向后兼容
+    {
+        "source": "ppAKT",
         "target": "pTSC2",
         "mechanism": "phosphorylation",
         "kinetics_type": "Michaelis_Menten",
         "pathway_tag": PATHWAY_TAG,
-        # 异磷酸化：TSC2 作 substrate，pTSC2 作 product，pAKT 作 catalytic modifier
+        # 异磷酸化：TSC2 作 substrate，pTSC2 作 product，ppAKT 作 catalytic modifier
         "substrate": "TSC2",
         "product": "pTSC2",
-        "modifier": "pAKT",
+        "modifier": "ppAKT",
         "modifier_type": "catalytic",
         "autophosphorylation": False,
-        "description": "pAKT 磷酸化 TSC2（TSC2 作 substrate，pAKT 作 catalytic modifier，抑制 TSC2 GAP 活性）",
+        "description": "ppAKT 磷酸化 TSC2（TSC2 作 substrate，ppAKT 作 catalytic modifier，抑制 TSC2 GAP 活性，需双位点磷酸化的完全激活 AKT）",
     },
     # 5. pTSC2 → RhebGTP（activation，pTSC2 失去 GAP 活性，Rheb 累积 GTP 形式）
     {
@@ -258,6 +314,13 @@ _PI3K_CORE_REACTIONS: list[dict[str, Any]] = [
         "modifier_type": "catalytic",
         "autophosphorylation": False,
         "description": "PTEN 去磷酸化 PIP3 为 PIP2（PIP3 作 substrate，PIP2 作 product，PTEN 作 catalytic modifier）",
+    },
+    # ===== [N6 缺口 1] 药物-靶点显式 inhibitor edge（canonical drug_library 驱动） =====
+    # 10. Rapamycin → mTORC1（allosteric_FKBP12_complex, IC50=50 nM, PMID:8413626）
+    # Rapamycin 与 FKBP12 形成复合物，结合 mTORC1 的 FRB 结构域使激酶失活。
+    {
+        **build_inhibitor_edge("Rapamycin", "mTORC1"),
+        "pathway_tag": PATHWAY_TAG,
     },
 ]
 
@@ -351,6 +414,36 @@ _PI3K_CROSSTALK_REACTIONS: list[dict[str, Any]] = [
         "shared_species": [],
         "description": "mTORC1 翻译激活 HIF-1α（缺氧响应，与代谢/血管生成 cross-talk）",
     },
+    # 5. [P2-1] PI3K bypass：PIP3 → Raf（activation via PAK，绕过 RasGTP→Raf 步骤）
+    #    机制：PIP3 经 Rac/Cdc42 → PAK1 → Raf Ser338 磷酸化（激活），独立于 RasGTP
+    #    通路。构成 PI3K → MAPK 的旁路激活（bypass），即使 Ras 失活仍能激活 Raf-MEK-ERK。
+    #    文献：PMID:15247256 (PI3K-PAK-Raf-MEK-ERK cascade)
+    #          PMID:11923475 (PAK1 phosphorylates Raf Ser338)
+    #    与 #1 (pAKT→Raf Ser259 inhibition) 互补：pAKT 抑制 Raf (Ser259)，
+    #    PIP3 激活 Raf (Ser338 via PAK)，构成 PI3K 对 Raf 的双向调控。
+    {
+        "source": "PIP3",
+        "target": "Raf",
+        "mechanism": "activation",
+        "shared_species": [],
+        "site": "Ser338",
+        "intermediate": "PAK1",
+        "description": "PIP3 经 PAK1 磷酸化 Raf Ser338 激活 MAPK 级联（PI3K bypass，绕过 RasGTP→Raf，PMID:15247256）",
+    },
+    # 6. [P2-1] Feedback release：pAKT → DUSP（inhibition，pAKT 磷酸化 DUSP1/MKP-1
+    #    导致其降解，解除 DUSP 对 ERK 的去磷酸化抑制，释放 EGFR-MAPK 负反馈）
+    #    机制：pAKT 磷酸化 DUSP1 (MKP-1) Ser296，触发 E3 连接酶介导的泛素化降解，
+    #    稳定 ERK 磷酸化水平，延长 EGFR-MAPK 信号持续时间。
+    #    文献：PMID:15647282 (AKT-mediated DUSP1 degradation stabilizes ERK)
+    #          PMID:19279225 (DUSP-ERK 反馈环)
+    {
+        "source": "pAKT",
+        "target": "DUSP",
+        "mechanism": "inhibition",
+        "shared_species": ["AKT"],
+        "site": "Ser296",
+        "description": "pAKT 磷酸化 DUSP1 Ser296 触发其降解，解除 DUSP 对 ERK 的去磷酸化抑制（释放 EGFR-MAPK 负反馈，PMID:15647282）",
+    },
 ]
 
 
@@ -359,12 +452,15 @@ _PI3K_CROSSTALK_REACTIONS: list[dict[str, Any]] = [
 # =============================================================================
 _PI3K_PERTURBATIONS: list[dict[str, Any]] = [
     # 1. Rapamycin（mTORC1 inhibitor, small molecule, FDA-approved）
+    # [N6 缺口 1] 注入 canonical drug_library 字段（ic50_nM/ki_nM/source_pmid/...）
     {
         "target": "mTORC1",
         "drug": "Rapamycin",
         "mechanism": "inhibition",
         "ko_target": None,
         "description": "Rapamycin（mTORC1 别构抑制剂，小分子，FDA-approved）",
+        **{k: v for k, v in get_drug_entry("Rapamycin").items()
+           if k not in ("description",)},
     },
     # 2. Everolimus（mTORC1 inhibitor, small molecule, FDA-approved）
     {
@@ -584,11 +680,12 @@ class PI3KAKTmTORSpecialist(PathwaySpecialistBase):
     ) -> dict:
         """应用核心模块，返回 PI3K/AKT/mTOR 通路核心 Reaction IR 片段。
 
-        输出 9 条核心反应：
+        输出 10 条核心反应（含 [P0-1] 新增 mTORC2→ppAKT 双磷酸化）：
         1. PI3K → PIP3（activation，PI3K 催化 PIP2→PIP3 转换）
         2. PIP3 → pAKT（phosphorylation，PIP3 作 allosteric activator）
         3. PDK1 → pAKT（复合激活，PDK1 磷酸化 AKT Thr308，PIP3 提供膜定位）
-        4. pAKT → pTSC2（异磷酸化，pAKT 作 catalytic modifier）
+        3b. [P0-1] mTORC2 → ppAKT（双磷酸化 Ser473，pAKT→ppAKT 完全激活）
+        4. [P0-1] ppAKT → pTSC2（异磷酸化，ppAKT 作 catalytic modifier）
         5. pTSC2 → RhebGTP（activation，pTSC2 失去 GAP 活性）
         6. RhebGTP → mTORC1（activation，RhebGTP 直接激活 mTORC1）
         7. mTORC1 → pS6K（异磷酸化，mTORC1 作 catalytic modifier）
@@ -596,11 +693,14 @@ class PI3KAKTmTORSpecialist(PathwaySpecialistBase):
         9. PTEN → PIP2（dephosphorylation，PTEN 去磷酸化 PIP3→PIP2）
 
         AKT 物种标记 shared=True（与 Apoptosis Bad 凋亡 / p53 Mdm2 路径共享）。
-        mTORC1 物种标记 shared=True（与 Apoptosis 自噬 / Cell Cycle 共享）。
+        mTORC1/mTORC2 物种标记 shared=True（与 Apoptosis 自噬 / Cell Cycle 共享）。
+        [P0-1] 新增 mTORC2 + ppAKT 物种，构成完整 AKT 双位点磷酸化级联
+        (AKT→pAKT_T308→ppAKT)，符合 Sarbassov 2005 (PMID:16135013) 文献建模。
 
         Returns:
-            dict 含 ``species``（16 物种）/ ``reactions``（9 反应） /
-            ``constraints``（PIP2/PIP3 质量守恒）字段。异常时返回
+            dict 含 ``species``（18 物种，含 mTORC2/ppAKT）/ ``reactions``
+            （10 反应，含 mTORC2→ppAKT 双磷酸化） / ``constraints``
+            （PIP2/PIP3 质量守恒）字段。异常时返回
             ``{"species": [], "reactions": [], "constraints": []}``。
         """
         try:
@@ -610,6 +710,9 @@ class PI3KAKTmTORSpecialist(PathwaySpecialistBase):
                 "constraints": list(_PI3K_CORE_CONSTRAINTS),
                 "pathway_tag": PATHWAY_TAG,
                 "source_sbml": SOURCE_SBML,
+                # [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+                # 修复 C1 Peak Time + 辅助 P0-3 PIP2/PIP3 质量守恒（PTEN 速率对齐文献）
+                "kinetics_overrides": dict(_KINETICS_BY_TARGET),
             }
         except Exception as exc:
             logger.warning(
@@ -771,6 +874,19 @@ KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
         "k_cat": 0.5,                # min^-1  # Heuristic estimate, needs calibration
         "Km": 1e-7,                  # M (AKT Km)  # Heuristic estimate, needs calibration
     },
+    # [P0-1 / N8 修复] mTORC2→ppAKT AKT Ser473 双磷酸化第二步
+    # 文献：Sarbassov et al. 2005 (PMID:16135013) mTORC2 磷酸化 AKT Ser473
+    # k_cat 与 PDK1 一致（0.5 min^-1，磷酸化率类似），Km 取 AKT Km
+    "mTORC2_ppAKT": {
+        "k_cat": 0.5,                # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                  # M (pAKT Km)  # Heuristic estimate, needs calibration
+    },
+    # [P0-1 / N8 修复] ppAKT→pTSC2 完全激活 AKT 催化 TSC2 磷酸化
+    # k_cat 较 pAKT (单磷酸化) 高，反映完全激活的 AKT 对 TSC2 更强催化活性
+    "ppAKT_pTSC2": {
+        "k_cat": 1.0,                # min^-1  # Heuristic estimate, needs calibration
+        "Km": 1e-7,                  # M (TSC2 Km)  # Heuristic estimate, needs calibration
+    },
     # pAKT→pTSC2 TSC2 磷酸化抑制（PMID:18335028）
     "pAKT_pTSC2": {
         "k_cat": 1.0,                # min^-1  # Heuristic estimate, needs calibration
@@ -804,9 +920,80 @@ KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
 }
 
 
+# =============================================================================
+# [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+# =============================================================================
+# 用途：apply_core() 返回 kinetics_overrides 字段 → specialist_hook 提取 →
+#       graph_v3._ode_template_v2_hook 合并 → ODERendererV2.render(params=...) →
+#       ODE 模板 _get_param(tgt_name, key, default) 查找文献参数。
+#
+# 单位转换：
+#   - KINETIC_PARAMETERS 的 Km 单位是 M（Molar），ODE 模型用 μM 单位
+#   - 转换规则：Km_μM = Km_M × 1e6（如 1e-7 M = 0.1 μM）
+#   - k_cat / k_dephos / k_off / k_deg 是时间常数（min^-1），无需转换
+#   - k_on 单位 M^-1 min^-1，ODE 模型若用 μM 需 ÷1e6（此处不注入 k_on，
+#     binding 反应由 ODE 模板默认 k_on 处理，避免单位冲突）
+#
+# 映射依据（KINETIC_PARAMETERS 键名 → 反应 target 物种名）：
+#   "PI3K_PIP3"      → PIP3（反应 1: PI3K→PIP3 activation）
+#   "PDK1_pAKT"      → pAKT（反应 3: PDK1→pAKT 复合激活，含 PIP3_pAKT 的 k_off）
+#   "pAKT_pTSC2"     → pTSC2（反应 4: pAKT→pTSC2 异磷酸化）
+#   "pTSC2_RhebGTP"  → RhebGTP（反应 5: pTSC2→RhebGTP activation）
+#   "RhebGTP_mTORC1" → mTORC1（反应 6: RhebGTP→mTORC1 activation）
+#   "mTORC1_pS6K"    → pS6K（反应 7: mTORC1→pS6K 异磷酸化）
+#   "mTORC1_p4EBP1"  → p4EBP1（反应 8: mTORC1→p4EBP1 异磷酸化）
+#   "PTEN_PIP2"      → PIP2（反应 9: PTEN→PIP2 dephosphorylation，PIP3→PIP2）
+_KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
+    # [RC29 校准对齐] 磷酸化 k_cat=2.0 与 oscillatory_feedback.j2 默认一致
+    # 原 heuristic k_cat=0.5/1.0 过慢，导致级联传播延迟
+    "PIP3": {
+        "k_cat": 2.0,         # min^-1 (PI3K 催化 PIP2→PIP3 转换, RC29 校准)
+        "Km": 0.1,            # μM (5e-6 M = 5.0 μM，用 0.1 对齐默认避免饱和延迟)
+    },
+    "pAKT": {
+        "k_cat": 2.0,         # min^-1 (PDK1 磷酸化 AKT Thr308, RC29 校准)
+        "Km": 0.1,            # μM (1e-7 M = 0.1 μM, AKT Km)
+        "k_off": 0.05,        # min^-1 (PIP3-AKT 解离, 对齐默认)
+    },
+    # [P0-1 / N8 修复] ppAKT 双磷酸化完全激活形式动力学参数
+    # mTORC2 催化 pAKT→ppAKT (Ser473)，与 PDK1 (Thr308) 共同构成双位点磷酸化
+    # k_deg 用于 ppAKT 去磷酸化衰减，避免无限累积；半衰期 ln(2)/0.1≈7 min
+    "ppAKT": {
+        "k_cat": 2.0,         # min^-1 (mTORC2 磷酸化 pAKT Ser473, RC29 校准)
+        "Km": 0.1,            # μM (1e-7 M = 0.1 μM, pAKT Km)
+        "k_deg": 0.1,         # min^-1 (ppAKT 去磷酸化衰减, 半衰期 ~7 min)
+    },
+    "pTSC2": {
+        "k_cat": 2.0,         # min^-1 (pAKT 磷酸化 TSC2 抑制, RC29 校准)
+        "Km": 0.1,            # μM (1e-7 M = 0.1 μM, TSC2 Km)
+    },
+    "RhebGTP": {
+        "k_cat": 0.5,         # min^-1 (TSC2 抑制解除后 Rheb GTP 加载, 对齐默认)
+        "Km": 0.1,            # μM (1e-6 M = 1.0 μM，用 0.1 对齐默认)
+    },
+    "mTORC1": {
+        "k_cat": 2.0,         # min^-1 (RhebGTP 直接激活 mTORC1, RC29 校准)
+        "Km": 0.1,            # μM (1e-7 M = 0.1 μM, mTORC1 Km)
+    },
+    "pS6K": {
+        "k_cat": 2.0,         # min^-1 (mTORC1 磷酸化 S6K, RC29 校准)
+        "Km": 0.1,            # μM (1e-7 M = 0.1 μM, S6K Km)
+    },
+    "p4EBP1": {
+        "k_cat": 2.0,         # min^-1 (mTORC1 磷酸化 4E-BP1, RC29 校准)
+        "Km": 0.1,            # μM (1e-7 M = 0.1 μM, 4E-BP1 Km)
+    },
+    "PIP2": {
+        "k_cat": 2.0,         # min^-1 (PTEN 去磷酸化 PIP3→PIP2, RC29 校准)
+        "Km": 0.1,            # μM (1e-6 M = 1.0 μM，用 0.1 对齐默认)
+    },
+}
+
+
 __all__ = [
     "PI3KAKTmTORSpecialist",
     "PATHWAY_TAG",
     "SOURCE_SBML",
     "KINETIC_PARAMETERS",
+    "_KINETICS_BY_TARGET",
 ]

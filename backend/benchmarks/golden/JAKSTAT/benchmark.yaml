@@ -1,0 +1,16 @@
+# Golden Benchmark — JAKSTAT Pathway
+pathway: JAKSTAT
+question: "Cytokine stimulation activates JAK, leading to STAT5 phosphorylation within 5-15 min and nuclear translocation. SOCS3 and CIS form negative feedback attenuating JAK activity, producing transient STAT5 signaling. Explain the JAK-STAT5 signaling dynamics and simulate expected behavior."
+ground_truth: "Cytokine binding activates JAK within 1-5 min, which phosphorylates STAT5 at 5-15 min [PMID:12552139]. Phosphorylated STAT5 dimerizes and translocates to the nucleus at 10-20 min [PMID:17502367]. Nuclear STAT5 transcriptionally induces SOCS3 and CIS (30-60 min), which inhibit JAK forming negative feedback that makes STAT5 signaling transient [PMID:12040185]. The Swameye 2003 model describes STAT5 signal kinetics and demonstrates that SOCS-mediated feedback is required for the transient response [PMID:12552139]. JAK-STAT signaling thus exhibits rapid activation followed by SOCS/CIS-dependent attenuation [PMID:17502367]."
+canonical_papers: ["PMID:12552139", "PMID:17502367", "PMID:12040185"]  # Swameye 2003; Schindler 2007; Aaronson 2002
+canonical_biomodels: ["BIOMD0000000347"]  # Bachmann2011 JAK2-STAT5 feedback
+expected_mechanism: [CytokineReceptor, JAK, STAT5, SOCS3, CIS]
+expected_time_scale:
+  jak_phosphorylation: "1-5 min"
+  stat5_phosphorylation: "5-15 min"
+  stat5_nuclear_translocation: "10-20 min"
+  socs_induction: "30-60 min"
+expected_experiment: []  # 实验方案，待 Sprint 4 填充
+expected_discussion: {}  # Discussion 预期，待 Sprint 2 填充
+expected_validation: {}  # Validation 预期，待 Sprint 3 填充
+expected_confidence: 0.0  # 预期置信度，待 Sprint 3 填充

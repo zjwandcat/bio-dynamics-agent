@@ -1,0 +1,43 @@
+# Sprint 4 — Experiment Rule Engine
+# 100% Rule 驱动，Mechanism-aware，无 LLM
+pathway: TGF_BETA_SIGNALING
+name: "TGF-β/SMAD signaling pathway"
+
+# 实验链（Mechanism-aware，非 Keyword）
+# canonical_timeline 参考 knowledge/canonical/tgf_beta.yaml：
+#   TGF-β receptor activation 1-5 min；SMAD2/3 phosphorylation 5-15 min；SMAD complex nuclear translocation 15-30 min；SMAD7 induction 1-2h
+experiments:
+  - name: "Western blot pSMAD2 (Ser465/467)"
+    technique: "Western blot"
+    target_node: "pSMAD2"
+    mechanism_step: "TGFBR1 → SMAD2 phosphorylation"
+    time_course: [0, 5, 10, 15, 20, 30, 60, 90, 120]  # 分钟
+    cell_line: "HaCaT"
+    expected_result: "pSMAD2 在 5-15 min 达峰"
+    justification: "pSMAD2 是 TGFBR1 激活的直接底物，标志 TGF-β 受体信号"
+
+  - name: "Western blot pSMAD3 (Ser423/425)"
+    technique: "Western blot"
+    target_node: "pSMAD3"
+    mechanism_step: "TGFBR1 → SMAD3 phosphorylation"
+    time_course: [0, 5, 10, 15, 20, 30, 60, 90, 120]  # 分钟
+    cell_line: "MCF10A"
+    expected_result: "pSMAD3 在 5-15 min 达峰，与 pSMAD2 时序一致"
+    justification: "pSMAD3 与 pSMAD2 同为 R-SMAD，验证 TGF-β 受体对 R-SMAD 的并行磷酸化"
+
+  - name: "Immunofluorescence SMAD2/3 nuclear translocation"
+    technique: "Immunofluorescence"
+    target_node: "SMAD2/3"
+    mechanism_step: "pSMAD2/3 → SMAD4 heterodimer → nuclear translocation"
+    time_course: [0, 5, 10, 15, 20, 30, 60, 90, 120]  # 分钟
+    cell_line: "HaCaT"
+    expected_result: "SMAD2/3 核积累在 15-30 min 达峰"
+    justification: "SMAD 核转位是 TGF-β 通路的执行节点，IF 直接可视化亚细胞定位变化，验证转录调控机制"
+    fractionation: "Nuclear translocation IF"
+
+# 禁止的实验（Mechanism-aware 禁止）
+forbidden:
+  - name: "SMAD2 qPCR"
+    technique: "qPCR"
+    target_node: "SMAD2"
+    reason: "SMAD2 激活依赖 Ser465/467 磷酸化及与 SMAD4 异源二聚体核转位，需用 Western blot 检测 pSMAD2 或 IF 检测核转位；qPCR 仅测 SMAD2 mRNA，不能反映磷酸化或核转位激活状态"

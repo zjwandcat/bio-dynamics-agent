@@ -1,15 +1,11 @@
-import { WorkbenchShell } from "@/components/workspace/WorkbenchShell";
+import { redirect } from "next/navigation";
 
 /**
- * /workspace — the Scientific Modeling IDE four-pane workbench.
+ * /workspace — 旧四栏 IDE 已迁移至 /advanced。
  *
- * This is the primary surface of BioDynamics v4. The WorkbenchShell owns the
- * four-pane layout (Project / Scientific Workspace / Validation / AI Assistant)
- * and wires the global Zustand store + SSE chat stream + AI Assistant panel.
- *
- * The page itself is a thin server-component wrapper so that the client-side
- * WorkbenchShell can own all interactivity (per Next.js 16 App Router).
+ * 极简 Auto-Chat 重构后，主入口改为 `/`（对话式）。此路由保留为
+ * 301-style 重定向，避免旧书签 / 文档链接 404。
  */
-export default function WorkspacePage() {
-  return <WorkbenchShell />;
+export default function WorkspaceRedirect() {
+  redirect("/advanced");
 }

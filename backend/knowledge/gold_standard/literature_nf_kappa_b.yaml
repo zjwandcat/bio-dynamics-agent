@@ -4,13 +4,13 @@
 pathway: nf_kappa_b
 
 classical_reviews:        # 经典综述（最高优先级，score 5）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:15371334"
     title: "Signaling to NF-kappaB"
     authors: "Hayden MS, Ghosh S"
-    year: 2006
+    year: 2004
     journal: "Genes & Development"
     reason: "NF-κB 信号转导权威综述，定义 IKK-NF-κB 信号轴经典框架"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:UNVERIFIED"  # PMID verification failed — needs manual check
     title: "Regulation of NF-kappaB by deubiquitinases"
     authors: "O'Dea EL et al"
     year: 2010
@@ -24,7 +24,7 @@ mechanism_papers:         # 机制论文（score 4）
     year: 2002
     journal: "Science"
     reason: "IKB-NF-κB 信号模块时间控制机制奠基，定义 NF-κB 振荡动力学"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:15499023"
     title: "Oscillations in NF-kappaB signaling control the dynamics of gene expression"
     authors: "Nelson DE et al"
     year: 2004
@@ -39,13 +39,7 @@ biomodels_source_papers:  # BioModels 来源论文（score 3）
     year: 2002
     journal: "Science"
 
-recent_applications:      # 近期应用论文（score 2，仅补充）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "NF-kappaB dynamics in inflammation and cancer therapy"
-    authors: "Recent NF-kappaB application study"
-    year: 2021
-    journal: "Nature Reviews Cancer"
-    reason: "NF-κB 炎症与治疗动力学近期应用（PubMed 补充）"
+recent_applications: []      # 近期应用论文（score 2，仅补充）— placeholder removed
 
 case_reports: []          # 案例报告（score 1，一般不用）
 

@@ -1,0 +1,43 @@
+# Sprint 4 — Experiment Rule Engine
+# 100% Rule 驱动，Mechanism-aware，无 LLM
+pathway: WNT_SIGNALING
+name: "Wnt/β-catenin signaling pathway"
+
+# 实验链（Mechanism-aware，非 Keyword）
+# canonical_timeline 参考 knowledge/canonical/wnt.yaml：
+#   DVL activation 5-15 min；β-catenin stabilization 15-30 min；β-catenin nuclear accumulation 30-60 min；AXIN2 induction 1-2h
+experiments:
+  - name: "Western blot total β-catenin"
+    technique: "Western blot"
+    target_node: "β-catenin"
+    mechanism_step: "Wnt → destruction complex inhibition → β-catenin stabilization"
+    time_course: [0, 15, 30, 45, 60, 90, 120, 180]  # 分钟
+    cell_line: "HEK293"
+    expected_result: "β-catenin 在 15-30 min 累积，30-60 min 达峰"
+    justification: "β-catenin 蛋白稳定性变化是 Wnt 通路的直接输出，反映 destruction complex 失活"
+
+  - name: "Western blot nuclear β-catenin (Nuclear fractionation)"
+    technique: "Western blot"
+    target_node: "nuclear β-catenin"
+    mechanism_step: "β-catenin stabilization → nuclear accumulation → TCF/LEF activation"
+    time_course: [0, 15, 30, 45, 60, 90, 120, 180]  # 分钟
+    cell_line: "L cells"
+    expected_result: "核 β-catenin 在 30-60 min 积累"
+    justification: "核 β-catenin 是 Wnt 通路的执行节点，需 Nuclear fractionation 区分胞质/核池，验证转录调控机制"
+    fractionation: "Nuclear"
+
+  - name: "TOPFLASH luciferase reporter"
+    technique: "Luciferase reporter assay"
+    target_node: "TCF/LEF transcription"
+    mechanism_step: "nuclear β-catenin → TCF/LEF → transcription"
+    time_course: [0, 60, 120, 180, 240, 360, 480, 720]  # 分钟（报告基因需更长孵育）
+    cell_line: "HEK293"
+    expected_result: "TOPFLASH 荧光素酶活性在 4-12 h 显著升高"
+    justification: "TOPFLASH 是 TCF/LEF 依赖转录的报告基因，直接读出 Wnt 通路转录输出，验证 β-catenin 功能性激活"
+
+# 禁止的实验（Mechanism-aware 禁止）
+forbidden:
+  - name: "β-catenin qPCR"
+    technique: "qPCR"
+    target_node: "β-catenin"
+    reason: "β-catenin 激活依赖蛋白稳定性变化（GSK3 磷酸化减少）及核积累，需用 Western blot 检测蛋白量/核定位或 TOPFLASH 报告基因；qPCR 仅测 CTNNB1 mRNA，不能反映蛋白稳定性或核转位"

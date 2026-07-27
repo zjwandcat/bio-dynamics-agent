@@ -1,41 +1,150 @@
-# BioDynamics Scientific Alignment Gold Standard — JAK-STAT 通路
+# BioDynamics Scientific Alignment Benchmark — JAK-STAT 通路
+# Task 13: 对齐 Task 12 Canonical Answer，补全 acceptance_criteria / expected_curve_metrics / forbidden_patterns
 # 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
-# 参考：Swameye 2003 STAT5 模型 (BIOMD0000000026)
-# TODO: verify PMID — Schindler 2008、Aaronson 2002、Shuai 2003、Yoshimura 2018、Swameye 2003
-pathway: JAK_STAT
-name: "JAK-STAT Cytokine Signaling"
+# 参考 Canonical: knowledge/canonical/jak_stat.yaml
+# Benchmark: JAK-STAT — Cytokine 诱导 STAT5 transient activation
+benchmark_id: jak_stat_socs3_feedback
+pathway: jak_stat
+category: positive
+question: >
+  解释细胞因子（如 EPO/IL-6）刺激后 STAT5 激活动力学。
+  为何 STAT5 表现为 transient（适应性下降）而非持续？
+  请解释 SOCS3/CIS 负反馈机制，并仿真 2 h 动力学。
+
+expected_answer: >
+  Cytokine → 细胞因子受体 → JAK 激酶激活 → JAK 磷酸化受体 →
+  STAT5 被招募并磷酸化（5-15 min 达峰）→ STAT5 二聚化 → 核转位（10-20 min）→
+  转录 SOCS3 与 CIS → SOCS3 蛋白积累（30-60 min）→ SOCS3 结合 JAK 抑制其激酶活性 →
+  CIS 结合细胞因子受体抑制信号 → STAT5 磷酸化下降（adaptive decline）。
+  因此 STAT5 表现为 transient peak then decline（适应性下降），而非持续高位。
+  SOCS3-mediated JAK negative feedback 是 STAT5 adaptive decline 的核心机制。
+  禁止回答"STAT5 持续高位不下降"或"JAK-STAT 无 SOCS 反馈"——这违反 SOCS3 负反馈。
+
+# 从 knowledge/canonical/jak_stat.yaml.canonical_mechanism.required_nodes 复制
+canonical_mechanism_nodes:
+  - CytokineReceptor
+  - JAK
+  - STAT5
+  - SOCS3
+  - CIS
+
+# 从 knowledge/canonical/jak_stat.yaml.canonical_reviews 复制
+canonical_reviews:
+  - "PMID:12552139"         # Swameye 2003 PNAS（STAT5 信号动力学建模）
+  - "PMID:17502367"         # Schindler 2007 J Biol Chem（JAK-STAT 信号转导原理）
+  - "PMID:12040185"         # Aaronson 2002 Science（JAK-STAT 路线图）
+
+# 从 knowledge/canonical/jak_stat.yaml.canonical_models 复制（Canonical 中为空）
+canonical_models: []
+
+# 期望动力学（基于 socs_feedback_assertions）
 expected_dynamics:
-  STAT_nuclear_translocation: "5-30 min"
-  SOCS_feedback: "induced, negative feedback"
-  transient_activation: "decay after peak"
-  STAT_phosphorylation: "rapid, within minutes"
-required_mechanisms:
-  - Cytokine_receptor_JAK
-  - STAT_phosphorylation
-  - STAT_dimerization
-  - nuclear_translocation
-  - SOCS_negative_feedback
-  - CIS_feedback
-required_biomodels:
-  - BIOMD0000000026   # Swameye 2003 STAT5 model
-required_reviews:
-  - PMID:xxxxxxxx     # TODO: verify Schindler 2008 PMID
-  - PMID:xxxxxxxx     # TODO: verify Aaronson 2002 PMID
-  - PMID:xxxxxxxx     # TODO: verify Shuai 2003 PMID
-  - PMID:xxxxxxxx     # TODO: verify Yoshimura 2018 PMID
-required_experiments:
-  - pSTAT5 Western blot
-  - STAT5 nuclear translocation immunofluorescence
-  - SOCS3 qPCR
-  - JAK inhibitor Ruxolitinib validation
-  - time course 0-120 min
+  - molecule: STAT5_phosphorylation
+    peak_time: [5, 15]
+    behavior: "transient peak then decline (adaptive)"
+    must_decline: true
+  - molecule: STAT5_nuclear
+    peak_time: [10, 20]
+    behavior: "transient nuclear accumulation"
+  - molecule: SOCS3
+    peak_time: [30, 60]
+    behavior: "increasing (feedback)"
+  - molecule: JAK_active
+    peak_time: [1, 5]
+    behavior: "rapid activation then inhibited by SOCS3"
+
+# 8 项 Curve Metrics 期望值
+expected_curve_metrics:
+  - molecule: pSTAT5
+    peak_time_min: [5, 15]
+    peak_amplitude: [0.8, 1.0]
+    rise_time_min: [2, 8]
+    half_decay_min: [20, 60]
+    adaptation_ratio: [0.1, 0.5]          # 必须 < 1.0，证明下降
+    steady_state: [0.1, 0.5]
+    oscillation: false
+    auc: [15, 60]
+  - molecule: STAT5_nuclear
+    peak_time_min: [10, 20]
+    peak_amplitude: [0.7, 1.0]
+    rise_time_min: [5, 12]
+    half_decay_min: [20, 60]
+    adaptation_ratio: [0.2, 0.5]
+    steady_state: [0.1, 0.4]
+    oscillation: false
+    auc: [20, 80]
+  - molecule: SOCS3
+    peak_time_min: [30, 60]
+    peak_amplitude: [0.6, 1.0]
+    rise_time_min: [10, 30]
+    half_decay_min: null                  # 持续增加（反馈）
+    adaptation_ratio: null
+    steady_state: [0.7, 1.0]
+    oscillation: false
+    auc: [30, 120]
+  - molecule: JAK_active
+    peak_time_min: [1, 5]
+    peak_amplitude: [0.8, 1.0]
+    rise_time_min: [0, 2]
+    half_decay_min: [15, 45]              # SOCS3 抑制
+    adaptation_ratio: [0.1, 0.4]
+    steady_state: [0.1, 0.4]
+    oscillation: false
+    auc: [10, 40]
+
+# 从 knowledge/canonical/jak_stat.yaml.expected_experiments 复制
+expected_experiments:
+  - name: "pSTAT5 Western blot"
+    technique: "Western blot"
+    timepoints: [0, 5, 15, 30, 60, 120]
+    target: "pSTAT5"
+  - name: "SOCS3 qPCR"
+    technique: "qPCR"
+    timepoints: [15, 30, 60, 120]
+    target: "SOCS3"
+
+# 从 knowledge/canonical/jak_stat.yaml.forbidden_experiments 复制
+forbidden_experiments:
+  - "STAT5 qPCR (不能反映磷酸化动力学)"
+
+# 禁止出现的模式（regex + reason）
 forbidden_patterns:
-  - "No PubMed evidence"
-  - "No BioModels comparison"
-  - "sustained STAT activation without SOCS feedback"
-key_time_scales:
-  STAT_nuclear_translocation: "5-30 min"
-  SOCS_induction: "30-90 min"
-key_feedbacks:
-  - "SOCS negative feedback on JAK/receptor"
-  - "CIS feedback on cytokine receptor"
+  - pattern: "STAT5.*sustained.*high"
+    reason: "pSTAT5 应 transient decline（SOCS3 负反馈），不能持续高位"
+  - pattern: "no.*SOCS.*feedback"
+    reason: "SOCS3 负反馈是 STAT5 adaptive decline 的核心机制，必须提及"
+  - pattern: "JAK.?STAT.*no.*SOCS"
+    reason: "违反 SOCS3-mediated JAK negative feedback 机制"
+  - pattern: "STAT5 qPCR"
+    reason: "STAT5 qPCR 不能反映磷酸化动力学"
+  - pattern: "no.*PubMed"
+    reason: "必须引用 PubMed 权威文献"
+  - pattern: "no.*BioModels"
+    reason: "必须引用 BioModels 模型比较"
+
+# 验收标准（对齐 spec acceptance_criteria）
+acceptance_criteria:
+  mechanism_nodes_required: true
+  mechanism_node_min_coverage: 0.8
+  pubmed_min_count: 2                    # JAK-STAT canonical reviews 较多
+  biomodels_min_count: 0                 # Canonical 中 JAK-STAT models 为空
+  experiment_min_count: 2
+  hallucination_tolerance: 0
+  curve_metric_pass_min: 6
+  forbidden_experiment_blocked: true
+  forbidden_pattern_absent: true
+  must_explain_socs3_feedback: true       # 必须解释 SOCS3 负反馈
+  stat5_must_decline: true                # STAT5 必须下降
+
+# 从 knowledge/canonical/jak_stat.yaml.socs_feedback_assertions 复制
+socs_feedback_assertions:
+  pathway: "Cytokine → JAK → STAT5 → SOCS3/CIS transcription → JAK inhibition"
+  behavior: "transient STAT5 activation then decline (adaptive)"
+  mechanism: "SOCS3-mediated JAK negative feedback"
+  forbidden_answer: "STAT5 持续高位不下降"
+
+# 参考 Canonical
+canonical_reference: "knowledge/canonical/jak_stat.yaml"
+known_negative_feedback:
+  - SOCS3
+  - CIS

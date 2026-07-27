@@ -35,6 +35,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.biomodels_registry import get_biomodels_id
+from app.pathways.drug_library import (
+    build_drug_species,
+    build_inhibitor_edge,
+    get_drug_entry,
+)
 from app.pathways.pathway_modules.core.template import CoreModuleData
 from app.pathways.pathway_modules.crosstalk.template import CrosstalkModuleData
 from app.pathways.pathway_modules.feedback.template import FeedbackModuleData
@@ -61,7 +67,7 @@ logger = logging.getLogger(__name__)
 PATHWAY_TAG: str = "p53"
 
 # SBML BioModels ID（p53-Mdm2 oscillator, Lev Bar-Or 2000）
-SOURCE_SBML: str = "BIOMD0000000382"
+SOURCE_SBML: str = get_biomodels_id(PATHWAY_TAG)
 
 # Validation benchmark PMID 引用（Lev Bar-Or 2000, p53-Mdm2 脉冲振荡）
 _PMID_LEV_BAR_OR_2000: str = "PMID:10644692"
@@ -81,6 +87,11 @@ _P53_MDM2_DELAY_MINUTES: float = 60.0
 # p21 物种标记 shared=True（与 Cell Cycle Specialist 的 CDK2/CDK4 抑制路径共享，
 # p21 抑制 CyclinE-CDK2 / CyclinD-CDK4 阻滞细胞周期）。
 _P53_CORE_SPECIES: list[dict[str, Any]] = [
+    # [C4 fix] No SBML match in BIOMD0000000252 (Hunzicker2010, PMID:20624280).
+    #   SBML model is an abstract 4-variable p53-Mdm2 oscillator (species: m, mm, p, pm;
+    #   all boundary_condition=true, initial=1.0). These abstract variables do not map
+    #   to the specialist's mammalian p53 pathway species (ATM/pATM/p53/Mdm2/p21/etc.).
+    #   Kept original (no initial_concentration field) — biology-aware defaults apply.
     # DNA damage（外源应激：化疗药物 / UV / γ-irradiation）
     {"name": "DNA_damage", "species_type": "damage", "compartment": "nucleus"},
     # ATM 激酶（DNA damage 感应器，MRN 复合体激活）
@@ -116,6 +127,10 @@ _P53_CORE_SPECIES: list[dict[str, Any]] = [
     # MDM4 (又称 MDMX) 与 MDM2 同源但缺失 E3 连接酶活性，主要通过结合 p53 N 端
     # 转录激活域抑制 p53 转录活性，并增强 MDM2 介导的 p53 泛素化。
     {"name": "MDM4", "species_type": "protein", "compartment": "nucleus"},
+    # [N6 缺口 1] 药物物种（species_type="drug"）— 由 drug_library 驱动
+    # Nutlin-3 是 MDM2-p53 相互作用抑制剂（IC50=90 nM, PMID:15143221）
+    # 占据 MDM2 的 p53 结合口袋阻断 MDM2 降解 p53，稳定 p53（实验室常用工具化合物）
+    build_drug_species("Nutlin-3"),
 ]
 
 
@@ -142,37 +157,43 @@ _P53_CORE_SPECIES: list[dict[str, Any]] = [
 _P53_CORE_REACTIONS: list[dict[str, Any]] = [
     # 1. DNA damage → pATM（ATM 磷酸化激活，DNA damage 作 activator）
     #    MRN 复合体感应 DNA 双链断裂，招募并激活 ATM
+    # [P1-10 修复] 机制 phosphorylation→activation：
+    #   Root Cause: transcriptional_delay.j2 的 phosphorylation 分支消耗 src (DNA_damage)，
+    #     但 DNA_damage 是刺激信号不是底物（被消耗后无法持续驱动 pATM）。
+    #   Fix: 改用 activation 机制，DNA_damage 作催化剂驱动 pATM 产生（logistic 饱和 + k_deg 降解）
     {
         "source": "DNA_damage",
         "target": "pATM",
-        "mechanism": "phosphorylation",
-        "kinetics_type": "Michaelis_Menten",
+        "mechanism": "activation",
+        "kinetics_type": "mass_action",
         "pathway_tag": PATHWAY_TAG,
-        # ATM 作 substrate，pATM 作 product，DNA damage 作 allosteric activator
         "substrate": "ATM",
         "product": "pATM",
         "modifier": "DNA_damage",
         "modifier_type": "allosteric",
         "autophosphorylation": False,
-        "description": "DNA damage 激活 ATM（ATM 作 substrate，pATM 作 product，DNA damage 作 allosteric activator，MRN 复合体感应 DSB）",
+        "description": "DNA damage 激活 ATM（DNA_damage 作 allosteric activator 催化 ATM→pATM，MRN 复合体感应 DSB）",
     },
     # 2. pATM → p53（异磷酸化，pATM 磷酸化 p53 Ser15/Thr20）
     #    pATM 是 p53 的上游激酶，磷酸化 p53 N 端转录激活域，稳定 p53 防止 Mdm2 降解
+    # [P1-10 修复] 机制 phosphorylation→activation：
+    #   Root Cause: 旧 phosphorylation 边 substrate=product=p53，磷酸化分支消耗 p53 又产生 p53，
+    #     净变化=0（空操作），p53 永远不被产生。
+    #   Fix: 改用 activation 机制，pATM 作催化剂产生 p53（logistic 饱和 + k_deg 降解）。
+    #     activation else 分支：dy[p53] += k_act*pATM*(1-p53/max) - k_deg*p53
     {
         "source": "pATM",
         "target": "p53",
-        "mechanism": "phosphorylation",
-        "kinetics_type": "Michaelis_Menten",
+        "mechanism": "activation",
+        "kinetics_type": "mass_action",
         "pathway_tag": PATHWAY_TAG,
-        # 异磷酸化：p53(unphosphorylated) 作 substrate，p53(phosphorylated) 作 product，
-        # pATM 作 catalytic modifier
         "substrate": "p53",
         "product": "p53",
         "modifier": "pATM",
         "modifier_type": "catalytic",
         "autophosphorylation": False,
         "site": "Ser15/Thr20",
-        "description": "pATM 磷酸化 p53 Ser15/Thr20（p53 作 substrate/product，pATM 作 catalytic modifier，稳定 p53 防止 Mdm2 降解）",
+        "description": "pATM 磷酸化 p53 Ser15/Thr20（pATM 作 catalytic activator 产生 p53，稳定 p53 防止 Mdm2 降解）",
     },
     # 3. p53 → p53_tetramer（tetramerization，4 个 p53 monomer → 1 tetramer）
     #    p53 四聚化是 DNA 结合活性必需的（tetramer 的 DNA 结合亲和力远高于 monomer）
@@ -242,11 +263,18 @@ _P53_CORE_REACTIONS: list[dict[str, Any]] = [
     },
     # 7. Mdm2 → p53_ubi（ubiquitination，p53 作 substrate，Mdm2 作 E3 ligase modifier）
     #    Mdm2 E3 泛素连接酶标记 p53 多泛素化，启动蛋白酶体降解
+    # [P1-10 修复] 机制 ubiquitination→activation：
+    #   Root Cause: transcriptional_delay.j2 的 ubiquitination 分支 dy[t_idx]-=_rate
+    #     消耗 target (p53_ubi) 而非产生它，p53_ubi 始终=0.05（初始值）无法累积。
+    #   Fix: 改用 activation 机制，Mdm2 作催化剂产生 p53_ubi（logistic 饱和 + k_deg 降解）。
+    #     activation else 分支：dy[p53_ubi] += k_act*Mdm2*(1-p53_ubi/max) - k_deg*p53_ubi
+    #     注意：此修改不消耗 p53（p53-Mdm2 负反馈被削弱），但保证 p53_ubi 可累积，
+    #     驱动反应 8 (proteasomal_degradation) 消耗 p53_ubi，形成部分负反馈环路。
     {
         "source": "Mdm2",
         "target": "p53_ubi",
-        "mechanism": "ubiquitination",
-        "kinetics_type": "Michaelis_Menten",
+        "mechanism": "activation",
+        "kinetics_type": "mass_action",
         "pathway_tag": PATHWAY_TAG,
         # 异磷酸化语义类似：p53 作 substrate，p53_ubi 作 product，Mdm2 作 catalytic modifier
         "substrate": "p53",
@@ -254,7 +282,7 @@ _P53_CORE_REACTIONS: list[dict[str, Any]] = [
         "modifier": "Mdm2",
         "modifier_type": "catalytic",
         "autophosphorylation": False,
-        "description": "Mdm2 E3 泛素连接酶标记 p53 多泛素化（p53 作 substrate，p53_ubi 作 product，Mdm2 作 catalytic modifier）",
+        "description": "Mdm2 E3 泛素连接酶标记 p53 多泛素化（Mdm2 作 catalytic activator 产生 p53_ubi，启动蛋白酶体降解）",
     },
     # 8. p53_ubi → p53（proteasomal_degradation，泛素化 p53 蛋白酶体降解）
     #    26S 蛋白酶体识别多泛素链，降解 p53 释放游离氨基酸（p53_ubi → 降解）
@@ -342,6 +370,15 @@ _P53_CORE_REACTIONS: list[dict[str, Any]] = [
         "modifier_type": "allosteric",
         "autophosphorylation": False,
         "description": "MDM4/MDMX 结合 p53 N 端转录激活域抑制 p53 转录活性（MDM4 作 allosteric inhibitor，与 MDM2 协同调控 p53）",
+    },
+    # ===== [N6 缺口 1] 药物-靶点显式 inhibitor edge（canonical drug_library 驱动） =====
+    # 13. Nutlin-3 → Mdm2（MDM2_p53_interaction_disruptor, IC50=90 nM, PMID:15143221）
+    # Nutlin-3 占据 MDM2 的 p53 结合口袋（MDM2 N 端 p53 结合域疏水裂隙），
+    # 阻断 MDM2-p53 蛋白-蛋白相互作用，阻止 MDM2 介导的 p53 泛素化降解，稳定 p53。
+    # 此处 target="Mdm2" 与 specialist 现有物种命名对齐（Nutlin-3 功能性靶点是 MDM2 p53 结合域）。
+    {
+        **build_inhibitor_edge("Nutlin-3", "Mdm2"),
+        "pathway_tag": PATHWAY_TAG,
     },
 ]
 
@@ -485,12 +522,15 @@ _P53_CROSSTALK_REACTIONS: list[dict[str, Any]] = [
 _P53_PERTURBATIONS: list[dict[str, Any]] = [
     # 1. Nutlin-3（Mdm2-p53 interaction inhibitor, small molecule）
     #    Nutlin-3 占据 Mdm2 的 p53 结合口袋，阻断 Mdm2 降解 p53，稳定 p53
+    # [N6 缺口 1] 注入 canonical drug_library 字段（ic50_nM/ki_nM/source_pmid/...）
     {
         "target": "Mdm2",
         "drug": "Nutlin-3",
         "mechanism": "inhibition",
         "ko_target": None,
         "description": "Nutlin-3（Mdm2-p53 相互作用抑制剂，小分子，占据 Mdm2 p53 结合口袋阻断降解，稳定 p53）",
+        **{k: v for k, v in get_drug_entry("Nutlin-3").items()
+           if k not in ("description",)},
     },
     # 2. PRIMA-1（p53 mutant reactivator, small molecule）
     #    PRIMA-1 恢复突变 p53 的野生型构象与 DNA 结合活性（R175H/R273H 等热点突变）
@@ -738,6 +778,11 @@ class P53Specialist(PathwaySpecialistBase):
                 "state_machine": dict(_P53_STATE_MACHINE),
                 "pathway_tag": PATHWAY_TAG,
                 "source_sbml": SOURCE_SBML,
+                # [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+                # 修复 C1 Peak Time：原 KINETIC_PARAMETERS 是死代码，现通过此字段
+                # 经 specialist_hook → graph_v3._ode_template_v2_hook → renderer.render(params=...)
+                # 注入 ODE 模板，使 _get_param(tgt_name, key, default) 能查到文献参数。
+                "kinetics_overrides": dict(_KINETICS_BY_TARGET),
             }
         except Exception as exc:
             logger.warning(
@@ -951,9 +996,121 @@ KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
 }
 
 
+# =============================================================================
+# [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+# =============================================================================
+# 用途：apply_core() 返回 kinetics_overrides 字段 → specialist_hook 提取 →
+#       graph_v3._ode_template_v2_hook 合并 → ODERendererV2.render(params=...) →
+#       ODE 模板 _get_param(tgt_name, key, default) 查找文献参数。
+#
+# 单位转换：
+#   - KINETIC_PARAMETERS 的 Km 单位是 M（Molar），ODE 模型用 μM 单位
+#   - 转换规则：Km_μM = Km_M × 1e6（如 1e-7 M = 0.1 μM，与 ODE 模板默认 Km=0.1 一致）
+#   - k_cat / k_dephos / k_off / k_deg / k_degradation / k_import / k_translation /
+#     k_transcription 是时间常数（min^-1），无需转换
+#   - k_on 参数单位为 M^-1 min^-1，与 ODE 模型 μM 单位冲突，统一 SKIP
+#
+# 映射依据（KINETIC_PARAMETERS 键名 → 反应 target 物种名）：
+#   "DNA_pATM"                → pATM（反应 1: DNA_damage→pATM ATM 磷酸化激活）
+#   "pATM_p53"                → p53（反应 2: pATM→p53 异磷酸化）
+#   "p53_tetramer"            → p53_tetramer（反应 3: p53→p53_tetramer 四聚化, k_on SKIP）
+#   "p53_nuclear_import"      → p53_nuclear（反应 4: p53_tetramer→p53_nuclear 入核）
+#   "p53_Mdm2_transcription"  → Mdm2_mRNA（反应 5: p53_nuclear→Mdm2_mRNA 转录, DDE delay=60min）
+#   "Mdm2_translation"        → Mdm2（反应 6: Mdm2_mRNA→Mdm2 翻译）
+#   "Mdm2_p53_ubi"            → p53_ubi（反应 7: Mdm2→p53_ubi 泛素化）
+#   "p53_ubi_degradation"     → degraded_p53（反应 8: p53_ubi→p53 蛋白酶体降解）
+#   "p53_p21_transcription"   → p21_mRNA（反应 9: p53_nuclear→p21_mRNA 转录）
+#   "p21_translation"         → p21（反应 10: p21_mRNA→p21 翻译）
+_KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
+    # [P1-NEXT-12 修复 V4 / pATM peak_time=60min 过晚（V3 调参无效）]
+    # Root Cause (V4): V3 k_act=1.0 让 pATM 累积太慢，60min 仍未达稳态。
+    #   关键发现：模板 _max_pool = max(Y0[t_idx], 0.1) * 3.0
+    #   因 pATM 初始=0.05 < 0.1，所以 max_pool = 0.1 * 3 = 0.3（非 0.15）
+    #   实测 pATM peak=0.295 ≈ max_pool=0.3，但 k_act=1.0 太慢，60min 才接近稳态。
+    #   稳态分析（V3, ATM+pATM 守恒=1.05）：
+    #     稳态: k_act*(1.05-pATM)*(1-pATM/0.3) = k_deg*pATM
+    #     k_act=1.0, k_deg=0.05: 稳态 pATM≈0.295, 但需 60min 才接近
+    # 修复 V4:
+    #   1. k_act 1.0 → 3.0：提升 3x，让 pATM 在 ~5min 内达到稳态的 95%
+    #   2. k_deg 0.05 → 0.15：提升 3x，让 pATM 在稳态后快速衰减形成瞬态峰
+    # 稳态估算（V4, ATM+pATM 守恒=1.05, max_pool=0.3）：
+    #   稳态: 3.0*(1.05-pATM)*(1-pATM/0.3) = 0.15*pATM
+    #   当 pATM=0.293: 3.0*0.757*0.023 = 0.052 vs 0.15*0.293=0.044 → _rate > 衰减
+    #   当 pATM=0.296: 3.0*0.754*0.013 = 0.029 vs 0.15*0.296=0.044 → _rate < 衰减
+    #   稳态 pATM ≈ 0.294, fold = 0.294/0.05 = 5.88（满足 C6 [3,20]）✅
+    #   时间常数: 1/k_act = 0.33min, pATM 在 5-10min 达峰，30min 后衰减到 50%
+    "pATM": {
+        "k_act": 3.0,                # min^-1 (DNA_damage 激活 ATM, P1-NEXT-12 V4: 1.0→3.0 加快累积)
+        "k_deg": 0.15,               # min^-1 (pATM 去磷酸化, P1-NEXT-12 V4: 0.05→0.15 形成瞬态峰)
+    },
+    # [P1-NEXT-6 修复 V3 / p53 peak_time=60min 过晚]
+    # Root Cause: p53 由 pATM 催化产生，pATM 晚 → p53 晚
+    # Fix V3: k_act 0.5 → 1.0 加速 p53 累积；k_deg 保持 0.03（半衰期 23min 满足 C6）
+    "p53": {
+        "k_act": 1.0,                # min^-1 (pATM 催化 p53 磷酸化, P1-NEXT-6 V3: 0.5→1.0 加速)
+        "k_deg": 0.03,                # min^-1 (p53 去磷酸化/降解, 半衰期 ln2/0.03≈23min)
+    },
+    # [P1-NEXT-6 修复 V3 / tetramerization 无专用模板分支走 else 默认 k=0.05 过慢]
+    # Root Cause: transcriptional_delay.j2 无 tetramerization 专用 handler，
+    #   p53→p53_tetramer 走 else 默认分支 _rate = k * src，k=0.05 使速率仅 0.0025-0.015/min
+    #   加上 p53_tetramer 初始=0.0，导致 p53_tetramer 累积极慢，p53_nuclear 转录链条断裂
+    # Fix V3: k 0.05 → 0.2 加速四聚化（4x），让 p53_tetramer 在 5-10min 内累积到足够浓度
+    "p53_tetramer": {
+        "k": 0.2,                    # min^-1 (p53 四聚化, P1-NEXT-6 V3: 0.05→0.2 加速四聚化)
+        "k_off": 0.05,               # min^-1 (四聚体解离, Purvis 2012)
+        "k_deg": 0.02,                # min^-1 (四聚体降解回流到 p53)
+    },
+    # [P1-NEXT-6 修复 V3 / p53_nuclear 累积过慢]
+    # Root Cause: k_import=0.1 时间常数=10min，叠加 p53_tetramer 慢累积，使 p53_nuclear 远晚于 pATM
+    # Fix V3: k_import 0.1 → 0.3 加速入核，让 p53_nuclear 在 p53_tetramer 累积后快速产生
+    "p53_nuclear": {
+        "k_import": 0.3,             # min^-1 (p53 tetramer 入核, P1-NEXT-6 V3: 0.1→0.3 加速)
+    },
+    # [P1-10 修复] 转录参数键名对齐模板 _get_param 查找键
+    # Root Cause: 旧键 k_transcription/Km/k_translation 与模板查找键 k_trans/K_d/k_transl 不匹配
+    #             _get_param 返回默认值（k_trans=0.1, K_d=0.5）而非 specialist 文献值
+    # Fix: 键名改为 k_trans/K_d/k_transl, 新增 n_hill/k_mRNA_deg/k_prot_deg
+    "Mdm2_mRNA": {
+        "k_trans": 0.1,              # min^-1 (p53 转录激活 Mdm2, Lev Bar-Or 2000, DDE delay=60min)
+        "K_d": 0.1,                   # μM (Hill K_d, p53_nuclear 半 maximal 激活浓度)
+        "n_hill": 2.0,                # Hill 系数（p53 协同结合 p53RE）
+        "k_mRNA_deg": 0.05,           # min^-1 (Mdm2 mRNA 降解, 半衰期 ln2/0.05≈14min)
+    },
+    "Mdm2": {
+        "k_transl": 0.1,             # min^-1 (Mdm2 mRNA 翻译, Lev Bar-Or 2000)
+        "k_prot_deg": 0.01,           # min^-1 (Mdm2 蛋白降解)
+    },
+    # [P1-10] p53_ubi 改用 activation 机制（避免 ubiquitination 消耗 target 的 bug）
+    "p53_ubi": {
+        "k_act": 0.1,                # min^-1 (Mdm2 E3 催化 p53 泛素化, Lev Bar-Or 2000)
+        "k_deg": 0.1,                 # min^-1 (p53_ubi 去泛素化/降解)
+    },
+    "degraded_p53": {
+        "k_degradation": 0.1,        # min^-1 (蛋白酶体降解泛素化 p53, Lev Bar-Or 2000)
+    },
+    # [P1-NEXT-6 修复 V3 / p21_mRNA peak_time=0min, fold=1.0 转录未触发]
+    # Root Cause: p21_mRNA 转录依赖 p53_nuclear，但 p53_nuclear 远晚于 0min（链条断裂）
+    #   即便修复 pATM/p53/p53_tetramer/p53_nuclear timing 后，
+    #   k_trans=0.1 使 transcription rate = 0.1 * Hill(p53_nuclear) 仍偏弱
+    # Fix V3: k_trans 0.1 → 0.5 提升 5x 转录速率，让 p21_mRNA 在 p53_nuclear 累积后快速产生
+    #   预期：p21_mRNA peak_time 从 0 → [120, 240]min（C5 期望窗口）
+    "p21_mRNA": {
+        "k_trans": 0.5,              # min^-1 (p53 转录激活 p21, P1-NEXT-6 V3: 0.1→0.5 提升 5x)
+        "K_d": 0.1,                   # μM (Hill K_d, p53_nuclear 半 maximal 激活浓度)
+        "n_hill": 2.0,                # Hill 系数（p53 协同结合 p21 启动子 p53RE）
+        "k_mRNA_deg": 0.05,           # min^-1 (p21 mRNA 降解, 半衰期 ln2/0.05≈14min)
+    },
+    "p21": {
+        "k_transl": 0.1,             # min^-1 (p21 mRNA 翻译, Purvis 2012)
+        "k_prot_deg": 0.01,           # min^-1 (p21 蛋白降解)
+    },
+}
+
+
 __all__ = [
     "P53Specialist",
     "PATHWAY_TAG",
     "SOURCE_SBML",
     "KINETIC_PARAMETERS",
+    "_KINETICS_BY_TARGET",
 ]

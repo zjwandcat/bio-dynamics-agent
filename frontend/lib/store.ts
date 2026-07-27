@@ -179,6 +179,14 @@ export interface WorkbenchStore {
   saConsistencyReport: unknown;
   saCriticReport: unknown;
   saMultiDimConfidence: unknown;
+  /** Sprint 2/3/5 扩展 SA 状态 */
+  saEvidenceBundle: unknown;
+  saConsistencyGateFailed: unknown;
+  saValidationRuleEngine: unknown;
+  saScientificReview: unknown;
+  saParameterProvenance: unknown;
+  saDecisionLog: unknown;
+  saBiomodelsCalibration: unknown;
 
   // --- AI Assistant chat state (migrated from page.tsx) ---
   messages: Message[];
@@ -861,6 +869,57 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
         }
         break;
       }
+      // Sprint 2 — Evidence Bundle
+      case "sa_evidence_bundle": {
+        if (eventData && typeof eventData === "object") {
+          set({ saEvidenceBundle: eventData });
+        }
+        break;
+      }
+      // Sprint 3 — Consistency Gate / Validation / Review
+      case "sa_consistency_gate_failed": {
+        if (eventData && typeof eventData === "object") {
+          set({ saConsistencyGateFailed: eventData });
+        }
+        break;
+      }
+      case "sa_validation_rule_engine": {
+        if (eventData && typeof eventData === "object") {
+          set({ saValidationRuleEngine: eventData });
+        }
+        break;
+      }
+      case "sa_scientific_review": {
+        if (eventData && typeof eventData === "object") {
+          set({ saScientificReview: eventData });
+        }
+        break;
+      }
+      // Sprint 5 — Parameter Provenance + Decision Log
+      case "sa_parameter_provenance": {
+        if (eventData && typeof eventData === "object") {
+          set({ saParameterProvenance: eventData });
+        }
+        break;
+      }
+      case "sa_decision_log": {
+        if (eventData && typeof eventData === "object") {
+          set({ saDecisionLog: eventData });
+        }
+        break;
+      }
+      // Task F — BioModels Parameter Calibration
+      case "sa_biomodels_calibration": {
+        if (eventData && typeof eventData === "object") {
+          set({ saBiomodelsCalibration: eventData });
+        }
+        break;
+      }
+      case "sa_biomodels_calibration_skipped":
+      case "sa_biomodels_calibration_error": {
+        console.warn(`[SA] ${eventType}:`, eventData);
+        break;
+      }
       case "sa_consistency_error":
       case "sa_critic_error":
       case "sa_multi_dim_error":
@@ -891,6 +950,14 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
     saConsistencyReport: null,
     saCriticReport: null,
     saMultiDimConfidence: null,
+    // Sprint 2/3/5: 扩展 SA 状态
+    saEvidenceBundle: null as any | null,
+    saConsistencyGateFailed: null as any | null,
+    saValidationRuleEngine: null as any | null,
+    saScientificReview: null as any | null,
+    saParameterProvenance: null as any | null,
+    saDecisionLog: null as any | null,
+    saBiomodelsCalibration: null as any | null,
 
     // --- chat state ---
     messages: [],
@@ -1015,6 +1082,13 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
         saConsistencyReport: null,
         saCriticReport: null,
         saMultiDimConfidence: null,
+        saEvidenceBundle: null,
+        saConsistencyGateFailed: null,
+        saValidationRuleEngine: null,
+        saScientificReview: null,
+        saParameterProvenance: null,
+        saDecisionLog: null,
+        saBiomodelsCalibration: null,
       });
       mcpToolCallsAcc = [];
       streamCodeGenCount = 0;

@@ -1,0 +1,43 @@
+# Sprint 4 — Experiment Rule Engine
+# 100% Rule 驱动，Mechanism-aware，无 LLM
+pathway: NF_KB_SIGNALING
+name: "NF-κB inflammatory signaling pathway"
+
+# 实验链（Mechanism-aware，非 Keyword）
+# canonical_timeline 参考 knowledge/canonical/nf_kappa_b.yaml：
+#   IKK activation 5-15 min；IkB degradation 10-20 min；NF-κB nuclear translocation 15-30 min；A20 induction 1-2h；Oscillation period 1.5-3h
+experiments:
+  - name: "Western blot IkBα (cytoplasmic)"
+    technique: "Western blot"
+    target_node: "IkBα"
+    mechanism_step: "IKK → IkBα degradation (cytoplasmic release of NF-κB)"
+    time_course: [0, 5, 10, 15, 20, 30, 60, 90, 120, 180]  # 分钟
+    cell_line: "HeLa"
+    expected_result: "IkBα 在 10-20 min 降解，1-2 h 内重新合成"
+    justification: "IkBα 降解是 NF-κB 释放与核转位的前提，标志 IKK 激活"
+
+  - name: "Western blot NF-κB p65 (Nuclear/Cytoplasmic fractionation)"
+    technique: "Western blot"
+    target_node: "NF-κB p65"
+    mechanism_step: "IkBα degradation → NF-κB p65 nuclear translocation"
+    time_course: [0, 5, 10, 15, 20, 30, 60, 90, 120, 180]  # 分钟
+    cell_line: "HEK293"
+    expected_result: "NF-κB p65 核积累在 15-30 min 达峰，呈 1.5-3 h 振荡"
+    justification: "NF-κB p65 核转位是通路激活的执行节点，需 Nuclear/Cytoplasmic 分离以区分亚细胞定位"
+    fractionation: "Nuclear/Cytoplasmic"
+
+  - name: "Western blot phospho-IKK"
+    technique: "Western blot"
+    target_node: "pIKK"
+    mechanism_step: "TNF → IKK phosphorylation (activation)"
+    time_course: [0, 5, 10, 15, 20, 30, 60, 90, 120, 180]  # 分钟
+    cell_line: "HeLa"
+    expected_result: "pIKK 在 5-15 min 达峰，早于 IkBα 降解与 NF-κB 核转位"
+    justification: "pIKK 是 TNF→IKK→IkBα→NF-κB 级联的最上游激活节点，验证信号起源时序"
+
+# 禁止的实验（Mechanism-aware 禁止）
+forbidden:
+  - name: "NF-κB p65 qPCR"
+    technique: "qPCR"
+    target_node: "NF-κB p65"
+    reason: "NF-κB 激活依赖 IkBα 降解后的核转位，需用 Western blot + Nuclear/Cytoplasmic fractionation 检测 p65 亚细胞定位；qPCR 仅测 RELA mRNA，不能反映核转位激活状态"

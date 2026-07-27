@@ -1,0 +1,65 @@
+# Cross-pathway benchmark literature verified against PubMed ESummary on 2026-07-25.
+pathway: cross_pathway
+
+classical_reviews:
+  - pmid: "PMID:11709054"
+    title: "Mechanisms of p53-dependent apoptosis"
+    authors: "Vousden KH, Lu X"
+    year: 2002
+    journal: "Nature Reviews Cancer"
+    stars: 5
+    reason: "Canonical review of the TP53 apoptotic network used by the p53-apoptosis cross-pathway model"
+
+mechanism_papers:
+  - pmid: "PMID:11706397"
+    title: "Pharmacodynamic studies with the epidermal growth factor receptor tyrosine kinase inhibitor ZD1839"
+    year: 2001
+    journal: "Clinical Cancer Research"
+    stars: 4
+    reason: "Gefitinib/ZD1839 EGFR target pharmacodynamics"
+  - pmid: "PMID:21245089"
+    title: "GSK1120212 (JTP-74057) is an inhibitor of MEK activity and activation with favorable pharmacokinetic properties for sustained in vivo pathway inhibition"
+    year: 2011
+    journal: "Clinical Cancer Research"
+    stars: 4
+    reason: "Trametinib/GSK1120212 MEK1/2 mechanism and pharmacodynamics"
+  - pmid: "PMID:26622906"
+    title: "Synergistic interaction between MEK inhibitor and gefitinib in EGFR-TKI-resistant human lung cancer cells"
+    year: 2015
+    journal: "International Journal of Oncology"
+    stars: 4
+    reason: "Direct evidence for combined MEK inhibition and gefitinib synergy"
+  - pmid: "PMID:17463250"
+    title: "MET amplification leads to gefitinib resistance in lung cancer by activating ERBB3 signaling"
+    year: 2007
+    journal: "Science"
+    stars: 5
+    reason: "Defining MET-ERBB3 bypass mechanism for acquired EGFR inhibitor resistance"
+  - pmid: "PMID:21430269"
+    title: "Genotypic and histological evolution of lung cancers acquiring resistance to EGFR inhibitors"
+    year: 2011
+    journal: "Science Translational Medicine"
+    stars: 4
+    reason: "Acquired EGFR inhibitor resistance and bypass evolution"
+  - pmid: "PMID:23291630"
+    title: "ABT-199, a potent and selective BCL-2 inhibitor, achieves antitumor activity while sparing platelets"
+    year: 2013
+    journal: "Nature Medicine"
+    stars: 5
+    reason: "Defining preclinical study for ABT-199 selectivity and apoptotic activity"
+  - pmid: "PMID:31048320"
+    title: "The TP53 Apoptotic Network Is a Primary Mediator of Resistance to BCL2 Inhibition in AML Cells"
+    year: 2019
+    journal: "Cancer Discovery"
+    stars: 5
+    reason: "Direct evidence that TP53 network loss causes resistance rather than synthetic sensitivity to BCL-2 inhibition"
+
+biomodels_source_papers: []
+recent_applications: []
+case_reports: []
+
+ranking_policy:
+  canonical_weight: 0.4
+  embedding_weight: 0.35
+  bm25_weight: 0.25
+  rule: "Verified pathway-specific evidence is merged before semantic and BM25 reranking"

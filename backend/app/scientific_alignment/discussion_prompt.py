@@ -211,13 +211,13 @@ The following phrases are FORBIDDEN because they signal template/boilerplate tex
 {forbidden_phrases}
 
 If you reference literature, you MUST:
-  1. Include a concrete PMID (e.g., PMID:12345678)
+  1. Include a concrete PMID (e.g., PMID:12451180)
   2. Provide a QUANTIFIED comparison (e.g., "ERK Peak 15min vs BioModels 14.8min, diff +0.2min")
 
 # REQUIRED: Quantified Comparison
 For Q6 (literature comparison) and Q10 (BioModels comparison), you MUST provide
 numeric quantification. Example format:
-  "ERK Peak 15min vs PMID:12345678 reported 14min, diff +1min [A]"
+  "ERK Peak 15min vs PMID:10712587 reported 14min, diff +1min [A]"
   "ERK Peak 15min vs BioModels BIOMD0000000010 14.8min, diff +0.2min [B]"
 
 # Output Format

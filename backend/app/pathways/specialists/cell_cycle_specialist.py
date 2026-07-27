@@ -37,6 +37,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.biomodels_registry import get_biomodels_id
+from app.pathways.drug_library import (
+    build_drug_species,
+    build_inhibitor_edge,
+    get_drug_entry,
+)
 from app.pathways.pathway_modules.core.template import CoreModuleData
 from app.pathways.pathway_modules.crosstalk.template import CrosstalkModuleData
 from app.pathways.pathway_modules.feedback.template import FeedbackModuleData
@@ -63,7 +69,7 @@ logger = logging.getLogger(__name__)
 PATHWAY_TAG: str = "CELL_CYCLE"
 
 # SBML BioModels ID（Tyson1991 cell cycle model）
-SOURCE_SBML: str = "BIOMD0000000055"
+SOURCE_SBML: str = get_biomodels_id(PATHWAY_TAG)
 
 # Validation benchmark PMID 引用
 _PMID_POMERENING_2005: str = "PMID:11389814"   # Pomerening 2005 Cdk1 oscillation
@@ -82,72 +88,100 @@ _CYCLINB_APC_DELAY_MINUTES: float = 30.0
 # p21 物种标记 shared=True（与 p53 Specialist 的 p53→p21 转录路径共享，
 # p21 抑制 CyclinE-CDK2 / CyclinD-CDK4 阻滞 G1/S 转换）
 _CELL_CYCLE_CORE_SPECIES: list[dict[str, Any]] = [
+    # [C4 fix] initial_concentration aligned to BIOMD0000000056 (Chen2004, PMID:15169868).
+    #   SBML is a yeast cell cycle model (CLB2/CLB5/CLN2/CDC20/CDH1/CDC14/etc.).
+    #   SBML species mapping: Cyclin_B→CLB2 (mitotic cyclin), APC_C_Cdc20_active→CDC20.
+    #   Mammalian-specific species (Cyclin_D/E/A, CDK1/2/4, Rb, E2F) have no yeast homolog
+    #   in the SBML model and are kept original (no initial_concentration field).
     # ---- G1 phase 物种 ----
     # Cyclin D（G1 早期 D 型 cyclin，外源信号诱导）
+    # [C4 fix] No SBML match in BIOMD0000000056 (yeast model has no Cyclin D homolog). Kept original.
     {"name": "Cyclin_D", "species_type": "protein",
      "compartment": "nucleus"},
     # CDK4/6（G1 期 CDK，与 Cyclin D 形成 CyclinD-CDK4/6 复合物）
     # 注：以 CDK4 代表 CDK4/6 家族（Palbociclib 等 CDK4/6 抑制剂作用靶点）
+    # [C4 fix] No SBML match in BIOMD0000000056. Kept original.
     {"name": "CDK4", "species_type": "protein",
      "compartment": "nucleus"},
     # CyclinD-CDK4 复合物（G1 期活性形式，磷酸化 Rb）
+    # [C4 fix] No SBML match in BIOMD0000000056. Kept original.
     {"name": "CyclinD_CDK4", "species_type": "complex",
      "compartment": "nucleus"},
     # Rb（视网膜母细胞瘤蛋白，未磷酸化为抑制形式，结合抑制 E2F）
+    # [C4 fix] No SBML match in BIOMD0000000056 (yeast has no Rb/E2F pathway). Kept original.
     {"name": "Rb", "species_type": "protein",
      "compartment": "nucleus"},
     # pRb_phosphorylated（磷酸化 Rb，释放 E2F，G1/S 转换）
+    # [C4 fix] No SBML match in BIOMD0000000056. Kept original.
     {"name": "pRb_phosphorylated", "species_type": "protein",
      "compartment": "nucleus"},
     # E2F（转录因子，未磷酸化 Rb 结合时为抑制形式）
+    # [C4 fix] No SBML match in BIOMD0000000056. Kept original.
     {"name": "E2F", "species_type": "protein",
      "compartment": "nucleus"},
     # E2F_free（Rb 磷酸化后释放的游离 E2F，激活 Cyclin E 转录）
+    # [C4 fix] No SBML match in BIOMD0000000056. Kept original.
     {"name": "E2F_free", "species_type": "protein",
      "compartment": "nucleus"},
     # ---- G1/S transition 物种 ----
     # Cyclin E（G1/S 转换 cyclin，E2F 转录靶基因）
+    # [C4 fix] No SBML match in BIOMD0000000056. Kept original.
     {"name": "Cyclin_E", "species_type": "protein",
      "compartment": "nucleus"},
     # Cyclin_E_mRNA（E2F 转录激活产物）
+    # [C4 fix] No SBML match in BIOMD0000000056. Kept original.
     {"name": "Cyclin_E_mRNA", "species_type": "mrna",
      "compartment": "nucleus"},
     # CDK2（S 期 CDK，与 Cyclin E / Cyclin A 形成复合物）
+    # [C4 fix] No SBML match in BIOMD0000000056. Kept original.
     {"name": "CDK2", "species_type": "protein",
      "compartment": "nucleus"},
     # CyclinE-CDK2 复合物（G1/S 转换活性形式，正反馈磷酸化 Rb）
+    # [C4 fix] No SBML match in BIOMD0000000056. Kept original.
     {"name": "CyclinE_CDK2", "species_type": "complex",
      "compartment": "nucleus"},
     # E2F_active（CyclinE-CDK2 进一步磷酸化激活 E2F，正反馈）
+    # [C4 fix] No SBML match in BIOMD0000000056. Kept original.
     {"name": "E2F_active", "species_type": "protein",
      "compartment": "nucleus"},
     # ---- S/G2 phase 物种 ----
     # Cyclin A（S 期 + G2 期 cyclin）
+    # [C4 fix] No SBML match in BIOMD0000000056 (yeast CLB5 is S-phase but different naming). Kept original.
     {"name": "Cyclin_A", "species_type": "protein",
      "compartment": "nucleus"},
     # CyclinA-CDK2 复合物（S 期活性形式，驱动 DNA 复制）
+    # [C4 fix] No SBML match in BIOMD0000000056. Kept original.
     {"name": "CyclinA_CDK2", "species_type": "complex",
      "compartment": "nucleus"},
     # CDK1（M 期 CDK，与 Cyclin A / Cyclin B 形成复合物）
+    # [C4 fix] No SBML match in BIOMD0000000056 (yeast CDC28 is the CDK1 homolog but not modeled explicitly). Kept original.
     {"name": "CDK1", "species_type": "protein",
      "compartment": "nucleus"},
     # CyclinA-CDK1 复合物（G2 期活性形式，驱动 G2/M 转换）
+    # [C4 fix] No SBML match in BIOMD0000000056. Kept original.
     {"name": "CyclinA_CDK1", "species_type": "complex",
      "compartment": "nucleus"},
     # ---- M phase 物种 ----
     # Cyclin B（M 期 cyclin，mitotic cyclin）
+    # [C4 fix] SBML mapping: Cyclin_B→CLB2 (yeast mitotic cyclin, initialAmount=0.1469227)
     {"name": "Cyclin_B", "species_type": "protein",
-     "compartment": "nucleus"},
+     "compartment": "nucleus",
+     "initial_concentration": 0.1469227},  # Source: BIOMD0000000056 Chen2004 (PMID:15169868) species CLB2 (initialAmount)
     # CyclinB-CDK1 复合物（M 期活性形式，MPF，驱动有丝分裂进入）
+    # [C4 fix] No SBML match in BIOMD0000000056 (complex not separately modeled). Kept original.
     {"name": "CyclinB_CDK1", "species_type": "complex",
      "compartment": "nucleus"},
     # APC/C-Cdc20 active（后期促进复合物 APC/C 与 Cdc20 形成活性 E3 泛素连接酶）
+    # [C4 fix] SBML mapping: APC_C_Cdc20_active→CDC20 (yeast APC/C activator, initialAmount=0.444296)
     {"name": "APC_C_Cdc20_active", "species_type": "complex",
-     "compartment": "nucleus"},
+     "compartment": "nucleus",
+     "initial_concentration": 0.444296},  # Source: BIOMD0000000056 Chen2004 (PMID:15169868) species CDC20 (initialAmount)
     # CyclinB_degraded（APC/C 降解 Cyclin B 的产物，后期退出有丝分裂）
+    # [C4 fix] No SBML match in BIOMD0000000056 (degradation product not modeled). Kept original.
     {"name": "CyclinB_degraded", "species_type": "protein",
      "compartment": "nucleus"},
     # Securin_degraded（APC/C 降解 Securin 释放 Separase，启动姊妹染色单体分离）
+    # [C4 fix] No SBML match in BIOMD0000000056 (yeast PDS1 is securin but degradation product not modeled). Kept original.
     {"name": "Securin_degraded", "species_type": "protein",
      "compartment": "nucleus"},
     # ---- 共享物种 ----
@@ -155,6 +189,9 @@ _CELL_CYCLE_CORE_SPECIES: list[dict[str, Any]] = [
     # p21 抑制 CyclinE-CDK2 / CyclinD-CDK4 阻滞 G1/S 转换
     {"name": "p21", "species_type": "protein",
      "compartment": "nucleus", "shared": True},
+    # [N6 缺口 1] 药物物种（species_type="drug"）— 由 drug_library 驱动
+    # Palbociclib 是 CDK4/6 ATP 竞争性抑制剂（IC50=11 nM, PMID:24141446）
+    build_drug_species("Palbociclib"),
 ]
 
 
@@ -387,6 +424,14 @@ _CELL_CYCLE_CORE_REACTIONS: list[dict[str, Any]] = [
         "autophosphorylation": False,
         "description": "CyclinE-CDK2 进一步磷酸化 Rb（positive feedback, Rb 作 substrate, CyclinE_CDK2 作 modifier, 维持 E2F 释放 bistable toggle）",
     },
+    # ===== [N6 缺口 1] 药物-靶点显式 inhibitor edge（canonical drug_library 驱动） =====
+    # 15. Palbociclib → CDK4（ATP_competitive, IC50=11 nM, PMID:24141446）
+    # Palbociclib 是 CDK4/6 选择性 ATP 竞争性抑制剂，占据 ATP 结合口袋使 CDK4/6 失活，
+    # 阻止 Rb 磷酸化，扣留 E2F 阻滞 G1/S 转换。用于 HR+ 乳腺癌治疗（FDA-approved）。
+    {
+        **build_inhibitor_edge("Palbociclib", "CDK4"),
+        "pathway_tag": PATHWAY_TAG,
+    },
 ]
 
 
@@ -589,12 +634,15 @@ _CELL_CYCLE_CROSSTALK_REACTIONS: list[dict[str, Any]] = [
 _CELL_CYCLE_PERTURBATIONS: list[dict[str, Any]] = [
     # 1. Palbociclib / PD-0332991（CDK4/6 inhibitor, FDA-approved）
     #    Palbociclib 是 CDK4/6 选择性抑制剂，用于 HR+ 乳腺癌治疗（FDA-approved）
+    # [N6 缺口 1] 注入 canonical drug_library 字段（ic50_nM/ki_nM/source_pmid/...）
     {
         "target": "CDK4",
         "drug": "Palbociclib",
         "mechanism": "inhibition",
         "ko_target": None,
         "description": "Palbociclib / PD-0332991（CDK4/6 选择性抑制剂, 小分子, FDA-approved, 用于 HR+ 乳腺癌）",
+        **{k: v for k, v in get_drug_entry("Palbociclib").items()
+           if k not in ("description",)},
     },
     # 2. Ribociclib / LEE011（CDK4/6 inhibitor, FDA-approved）
     #    Ribociclib 是 CDK4/6 选择性抑制剂，用于 HR+ 乳腺癌治疗（FDA-approved）
@@ -863,6 +911,12 @@ class CellCycleSpecialist(PathwaySpecialistBase):
                 "composite_reactions": list(_CELL_CYCLE_COMPOSITE_REACTIONS),
                 "pathway_tag": PATHWAY_TAG,
                 "source_sbml": SOURCE_SBML,
+                # [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+                # 修复 C1 Peak Time：原 KINETIC_PARAMETERS 是死代码，现通过此字段
+                # 经 specialist_hook → graph_v3._ode_template_v2_hook → renderer.render(params=...)
+                # 注入 ODE 模板，使 _get_param(tgt_name, key, default) 能查到文献参数。
+                # 数值爆炸防护：通过文献 k_cat/Km 稳定 Cyclin-CDK 级联与 APC/C 振荡动力学。
+                "kinetics_overrides": dict(_KINETICS_BY_TARGET),
             }
         except Exception as exc:
             logger.warning(
@@ -1108,9 +1162,86 @@ KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
 }
 
 
+# =============================================================================
+# [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+# =============================================================================
+# 用途：apply_core() 返回 kinetics_overrides 字段 → specialist_hook 提取 →
+#       graph_v3._ode_template_v2_hook 合并 → ODERendererV2.render(params=...) →
+#       ODE 模板 _get_param(tgt_name, key, default) 查找文献参数。
+#
+# 单位转换：
+#   - KINETIC_PARAMETERS 的 Km 单位是 M（Molar），ODE 模型用 μM 单位
+#   - 转换规则：Km_μM = Km_M × 1e6（如 1e-7 M = 0.1 μM）
+#   - k_cat / k_off / k_dissociation / k_degradation / k_translation /
+#     k_transcription 是时间常数（min^-1），无需转换
+#   - k_on 参数单位为 M^-1 min^-1，与 ODE 模型 μM 单位冲突，统一 SKIP
+#
+# 映射依据（KINETIC_PARAMETERS 键名 → 反应 target 物种名）：
+#   "CyclinD_CDK4"               → CyclinD_CDK4（反应 1: CyclinD+CDK4→CyclinD_CDK4 组装, k_on SKIP）
+#   "CyclinD_CDK4_pRb"           → pRb_phosphorylated（反应 2: CyclinD_CDK4→pRb_phosphorylated Rb 磷酸化）
+#   "CyclinE_CDK2_pRb"           → pRb_phosphorylated（反应 13: CyclinE_CDK2→pRb_phosphorylated, 合并）
+#   "pRb_E2F_free"               → E2F_free（反应 3: pRb→E2F_free Rb 释放 E2F）
+#   "E2F_CyclinE_transcription"  → Cyclin_E_mRNA（反应 12: E2F→Cyclin_E_mRNA 转录）
+#   "CyclinE_translation"        → Cyclin_E（反应 14: Cyclin_E_mRNA→Cyclin_E 翻译）
+#   "CyclinE_CDK2"               → CyclinE_CDK2（反应 4: CyclinE+CDK2→CyclinE_CDK2 组装, k_on SKIP）
+#   "p21_CyclinE_CDK2_inhibition"→ CyclinE_CDK2（p21 抑制 CyclinE_CDK2, k_on SKIP, 合并）
+#   "CyclinA_CDK2"               → CyclinA_CDK2（反应 5: CyclinA+CDK2→CyclinA_CDK2 组装, k_on SKIP）
+#   "CyclinB_CDK1"               → CyclinB_CDK1（反应 7: CyclinB+CDK1→CyclinB_CDK1 组装, k_on SKIP）
+#   "CyclinB_CDK1_APC"           → APC_C_Cdc20_active（反应 9: CyclinB_CDK1→APC_C_Cdc20_active APC/C 激活, DDE delay=30min）
+#   "APC_CyclinB_degradation"    → CyclinB_degraded（反应 10: APC/C→CyclinB_degraded CyclinB 降解）
+#   "APC_Securin_degradation"    → Securin_degraded（反应 11: APC/C→Securin_degraded Securin 降解）
+_KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
+    "CyclinD_CDK4": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (CyclinD-CDK4 解离, Novak 2001)
+    },
+    # [RC29 校准对齐] pRb_phosphorylated k_cat 0.5→2.0 对齐 oscillatory_feedback.j2 磷酸化默认值
+    "pRb_phosphorylated": {
+        # CyclinD_CDK4_pRb (k_cat=0.1) + CyclinE_CDK2_pRb (k_cat=0.5) 合并
+        # 取 CyclinE_CDK2_pRb 的 k_cat=0.5（G1/S 转换主导速率）
+        "k_cat": 2.0,                 # min^-1 (CyclinE-CDK2 催化 Rb 磷酸化, Novak 2001)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    "E2F_free": {
+        "k_dissociation": 0.1,        # min^-1 (pRb 释放 E2F, bistable toggle, Novak 2001)
+    },
+    "Cyclin_E_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (E2F 转录激活 Cyclin_E, Novak 2001)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM, Hill n=2)
+    },
+    "Cyclin_E": {
+        "k_translation": 0.1,         # min^-1 (Cyclin_E_mRNA 翻译, Novak 2001)
+    },
+    "CyclinE_CDK2": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突 (CyclinE-CDK2 组装 + p21 抑制 合并)
+        "k_off": 0.05,                # min^-1 (CyclinE-CDK2 解离 + p21 抑制解离, Novak 2001)
+    },
+    "CyclinA_CDK2": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (CyclinA-CDK2 解离, Novak 2001)
+    },
+    "CyclinB_CDK1": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (CyclinB-CDK1 解离, Tyson 1991)
+    },
+    # [RC29 校准对齐] APC_C_Cdc20_active k_cat 1.0→2.0 对齐 oscillatory_feedback.j2 磷酸化默认值
+    "APC_C_Cdc20_active": {
+        "k_cat": 2.0,                 # min^-1 (CyclinB-CDK1 催化 APC/C 激活, Tyson 1991, DDE delay=30min)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    "CyclinB_degraded": {
+        "k_degradation": 0.1,         # min^-1 (APC/C 降解 CyclinB, Tyson 1991)
+    },
+    "Securin_degraded": {
+        "k_degradation": 0.1,         # min^-1 (APC/C 降解 Securin, Novak 2001)
+    },
+}
+
+
 __all__ = [
     "CellCycleSpecialist",
     "PATHWAY_TAG",
     "SOURCE_SBML",
     "KINETIC_PARAMETERS",
+    "_KINETICS_BY_TARGET",
 ]

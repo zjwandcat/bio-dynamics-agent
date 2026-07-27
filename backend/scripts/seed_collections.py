@@ -16,8 +16,11 @@
 
 import argparse
 import logging
+import re
 import sys
 from pathlib import Path
+
+import yaml
 
 # 将 backend 目录加入 Python 路径，以导入 app 包
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -64,9 +67,20 @@ def _classify(record: dict, idx: int) -> str:
 
     blob = " ".join([param_name, source, context])
 
+    # [v5 Recovery Sprint 2 / RC3] evidence 分类必须含真实 PMID
+    # 旧实现：_EVIDENCE_KEYWORDS 过于泛化（"figure"/"p."）+ idx%4==2 回退误分类，
+    # 导致 SBML local parameter 描述被误分为 evidence（70 条假 evidence）。
+    # 修复：evidence 仅当 source/context 含 PMID 数字时才分类，移除 idx%4 回退。
+    _PMID_RE = re.compile(r"pmid[:\s]*(\d{5,})", re.IGNORECASE)
+    has_pmid = bool(
+        _PMID_RE.search(source) or _PMID_RE.search(context)
+        or re.search(r"\b\d{7,8}\b", source)  # 裸 PMID 数字（7-8 位）
+    )
+
     if any(kw in blob for kw in _EXPERIMENT_KEYWORDS):
         return "experiment"
-    if any(kw in blob for kw in _EVIDENCE_KEYWORDS):
+    # RC3: evidence 必须同时满足关键词匹配 + PMID 存在
+    if any(kw in blob for kw in _EVIDENCE_KEYWORDS) and has_pmid:
         return "evidence"
     if any(kw in blob for kw in _MECHANISM_KEYWORDS) and not has_value:
         return "mechanism"
@@ -76,12 +90,12 @@ def _classify(record: dict, idx: int) -> str:
     # 默认：v1 历史数据绝大多数是 kinetics parameter
     if has_value and param_name:
         return "parameter"
-    if idx % 4 == 0:
+    # [v5 RC3] 移除 idx%4==2 → evidence 回退（导致假 evidence），
+    # 未匹配的记录默认归为 parameter 或 mechanism
+    if idx % 3 == 0:
         return "mechanism"
-    if idx % 4 == 1:
+    if idx % 3 == 1:
         return "experiment"
-    if idx % 4 == 2:
-        return "evidence"
     return "parameter"
 
 
@@ -163,12 +177,58 @@ def fetch_legacy_records(rag_client: RagClient) -> list[dict]:
     return records
 
 
+def load_canonical_evidence() -> list[dict]:
+    """Load governed PubMed records from all literature gold-standard files."""
+    root = BACKEND_DIR / "knowledge" / "gold_standard"
+    records_by_pmid: dict[str, dict] = {}
+    groups = (
+        "classical_reviews",
+        "mechanism_papers",
+        "biomodels_source_papers",
+        "recent_applications",
+        "case_reports",
+    )
+    for path in sorted(root.glob("literature_*.yaml")):
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        pathway = str(data.get("pathway") or path.stem.removeprefix("literature_"))
+        for group in groups:
+            for item in data.get(group, []) or []:
+                if not isinstance(item, dict):
+                    continue
+                pmid_match = re.search(r"(\d{5,9})", str(item.get("pmid", "")))
+                if not pmid_match:
+                    continue
+                pmid = pmid_match.group(1)
+                candidate = {
+                    "pmid": pmid,
+                    "doi": str(item.get("doi", "")),
+                    "title": str(item.get("title", "")),
+                    "figure_ref": "",
+                    "cell_line": "",
+                    "species": "Human",
+                    "year": str(item.get("year", "")),
+                    "journal": str(item.get("journal", "")),
+                    "pathway": pathway,
+                    "source_role": group,
+                    "provenance": f"knowledge/gold_standard/{path.name}",
+                }
+                existing = records_by_pmid.get(pmid)
+                if existing is None or len(candidate["title"]) > len(existing["title"]):
+                    records_by_pmid[pmid] = candidate
+    return list(records_by_pmid.values())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="灌入 v2 四路 RAG 集合")
     parser.add_argument("--recreate", action="store_true", help="重建四路 collection（先删除）")
     parser.add_argument("--dry-run", action="store_true", help="仅打印分类结果，不写入")
     parser.add_argument("--limit", type=int, default=0, help="限制最多迁移条数（0 = 不限制）")
     parser.add_argument("--source", type=str, default=None, help="自定义历史 collection 名（默认用 CHROMA_COLLECTION_NAME）")
+    parser.add_argument(
+        "--canonical-only",
+        action="store_true",
+        help="仅将 gold-standard canonical PMID 幂等写入 evidence collection",
+    )
     args = parser.parse_args()
 
     logger.info("=" * 60)
@@ -177,24 +237,22 @@ def main() -> None:
     logger.info("目标四路 collection：%s", ", ".join(s.name for s in COLLECTION_REGISTRY))
     logger.info("=" * 60)
 
-    # 1. 拉取历史数据
-    rag_client = RagClient()
-    if args.source:
-        rag_client.collection_name = args.source
-    records = fetch_legacy_records(rag_client)
-    if not records:
-        logger.warning("历史 collection 为空或不可用，结束。")
-        return
-
-    if args.limit > 0:
-        records = records[: args.limit]
-    logger.info("共拉取 %d 条历史记录", len(records))
-
-    # 2. 分类
     buckets: dict[str, list[dict]] = {spec.role: [] for spec in COLLECTION_REGISTRY}
-    for idx, rec in enumerate(records):
-        role = _classify(rec, idx)
-        buckets[role].append(rec)
+    if not args.canonical_only:
+        # 1. 拉取并分类历史数据
+        rag_client = RagClient()
+        if args.source:
+            rag_client.collection_name = args.source
+        records = fetch_legacy_records(rag_client)
+        if args.limit > 0:
+            records = records[: args.limit]
+        logger.info("共拉取 %d 条历史记录", len(records))
+        for idx, rec in enumerate(records):
+            role = _classify(rec, idx)
+            buckets[role].append(rec)
+
+    canonical_records = load_canonical_evidence()
+    logger.info("加载 canonical PubMed 记录 %d 条", len(canonical_records))
 
     logger.info(
         "分类结果：%s",
@@ -202,6 +260,7 @@ def main() -> None:
     )
 
     if args.dry_run:
+        logger.info("canonical evidence: %d", len(canonical_records))
         logger.info("--dry-run：跳过写入阶段")
         return
 
@@ -239,6 +298,10 @@ def main() -> None:
             n = rag_cols.upsert_evidence(converted)
         logger.info("[%s] 写入 %d / %d 条", spec.role, n, len(converted))
         total_written += n
+
+    canonical_written = rag_cols.upsert_evidence(canonical_records)
+    logger.info("[evidence/canonical] 幂等写入 %d / %d 条", canonical_written, len(canonical_records))
+    total_written += canonical_written
 
     logger.info("=" * 60)
     logger.info("灌入完成，总计写入 %d 条", total_written)

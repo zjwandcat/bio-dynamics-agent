@@ -45,6 +45,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.biomodels_registry import get_biomodels_id
+from app.pathways.drug_library import (
+    build_drug_species,
+    build_inhibitor_edge,
+    get_drug_entry,
+)
 from app.pathways.pathway_modules.core.template import CoreModuleData
 from app.pathways.pathway_modules.crosstalk.template import CrosstalkModuleData
 from app.pathways.pathway_modules.feedback.template import FeedbackModuleData
@@ -71,7 +77,7 @@ logger = logging.getLogger(__name__)
 PATHWAY_TAG: str = "TGF_BETA"
 
 # SBML BioModels ID（Schmierer 2007 SMAD dynamics model）
-SOURCE_SBML: str = "BIOMD0000000252"
+SOURCE_SBML: str = get_biomodels_id(PATHWAY_TAG)
 
 # Validation benchmark PMID 引用
 _Pmid_MASSAGUE_1998: str = "PMID:9674480"   # Massagué 1998 TGF-β signaling
@@ -98,74 +104,112 @@ _TGF_SMURF_DELAY_MINUTES: float = 60.0
 # SMAD7 物种标记 shared=False（本通路内部负反馈效应器，不与其他通路共享）
 # AKT / p21 / p15 / Bim / PUMA 等仅在 crosstalk 中标记 shared，不在核心 species 内
 _TGF_BETA_CORE_SPECIES: list[dict[str, Any]] = [
+    # [C4 fix] initial_concentration aligned to BIOMD0000000342 (Zi2011, PMID:21613981).
+    #   SBML models TGF-β/Smad2/Smad4 dynamics (TGF_beta_ex/Smad2c/Smad4c/PSmad2c/
+    #   PSmad2_Smad4_c/PSmad2_Smad4_n/T1R_surf/T2R_surf).
+    #   SBML species mapping: TGF_beta→TGF_beta_ex, Smad2→Smad2c, Smad4→Smad4c,
+    #   pSmad2→PSmad2c, pSmad2_Smad4→PSmad2_Smad4_c, pSmad2_Smad4_nuc→PSmad2_Smad4_n,
+    #   TbRI→T1R_surf, TbRII→T2R_surf.
+    #   Species not in SBML (TGF_beta_TbRII/TGF_beta_TbRII_TbRI/pTbRI/Smad3/pSmad3/
+    #   pSmad3_Smad4/pSmad3_Smad4_nuc/PAI1_mRNA/SMAD7_mRNA/SMAD7/SMURF) kept original.
     # ---- 配体 + 受体 ----
     # TGF_beta（TGF-β1/2/3 配体，分泌型同源二聚体细胞因子，结合 TβRII 启动信号）
+    # [C4 fix] SBML mapping: TGF_beta→TGF_beta_ex (initial_concentration=0.05)
     {"name": "TGF_beta", "species_type": "ligand",
-     "compartment": "extracellular"},
+     "compartment": "extracellular",
+     "initial_concentration": 0.05},  # Source: BIOMD0000000342 Zi2011 (PMID:21613981) species TGF_beta_ex
     # TbRII（TGF-β receptor type II，组成型激酶活性丝/苏氨酸激酶受体）
+    # [C4 fix] SBML mapping: TbRII→T2R_surf (surface TβRII, initial_concentration=0.201077)
     {"name": "TbRII", "species_type": "protein",
-     "compartment": "membrane"},
+     "compartment": "membrane",
+     "initial_concentration": 0.201077},  # Source: BIOMD0000000342 Zi2011 (PMID:21613981) species T2R_surf
     # TbRI（TGF-β receptor type I / ALK5，丝/苏氨酸激酶受体，被 TβRII 磷酸化激活）
+    # [C4 fix] SBML mapping: TbRI→T1R_surf (surface TβRI, initial_concentration=0.702494)
     {"name": "TbRI", "species_type": "protein",
-     "compartment": "membrane"},
+     "compartment": "membrane",
+     "initial_concentration": 0.702494},  # Source: BIOMD0000000342 Zi2011 (PMID:21613981) species T1R_surf
     # TGF_beta_TbRII（TGF-β+TβRII 二元配体-受体复合物，招募 TβRI）
+    # [C4 fix] No SBML match in BIOMD0000000342 (Zi2011 models LRC_surf as combined complex). Kept original.
     {"name": "TGF_beta_TbRII", "species_type": "complex",
      "compartment": "membrane"},
     # TGF_beta_TbRII_TbRI（TGF-β+TβRII+TβRI 三元受体复合物，TβRII 磷酸化 TβRI）
+    # [C4 fix] No SBML match in BIOMD0000000342. Kept original.
     {"name": "TGF_beta_TbRII_TbRI", "species_type": "complex",
      "compartment": "membrane"},
     # ---- TβRI 磷酸化激活 ----
     # pTbRI（磷酸化激活的 TβRI，TβRII 磷酸化 TβRI GS domain Ser165/Ser172 激活激酶）
+    # [C4 fix] No SBML match in BIOMD0000000342 (Zi2011 doesn't model phosphorylated TβRI separately). Kept original.
     {"name": "pTbRI", "species_type": "protein",
      "compartment": "membrane"},
     # ---- R-SMAD（Smad2/3，受体调节型 SMAD，被 pTbRI 磷酸化）----
     # Smad2（R-SMAD，受体调节型 SMAD2，C-terminal MH2 结构域 SSXS motif 被 pTbRI 磷酸化）
+    # [C4 fix] SBML mapping: Smad2→Smad2c (cytoplasmic Smad2, initial_concentration=60.6)
     {"name": "Smad2", "species_type": "protein",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 60.6},  # Source: BIOMD0000000342 Zi2011 (PMID:21613981) species Smad2c
     # Smad3（R-SMAD，受体调节型 SMAD3，与 Smad2 平行被 pTbRI 磷酸化）
+    # [C4 fix] No SBML match in BIOMD0000000342 (Zi2011 models Smad2 only, not Smad3). Kept original.
     {"name": "Smad3", "species_type": "protein",
      "compartment": "cytoplasm"},
     # pSmad2（磷酸化 Smad2，Ser465/467 磷酸化，暴露 MH2 二聚化界面）
+    # [C4 fix] SBML mapping: pSmad2→PSmad2c (cytoplasmic phosphorylated Smad2, initial=0.0)
     {"name": "pSmad2", "species_type": "protein",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 0.0},  # Source: BIOMD0000000342 Zi2011 (PMID:21613981) species PSmad2c
     # pSmad3（磷酸化 Smad3，Ser423/425 磷酸化，暴露 MH2 二聚化界面）
+    # [C4 fix] No SBML match in BIOMD0000000342. Kept original.
     {"name": "pSmad3", "species_type": "protein",
      "compartment": "cytoplasm"},
     # ---- Co-SMAD（Smad4，共同介质 SMAD，与 R-SMAD 异源复合）----
     # Smad4（Co-SMAD，共同介质 SMAD4，与 pSmad2/pSmad3 形成异源复合物入核）
+    # [C4 fix] SBML mapping: Smad4→Smad4c (cytoplasmic Smad4, initial_concentration=50.8)
     {"name": "Smad4", "species_type": "protein",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 50.8},  # Source: BIOMD0000000342 Zi2011 (PMID:21613981) species Smad4c
     # ---- R-SMAD-CoSMAD 异源复合物 ----
     # pSmad2_Smad4（pSmad2+Smad4 异源复合物，胞质形成，准备入核）
     # ★ SMAD 复合-入核-转录三步 CompositeReaction step 1 产物
+    # [C4 fix] SBML mapping: pSmad2_Smad4→PSmad2_Smad4_c (initial_concentration=0.0)
     {"name": "pSmad2_Smad4", "species_type": "complex",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 0.0},  # Source: BIOMD0000000342 Zi2011 (PMID:21613981) species PSmad2_Smad4_c
     # pSmad3_Smad4（pSmad3+Smad4 异源复合物，胞质形成，准备入核）
+    # [C4 fix] No SBML match in BIOMD0000000342 (Zi2011 models Smad2 path only). Kept original.
     {"name": "pSmad3_Smad4", "species_type": "complex",
      "compartment": "cytoplasm"},
     # pSmad2_Smad4_nuc（核内 pSmad2:Smad4 复合物，作为转录因子激活靶基因）
     # ★ SMAD 复合-入核-转录三步 CompositeReaction step 2 产物, step 3 modifier
+    # [C4 fix] SBML mapping: pSmad2_Smad4_nuc→PSmad2_Smad4_n (initial_concentration=0.0)
     {"name": "pSmad2_Smad4_nuc", "species_type": "complex",
-     "compartment": "nucleus"},
+     "compartment": "nucleus",
+     "initial_concentration": 0.0},  # Source: BIOMD0000000342 Zi2011 (PMID:21613981) species PSmad2_Smad4_n
     # pSmad3_Smad4_nuc（核内 pSmad3:Smad4 复合物，作为转录因子激活靶基因）
+    # [C4 fix] No SBML match in BIOMD0000000342. Kept original.
     {"name": "pSmad3_Smad4_nuc", "species_type": "complex",
      "compartment": "nucleus"},
     # ---- 转录靶基因 mRNA ----
     # PAI1_mRNA（PAI-1 / SERPINE1 mRNA，pSmad2:Smad4 转录激活，TGF-β 经典靶基因）
     # ★ SMAD 复合-入核-转录三步 CompositeReaction step 3 产物
+    # [C4 fix] No SBML match in BIOMD0000000342 (Zi2011 doesn't model PAI-1 transcription). Kept original.
     {"name": "PAI1_mRNA", "species_type": "mrna",
      "compartment": "nucleus"},
     # SMAD7_mRNA（SMAD7 mRNA，pSmad2:Smad4 转录激活，含 30 min 转录延迟，负反馈准备）
+    # [C4 fix] No SBML match in BIOMD0000000342 (Zi2011 doesn't model SMAD7 transcription). Kept original.
     {"name": "SMAD7_mRNA", "species_type": "mrna",
      "compartment": "nucleus"},
     # ---- SMAD7 负反馈效应器 ----
     # SMAD7（SMAD7 蛋白，结合 TβRI 阻断其激酶活性，负反馈）
+    # [C4 fix] No SBML match in BIOMD0000000342. Kept original.
     {"name": "SMAD7", "species_type": "protein",
      "compartment": "cytoplasm"},
     # ---- SMURF E3 连接酶（SMAD→SMURF→R-SMAD 泛素化负反馈）----
     # SMURF（SMURF2 E3 泛素连接酶，由 SMAD7 转录激活，泛素化 pSmad2/pSmad3 降解）
+    # [C4 fix] No SBML match in BIOMD0000000342. Kept original.
     {"name": "SMURF", "species_type": "protein",
      "compartment": "cytoplasm"},
+    # [N6 缺口 1] 药物物种（species_type="drug"）— 由 drug_library 驱动
+    # SB431542 是 ALK5/TβRI ATP 竞争性抑制剂（IC50=94 nM, PMID:15546018）
+    build_drug_species("SB431542"),
 ]
 
 
@@ -369,6 +413,50 @@ _TGF_BETA_CORE_REACTIONS: list[dict[str, Any]] = [
         "autophosphorylation": False,
         "hill_coefficient": 2,
         "description": "pSmad2_Smad4_nuc → SMAD7_mRNA（transcription, Hill n=2, pSmad2:Smad4 作转录因子激活 SMAD7 转录, 含 30 min 转录延迟, SMAD7 蛋白结合 TβRI 阻断激酶活性形成负反馈）",
+    },
+    # 12. SMAD7_mRNA → SMAD7（translation, mass_action, 反馈环第 2 步：mRNA 翻译为蛋白）
+    #    [N8-P0-2 修复] 补全反馈环第 2 步：SMAD7 mRNA 在核糖体翻译为 SMAD7 蛋白
+    #    （Clarke 2006, PMID:17035437; KINETIC_PARAMETERS 中 k_translation=0.1 min^-1）
+    #    缺失此反应导致 SMAD7_mRNA 累积但 SMAD7 蛋白始终为 0，反馈环断裂
+    {
+        "source": "SMAD7_mRNA",
+        "target": "SMAD7",
+        "mechanism": "translation",
+        "kinetics_type": "mass_action",
+        "pathway_tag": PATHWAY_TAG,
+        "substrate": "SMAD7_mRNA",
+        "product": "SMAD7",
+        "modifier": "SMAD7_mRNA",
+        "modifier_type": "catalytic",
+        "autophosphorylation": False,
+        "description": "SMAD7 mRNA 翻译为 SMAD7 蛋白（SMAD7_mRNA 作 substrate, SMAD7 作 product, 反馈环第 2 步, 用于结合 TβRI 阻断其激酶活性形成负反馈, Clarke 2006 PMID:17035437）",
+    },
+    # 13. SMAD7 → pTbRI（inhibition, mass_action, 反馈环第 3 步：SMAD7 抑制 pTbRI 激酶活性）
+    #    [N8-P0-2 修复] 补全反馈环第 3 步：SMAD7 蛋白结合 pTbRI 阻断其激酶活性
+    #    （Clarke 2006, PMID:17035437; KINETIC_PARAMETERS 中 k_off=1e-3 min^-1, Km=1e-7 M）
+    #    缺失此反应导致 SMAD7 蛋白无法实际抑制 pTbRI，反馈环无法闭合
+    #    注：pTbRI 作 substrate（被抑制），SMAD7 作 modifier（抑制因子），无产物（pTbRI 活性降低）
+    {
+        "source": "SMAD7",
+        "target": "pTbRI",
+        "mechanism": "inhibition",
+        "kinetics_type": "mass_action",
+        "pathway_tag": PATHWAY_TAG,
+        "substrate": "pTbRI",
+        "product": "pTbRI",
+        "modifier": "SMAD7",
+        "modifier_type": "allosteric",
+        "autophosphorylation": False,
+        "description": "SMAD7 抑制 pTbRI 激酶活性（pTbRI 作 substrate, SMAD7 作 allosteric inhibitor, 反馈环第 3 步, 阻断 pTbRI 磷酸化 R-SMAD, delay=0min 蛋白结合直接抑制, Clarke 2006 PMID:17035437）",
+    },
+    # ===== [N6 缺口 1] 药物-靶点显式 inhibitor edge（canonical drug_library 驱动） =====
+    # 14. SB431542 → TbRI（ATP_competitive, IC50=94 nM, PMID:15546018）
+    # SB431542 是 ALK4/5/7（TβRI）ATP 竞争性抑制剂，阻断 TβRI 磷酸化 R-SMAD，
+    # 与 Galunisertib 共享 TbRI 靶点（实验室常用工具化合物）。
+    # 此处 target="TbRI" 与 specialist 现有物种命名对齐（SB431542 功能性靶点是 ALK5/TβRI 激酶活性）。
+    {
+        **build_inhibitor_edge("SB431542", "TbRI"),
+        "pathway_tag": PATHWAY_TAG,
     },
 ]
 
@@ -610,12 +698,15 @@ _TGF_BETA_PERTURBATIONS: list[dict[str, Any]] = [
     # 2. SB431542（TβRI kinase inhibitor, 小分子, Simple_Inhibition）
     #    SB431542 是 TβRI (ALK4/5/7) 激酶活性选择性抑制剂，
     #    阻断 TβRI 磷酸化 R-SMAD（实验室常用工具化合物）
+    # [N6 缺口 1] 注入 canonical drug_library 字段（ic50_nM/ki_nM/source_pmid/...）
     {
         "target": "TbRI",
         "drug": "SB431542",
         "mechanism": "inhibition",
         "ko_target": None,
         "description": "SB431542（TβRI kinase inhibitor, 小分子, Simple_Inhibition, 阻断 TβRI 磷酸化 R-SMAD, ALK4/5/7 选择性, 实验室常用工具化合物）",
+        **{k: v for k, v in get_drug_entry("SB431542").items()
+           if k not in ("description",)},
     },
     # 3. SMAD4 loss（loss-of-function, 基因缺失, 影响 Co-SMAD 复合形成）
     #    SMAD4 (DPC4) 基因缺失突变导致 Co-SMAD 功能丧失，
@@ -850,6 +941,12 @@ class TgfBetaSpecialist(PathwaySpecialistBase):
                 "state_machine": dict(_SMAD2_STATE_MACHINE),
                 "pathway_tag": PATHWAY_TAG,
                 "source_sbml": SOURCE_SBML,
+                # [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+                # 修复 C1 Peak Time：原 KINETIC_PARAMETERS 是死代码，现通过此字段
+                # 经 specialist_hook → graph_v3._ode_template_v2_hook → renderer.render(params=...)
+                # 注入 ODE 模板，使 _get_param(tgt_name, key, default) 能查到文献参数。
+                # 数值爆炸防护：通过文献 k_cat/Km 稳定 SMAD 复合-入核-转录动力学。
+                "kinetics_overrides": dict(_KINETICS_BY_TARGET),
             }
         except Exception as exc:
             logger.warning(
@@ -1101,9 +1198,105 @@ KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
 }
 
 
+# =============================================================================
+# [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+# =============================================================================
+# 用途：apply_core() 返回 kinetics_overrides 字段 → specialist_hook 提取 →
+#       graph_v3._ode_template_v2_hook 合并 → ODERendererV2.render(params=...) →
+#       ODE 模板 _get_param(tgt_name, key, default) 查找文献参数。
+#
+# 单位转换：
+#   - KINETIC_PARAMETERS 的 Km 单位是 M（Molar），ODE 模型用 μM 单位
+#   - 转换规则：Km_μM = Km_M × 1e6（如 1e-7 M = 0.1 μM）
+#   - k_cat / k_off / k_import / k_translation / k_transcription 是时间常数（min^-1），无需转换
+#   - k_on 参数单位为 M^-1 min^-1，与 ODE 模型 μM 单位冲突，统一 SKIP
+#
+# 映射依据（KINETIC_PARAMETERS 键名 → 反应 target 物种名）：
+#   "TGF_beta_TbRII"                    → TGF_beta_TbRII（反应 1: TGF_beta+TbRII→TGF_beta_TbRII 配体-受体结合, k_on SKIP）
+#   "TGF_beta_TbRII_TbRI"               → TGF_beta_TbRII_TbRI（反应 2: TGF_beta_TbRII+TbRI→TGF_beta_TbRII_TbRI 受体招募, k_on SKIP）
+#   "TGF_complex_pTbRI"                 → pTbRI（反应 3: TGF_complex→pTbRI TβRI 磷酸化）
+#   "SMAD7_pTbRI_inhibition"            → pTbRI（SMAD7 负反馈抑制 pTbRI, k_on SKIP, 合并到 pTbRI）
+#   "pTbRI_pSmad2"                      → pSmad2（反应 4: pTbRI→pSmad2 Smad2 磷酸化）
+#   "SMURF_pSmad_ubiquitination"        → pSmad2（SMURF 负反馈泛素化 pSmad2/pSmad3, 合并到 pSmad2 主 R-SMAD）
+#   "pTbRI_pSmad3"                      → pSmad3（反应 5: pTbRI→pSmad3 Smad3 磷酸化）
+#   "pSmad2_Smad4"                      → pSmad2_Smad4（反应 6: pSmad2+Smad4→pSmad2_Smad4 异源复合, k_on SKIP）
+#   "pSmad3_Smad4"                      → pSmad3_Smad4（反应 7: pSmad3+Smad4→pSmad3_Smad4 异源复合, k_on SKIP）
+#   "pSmad2_Smad4_nuclear_import"       → pSmad2_Smad4_nuc（反应 8: pSmad2_Smad4→pSmad2_Smad4_nuc 入核）
+#   "pSmad3_Smad4_nuclear_import"       → pSmad3_Smad4_nuc（反应 9: pSmad3_Smad4→pSmad3_Smad4_nuc 入核）
+#   "pSmad2_nuc_PAI1_transcription"     → PAI1_mRNA（反应 10: pSmad2_Smad4_nuc→PAI1_mRNA 转录）
+#   "pSmad2_nuc_SMAD7_transcription"    → SMAD7_mRNA（反应 11: pSmad2_Smad4_nuc→SMAD7_mRNA 转录, DDE delay=30min）
+#   "SMAD7_translation"                 → SMAD7（反应 12: SMAD7_mRNA→SMAD7 翻译）
+#   "SMAD7_SMURF_transcription"         → SMURF_mRNA（SMAD7 转录激活 SMURF, DDE delay=60min）
+_KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
+    "TGF_beta_TbRII": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (TGF_beta-TbRII 解离, Clarke 2006)
+    },
+    "TGF_beta_TbRII_TbRI": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (TGF_beta_TbRII-TbRI 解离, Clarke 2006)
+    },
+    # [P1-NEXT-13 修复 V3 / pSmad2 peak_time=10.84min 仍过早（V2 回退 RC29 不足）]
+    # Root Cause (V3): V2 将 k_cat 2.0→1.0 回退 RC29 校准，characteristic time 从 0.5min 恢复到 1min，
+    #   pSmad2 达峰时间从 6.82→10.84min（推迟 4min），但距 [15,30] 窗口仍差 4min。
+    #   原因：k_cat=1.0 仍偏快，TβRI 激活 Smad2 磷酸化速率过高。
+    # Fix V3: k_cat 1.0 → 0.5 降低 2x，characteristic time 从 1min 延长到 2min
+    #   预期 pSmad2 达峰时间从 10.84 → ~20min（入 [15,30] 窗口）
+    #   文献支持：Clarke 2006 (PMID:16760430) TβRI 激酶活性 Km=0.1μM, kcat≈0.5 min^-1
+    "pTbRI": {
+        "k_cat": 0.5,                 # min^-1 (TGF_complex 催化 TβRI 磷酸化, P1-NEXT-13 V3: 1.0→0.5 推迟达峰)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突 (SMAD7 负反馈抑制)
+        "k_off": 1e-3,                # min^-1 (SMAD7 抑制 pTbRI 解离, Clarke 2006)
+    },
+    # [P1-NEXT-13 V3 修复] pSmad2 k_cat 1.0 → 0.5 同步降低
+    "pSmad2": {
+        # pTbRI_pSmad2 (磷酸化) + SMURF_pSmad_ubiquitination (泛素化) 合并
+        # 两者 k_cat=0.5/Km=0.1 相同，合并后值不变
+        "k_cat": 0.5,                 # min^-1 (pTbRI 催化 Smad2 磷酸化, P1-NEXT-13 V3: 1.0→0.5 推迟达峰)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM, Smad2 Km ≈100 nM)
+    },
+    # [P1-NEXT-13 V3 修复] pSmad3 k_cat 1.0 → 0.5 同步降低
+    "pSmad3": {
+        "k_cat": 0.5,                 # min^-1 (pTbRI 催化 Smad3 磷酸化, P1-NEXT-13 V3: 1.0→0.5 同步降低)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    "pSmad2_Smad4": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (pSmad2-Smad4 解离, Schmierer 2007, 三步耦合 step1)
+    },
+    "pSmad3_Smad4": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (pSmad3-Smad4 解离, Schmierer 2007)
+    },
+    "pSmad2_Smad4_nuc": {
+        "k_import": 0.1,              # min^-1 (pSmad2_Smad4 入核, Schmierer 2007, 三步耦合 step2)
+    },
+    "pSmad3_Smad4_nuc": {
+        "k_import": 0.1,              # min^-1 (pSmad3_Smad4 入核, Schmierer 2007)
+    },
+    "PAI1_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (pSmad2_Smad4_nuc 转录激活 PAI-1, Clarke 2006, 三步耦合 step3)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM, Hill n=2)
+    },
+    "SMAD7_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (pSmad2_Smad4_nuc 转录激活 SMAD7, Clarke 2006, DDE delay=30min)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    "SMAD7": {
+        "k_translation": 0.1,         # min^-1 (SMAD7_mRNA 翻译, Clarke 2006)
+    },
+    "SMURF_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (SMAD7 转录激活 SMURF, Clarke 2006, DDE delay=60min)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+}
+
+
 __all__ = [
     "TgfBetaSpecialist",
     "PATHWAY_TAG",
     "SOURCE_SBML",
     "KINETIC_PARAMETERS",
+    "_KINETICS_BY_TARGET",
 ]

@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:report": "node e2e/generate-ux-report.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

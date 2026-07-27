@@ -1,6 +1,6 @@
 """
 ODE 仿真（Signaling Cascade with Phosphorylation 模板）— Tier 3 主模板
-- TASK 4 修复：mass-action kinetics ONLY，移除 Michaelis-Menten 酶饱和项
+- [v5 Recovery Sprint 4 / RC17] 恢复 Michaelis-Menten 酶饱和动力学（零阶超敏感）
 - TASK 4 修复：移除 gene-expression-like 线性增长模型（activation generic fallback）
 - 显式建模磷酸化中间体（pEGFR, pShc, pMEK, pMAPK 等）
 - 严格质量守恒：底物消耗 = 产物生成
@@ -9,14 +9,15 @@ ODE 仿真（Signaling Cascade with Phosphorylation 模板）— Tier 3 主模�
   Tier 3 系统拆分为子模块，通过 Jinja include 组合：
   - _cascade_helpers.j2: k_phos>k_dephos 约束（保留，移除 Michaelis-Menten）
   - _mechanism_binding.j2: binding 机制（mass-action 质量守恒）
-  - _mechanism_phosphorylation.j2: phosphorylation 机制（mass-action ONLY）
+  - _mechanism_phosphorylation_mm.j2: phosphorylation 机制（Michaelis-Menten，RC17 恢复）
   本主模板负责：imports + ODE 骨架 + 其他机制 + solver + 输出。
 
-TASK 4 mass-action kinetics:
-  binding:        rate = k_on * [A] * [B] - k_off * [AB]
-  phosphorylation: rate = k_phos * [enzyme] * [substrate] - k_dephos * [pX]
-  conversion:     rate = k * [A]  (单分子转化，消耗 A 生成 B)
-  exchange:        rate = k * [A]  (RasGDP → RasGTP，消耗 A 生成 B)
+RC17 Michaelis-Menten kinetics (restored):
+  binding:         rate = k_on * [A] * [B] - k_off * [AB]
+  phosphorylation: rate = Vmax * [substrate] / (Km + [substrate]) - k_dephos * [pX]
+                   (Vmax = k_cat * [enzyme]，酶催化零阶超敏感)
+  conversion:      rate = k * [A]  (单分子转化，消耗 A 生成 B)
+  exchange:         rate = k * [A]  (RasGDP → RasGTP，消耗 A 生成 B)
 """
 import numpy as np
 import matplotlib
@@ -103,7 +104,7 @@ def _ode(t, y):
 {% include "_mechanism_binding.j2" %}
 
         elif mechanism == "phosphorylation":
-{% include "_mechanism_phosphorylation.j2" %}
+{% include "_mechanism_phosphorylation_mm.j2" %}
 
         elif mechanism == "exchange":
             # RasGDP → RasGTP (mass-action，严格质量守恒)

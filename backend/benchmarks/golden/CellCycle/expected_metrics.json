@@ -1,0 +1,26 @@
+{
+  "pathway": "CellCycle",
+  "metrics": {
+    "literature": {"status": "PENDING", "expected": null, "actual": null},
+    "biomodels": {"status": "PENDING", "expected": ["BIOMD0000000056"], "actual": null},
+    "mechanism": {"status": "PENDING", "expected": ["CyclinD-CDK4/6", "CyclinE-CDK2", "CyclinB-CDK1", "RB", "E2F", "APC_C", "Cdc20"], "actual": null},
+    "simulation": {
+      "status": "PENDING",
+      "expected": {
+        "cyclin_d_accumulation_h": "1-4",
+        "rb_phosphorylation_h": "4-8",
+        "cyclin_b_peak_phase": "G2/M",
+        "cyclin_cdk_oscillation": true,
+        "bistable_switch": true,
+        "apc_c_destruction": true
+      },
+      "actual": null
+    },
+    "validation": {"status": "PENDING", "expected": null, "actual": null},
+    "discussion": {"status": "PENDING", "expected": null, "actual": null},
+    "experiment": {"status": "PENDING", "expected": null, "actual": null},
+    "scientific_consistency": {"status": "PENDING", "expected": null, "actual": null}
+  },
+  "overall_pass": false,
+  "rule": "8 项全 PASS 才算 PASS"
+}

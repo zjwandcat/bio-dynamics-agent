@@ -3,11 +3,13 @@
 pathway: WNT_SIGNALING
 name: "Wnt/β-catenin Signaling"
 
-canonical_reviews: []      # TODO: verify PMID — Lee 2003 / Clevers 2006 / Stamos 2013
+canonical_reviews:          # 权威综述 PMID 列表
+  - "PMID:17081971"         # Clevers 2006 Cell（Wnt/β-catenin 信号）
+  - "PMID:14551908"         # Lee 2003 PLoS Biol（APC/Axin 实验与理论分析）
+  - "PMID:23169527"         # Stamos & Weis 2013 CSH Perspect Biol（β-catenin 破坏复合体）
 
 canonical_models:           # 权威 BioModels ID 列表
-  - "BIOMD0000000256"       # Lee 2003 Wnt model
-  # TODO: verify BIOMD — 确认 Lee 2003 模型 ID
+  - "BIOMD0000000658"       # Lee 2003 Wnt pathway model - verified
 
 canonical_mechanism:
   required_nodes:           # 机制节点链（大写蛋白名）
@@ -57,6 +59,19 @@ expected_behavior:          # 动力学行为预期
   axin2_feedback: "required"
   destruction_complex: true
 
+canonical_timeline:
+  - event: "DVL activation"
+    time_window: "5-15 min"
+  - event: "beta-catenin stabilization"
+    time_window: "15-30 min"
+  - event: "beta-catenin nuclear accumulation"
+    time_window: "30-60 min"
+  - event: "AXIN2 induction"
+    time_window: "1-2 h"
+  - event: "Negative feedback"
+    present: true
+    mediator: "AXIN2"
+
 known_negative_feedback:    # 已知负反馈
   - Axin2
 
@@ -67,3 +82,39 @@ consistency_rules:          # 供 Consistency Checker 加载的自洽规则
   - rule: "Axin2 表达晚于 beta_catenin Peak"
     assertion: "axin2_expression_time > beta_catenin_peak_time"
     violation_label: "axin2_before_beta_catenin_peak"
+
+# ============================================================================
+# Task 12: Spec 补全字段（10 通路 Canonical 对齐）
+# ============================================================================
+expected_dynamics:          # 期望动力学（基于权威文献汇总）
+  beta_catenin:
+    peak_time: "30-120 min"
+    behavior: "accumulation then plateau (Wnt ON)"
+  beta_catenin_nuclear:
+    peak_time: "30-60 min"
+    behavior: "nuclear accumulation"
+  Axin2:
+    peak_time: "1-2 h"
+    behavior: "increasing (feedback)"
+
+curve_requirements:         # 曲线必须满足的硬约束
+  beta_catenin: "Wnt 刺激后累积"
+  Axin2: "持续增加（负反馈）"
+
+expected_experiments:       # 验证机制所需实验
+  - name: "β-catenin Western blot (nuclear fraction)"
+    timepoints: [0, 15, 30, 60, 120, 240]
+    mechanism_target: "β-catenin stabilization dynamics"
+  - name: "AXIN2 qPCR"
+    timepoints: [30, 60, 120, 240]
+    mechanism_target: "AXIN2 negative feedback"
+
+forbidden_experiments:      # 不能验证蛋白水平的实验
+  - "β-catenin qPCR (蛋白水平需要 Western)"
+
+# Task 12 Spec: Wnt Canonical Assertion (Axin/β-catenin 降解)
+axin_bcatenin_assertions:
+  destruction_complex: "APC/Axin/GSK3 → β-catenin degradation (Wnt OFF)"
+  wnt_on_behavior: "β-catenin stabilization and nuclear accumulation"
+  mechanism: ["Axin2 negative feedback", "Destruction complex turnover"]
+  forbidden_answer: "Wnt OFF 时 β-catenin 持续累积"

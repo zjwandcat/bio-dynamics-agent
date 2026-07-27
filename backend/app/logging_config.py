@@ -13,8 +13,10 @@
 
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 class JSONFormatter(logging.Formatter):
@@ -69,3 +71,26 @@ def setup_logging(level: str = "INFO", json_output: bool = True) -> None:
             )
         )
     root_logger.addHandler(handler)
+
+    # 诊断文件日志：写入 data/logs/diagnostic.log，便于 BM 循环排查每一步状态
+    # 每次启动时截断（mode='w'），避免历史日志堆积
+    # 通过环境变量 DIAGNOSTIC_LOG=false 可关闭
+    diagnostic_enabled = os.getenv("DIAGNOSTIC_LOG", "true").lower() == "true"
+    if diagnostic_enabled:
+        try:
+            base_dir = Path(__file__).resolve().parent.parent
+            log_dir = base_dir / "data" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            diag_handler = logging.FileHandler(
+                log_dir / "diagnostic.log", mode="w", encoding="utf-8"
+            )
+            diag_handler.setLevel(logging.DEBUG)
+            diag_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s | %(levelname)-7s | %(name)-30s | %(message)s"
+                )
+            )
+            root_logger.addHandler(diag_handler)
+        except Exception:
+            # 文件日志失败不应阻塞启动
+            pass

@@ -1,0 +1,16 @@
+# Golden Benchmark — PI3K Pathway
+pathway: PI3K
+question: "PI3K activation leads to AKT phosphorylation within 5-15 minutes and subsequent mTORC1 activation. S6K-mediated negative feedback to IRS1 attenuates upstream signaling. Explain the PI3K-AKT-mTOR cascade dynamics and simulate expected signaling behavior."
+ground_truth: "PI3K activation occurs within 1-5 min, generating PIP3 which recruits PDK1 and activates AKT, with AKT phosphorylation peaking at 5-15 min [PMID:17255734]. AKT inhibits TSC2, relieving TSC2's inhibition on mTORC1; mTOR activation follows at 15-30 min [PMID:17255734]. mTORC1 phosphorylates S6K at 30-60 min, and S6K forms a negative feedback to IRS1 attenuating upstream PI3K signaling [PMID:17255734]. The PI3K-AKT-mTOR axis thus exhibits sequential activation (AKT→mTORC1→S6K) with S6K-IRS1 negative feedback, producing sustained mTORC1 activity downstream [PMID:17255734]."
+canonical_papers: ["PMID:17255734"]  # Manning & Cantley 2007 Cell（AKT/PKB 信号）
+canonical_biomodels: ["BIOMD0000000262"]  # Fujita2010 Akt signalling under EGF
+expected_mechanism: [PI3K, PIP3, PDK1, AKT, TSC2, mTORC1, S6K]
+expected_time_scale:
+  pi3k_activation: "1-5 min"
+  akt_phosphorylation: "5-15 min"
+  mtor_activation: "15-30 min"
+  s6k_phosphorylation: "30-60 min"
+expected_experiment: []  # 实验方案，待 Sprint 4 填充
+expected_discussion: {}  # Discussion 预期，待 Sprint 2 填充
+expected_validation: {}  # Validation 预期，待 Sprint 3 填充
+expected_confidence: 0.0  # 预期置信度，待 Sprint 3 填充

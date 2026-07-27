@@ -4,48 +4,43 @@
 pathway: wnt
 
 classical_reviews:        # 经典综述（最高优先级，score 5）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Wnt/beta-catenin signaling: development, disease, and therapeutic targeting"
+  - pmid: "PMID:17081971"  # Clevers 2006 - verified, title corrected
+    title: "Wnt/beta-catenin signaling in development and disease"
     authors: "Clevers H"
     year: 2006
     journal: "Cell"
     reason: "Wnt/β-catenin 信号权威综述，定义破坏复合体与 TCF/LEF 转录框架"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Beta-catenin signaling in stem cells and cancer"
+  - pmid: "PMID:15473860"  # Logan/Nusse 2004 - verified, title corrected
+    title: "The Wnt signaling pathway in development and disease"
     authors: "Logan CY, Nusse R"
     year: 2004
     journal: "Annual Review of Cell and Developmental Biology"
-    reason: "β-catenin 干细胞与癌症信号综述经典，定义 Wnt 在干性维持中的作用"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Structural basis of Wnt signaling pathway"
+    reason: "Wnt 信号通路发育与疾病综述经典，定义 Wnt 在干性维持与胚胎发育中的作用"
+  - pmid: "PMID:23169527"  # Stamos/Weis 2013 - verified, CSH Perspect Biol (not Dev Cell), title corrected
+    title: "The β-catenin destruction complex"
     authors: "Stamos JL, Weis WI"
     year: 2013
-    journal: "Developmental Cell"
-    reason: "Wnt 信号通路结构生物学综述，定义受体复合体组装机制"
+    journal: "Cold Spring Harbor Perspectives in Biology"
+    reason: "β-catenin 破坏复合体结构生物学综述，定义 Axin/APC/GSK-3 复合体组装机制"
 
 mechanism_papers:         # 机制论文（score 4）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "The role of Wnt/beta-catenin in cell fate decisions during embryogenesis"
-    authors: "Lee E et al"
+  - pmid: "PMID:14551908"  # Lee 2003 - verified, PLoS Biol (not Science), title/authors corrected
+    title: "The roles of APC and Axin derived from experimental and theoretical analysis of the Wnt pathway"
+    authors: "Lee E, Salic A, Krüger R, Heinrich R, Kirschner MW"
     year: 2003
-    journal: "Science"
-    reason: "Wnt/β-catenin 细胞命运决定机制建模，量化破坏复合体动力学"
+    journal: "PLoS Biology"
+    reason: "APC/Axin 在 Wnt 通路作用的实验与理论分析，量化破坏复合体动力学"
 
 biomodels_source_papers:  # BioModels 来源论文（score 3）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID（Lee 2003 Science）
-    biomodels_id: "BIOMD0000000256"  # 或类似，待核实
-    title: "The role of Wnt/beta-catenin in cell fate decisions"
-    authors: "Lee E et al"
+  - pmid: "PMID:14551908"  # 已确认（与 mechanism_papers 重叠，分类时取更高优先级 MECHANISM）
+    biomodels_id: "BIOMD0000000658"  # Lee 2003 Wnt pathway - verified
+    title: "The roles of APC and Axin derived from experimental and theoretical analysis of the Wnt pathway"
+    authors: "Lee E, Salic A, Krüger R, Heinrich R, Kirschner MW"
     year: 2003
-    journal: "Science"
+    journal: "PLoS Biology"
 
 recent_applications:      # 近期应用论文（score 2，仅补充）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Wnt signaling dynamics in cancer stem cells and drug resistance"
-    authors: "Recent Wnt application study"
-    year: 2022
-    journal: "Nature Reviews Cancer"
-    reason: "Wnt 癌症干细胞耐药动力学近期应用（PubMed 补充）"
+  []                      # 占位条目已移除：原 "Recent Wnt application study" 为 PLACEHOLDER
 
 case_reports: []          # 案例报告（score 1，一般不用）
 

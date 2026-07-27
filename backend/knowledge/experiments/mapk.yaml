@@ -1,0 +1,42 @@
+# Sprint 4 — Experiment Rule Engine
+# 100% Rule 驱动，Mechanism-aware，无 LLM
+pathway: MAPK_CASCADE
+name: "MAPK/ERK cascade signaling pathway"
+
+# 实验链（Mechanism-aware，非 Keyword）
+# canonical_timeline 参考 knowledge/canonical/mapk.yaml：
+#   RAF activation 1-5 min；MEK phosphorylation 2-8 min；ERK phosphorylation 5-15 min；ERK peak 10-20 min；DUSP induction 30-90 min
+experiments:
+  - name: "Western blot pMEK"
+    technique: "Western blot"
+    target_node: "pMEK"
+    mechanism_step: "RAF → MEK phosphorylation"
+    time_course: [0, 2, 5, 10, 15, 20, 30, 60, 90]  # 分钟
+    cell_line: "HEK293"
+    expected_result: "pMEK 在 2-8 min 达峰"
+    justification: "pMEK 是 RAF 激活的直接底物，标志上游 RAF 信号"
+
+  - name: "Western blot ppERK"
+    technique: "Western blot"
+    target_node: "ppERK"
+    mechanism_step: "MEK → ERK phosphorylation"
+    time_course: [0, 2, 5, 10, 15, 20, 30, 60, 90]  # 分钟
+    cell_line: "HeLa"
+    expected_result: "ppERK 在 10-20 min 达峰，晚于 pMEK"
+    justification: "ppERK 是 MAPK 级联的输出节点，反映信号放大与超敏感性"
+
+  - name: "Western blot pRAF"
+    technique: "Western blot"
+    target_node: "pRAF"
+    mechanism_step: "RAS → RAF activation"
+    time_course: [0, 2, 5, 10, 15, 20, 30, 60, 90]  # 分钟
+    cell_line: "HEK293"
+    expected_result: "pRAF 在 1-5 min 达峰，早于 pMEK 与 ppERK"
+    justification: "pRAF 是 RAS→RAF→MEK→ERK 级联的最上游节点，用于验证信号起源时序"
+
+# 禁止的实验（Mechanism-aware 禁止）
+forbidden:
+  - name: "ERK qPCR"
+    technique: "qPCR"
+    target_node: "ERK"
+    reason: "ERK 激活依赖磷酸化（Thr202/Tyr204），需用 Western blot 检测 ppERK；qPCR 仅测 ERK mRNA 量，不能反映磷酸化激活状态"

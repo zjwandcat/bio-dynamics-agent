@@ -35,6 +35,26 @@ from app.reaction_ir_v2.schema import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_go_terms(raw: Any) -> list[str]:
+    """将 ontology_agent 返回的 go_terms 归一化为 list[str]。
+
+    ontology_agent.query_go 返回 list[dict]（每项含 go_id/aspect/term_name），
+    但 OntologyRef.go_terms 期望 list[str]。此函数提取 go_id 字符串。
+    若输入已是 list[str] 则原样返回（兼容）。
+    """
+    if not raw:
+        return []
+    result: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            result.append(item)
+        elif isinstance(item, dict):
+            go_id = item.get("go_id") or item.get("id") or ""
+            if go_id:
+                result.append(str(go_id))
+    return result
+
+
 # =============================================================================
 # 默认区室映射：物种名 → compartment
 # =============================================================================
@@ -119,7 +139,7 @@ def build_from_network_json(
                 hgnc_id=ont_entity.get("hgnc_id"),
                 uniprot_id=ont_entity.get("uniprot_id"),
                 chebi_id=ont_entity.get("chebi_id"),
-                go_terms=ont_entity.get("go_terms", []) or [],
+                go_terms=_normalize_go_terms(ont_entity.get("go_terms", [])),
                 sbo_term=ont_entity.get("sbo_term"),
                 verified=ont_entity.get("verified", False),
             )
@@ -135,7 +155,10 @@ def build_from_network_json(
             ontology=ont,
             species_type=species_type,
             compartment=compartment,
-            initial_concentration=0.0,  # 初始浓度由 P3 ODE 注入
+            # [IC-Pipeline Fix 2] 从 KG node 读取 initial_concentration（specialist IC 透传）。
+            #   旧 bug：硬编码 0.0，注释声称"由 P3 ODE 注入"但从未注入，导致 EGF=1.0（应 680.0）。
+            #   or 0.0 兜底 None（其他来源的 KG node 可能无此字段）。
+            initial_concentration=node.get("initial_concentration") or 0.0,
             source_sbml=sbml_model_id,
         ))
 
@@ -149,18 +172,65 @@ def build_from_network_json(
         source_id = name_to_species_id.get(source_name, f"SP_{source_name}")
         target_id = name_to_species_id.get(target_name, f"SP_{target_name}")
 
-        # 机制推断：v3 interaction → v4 mechanism
-        mechanism = v3_interaction_to_mechanism(interaction)
+        # [RC25] 修复：优先读取 edge.mechanism 字段（保留 specialist 的丰富机制信息）
+        # 旧 bug：只读 interaction 字段（被 _infer_edge_interaction() 降级为
+        # activation/inhibition），导致 phosphorylation/binding/gtp_gdp_exchange
+        # 等机制信息全部丢失，ODE 模板所有边都命中 activation 分支（k_act=0.05），
+        # 级联极慢（ERK 120min 才达峰，应为 10-20min）
+        # 与 build_from_pathway_graph 的 B4 修复保持一致
+        mechanism_str = (edge.get("mechanism") or "").strip().lower()
+        if mechanism_str:
+            try:
+                mechanism = MechanismType(mechanism_str)
+            except ValueError:
+                # 非标准机制名（如 feedback_regulation / negative_feedback /
+                # feedback_propagation）：用 interaction 推断 MechanismType 用于
+                # 反应构建（reactants/products/modifiers），但保留原始 mechanism_str
+                # 用于 reaction_type（供 ODE 模板识别反馈分支）
+                mechanism = v3_interaction_to_mechanism(interaction)
+        else:
+            mechanism = v3_interaction_to_mechanism(interaction)
+            mechanism_str = mechanism.value
         kinetics_type = mechanism.default_kinetics
 
+        # [RC25d] 修复：检测 pX → X (activation) 去磷酸化模式
+        # LLM 生成的 network_json 中常有 pX → X (activation) 边，表示"pX 去磷酸化回 X"。
+        # 但 activation 分支会无中生有地创建 X 而不消耗 pX，导致质量爆炸
+        # （如 pEGFR=42.4 nM，EGFR drift=14266%）。
+        # 检测到此模式时覆盖 mechanism 为 DEPHOSPHORYLATION，使用守恒转换
+        # dy[pX]-=_rate, dy[X]+=_rate，防止质量无中生有。
+        if (
+            mechanism == MechanismType.ACTIVATION
+            and _is_dephosphorylation_pattern(source_name, target_name)
+        ):
+            logger.info(
+                "[RC25d] edge[%d] %s → %s: 检测到 pX→X 去磷酸化模式，"
+                "mechanism activation → dephosphorylation（防止质量爆炸）",
+                i, source_name, target_name,
+            )
+            mechanism = MechanismType.DEPHOSPHORYLATION
+            mechanism_str = mechanism.value
+            kinetics_type = mechanism.default_kinetics
+
+        # [RC25] 诊断日志：验证机制信息是否正确保留
+        if i < 5 or mechanism_str != mechanism.value:
+            logger.info(
+                "[RC25-DIAG] edge[%d] %s → %s mechanism_str=%s mechanism=%s interaction=%s",
+                i, source_name, target_name, mechanism_str, mechanism.value, interaction,
+            )
+
         # 参数上下文：source → target + mechanism
-        parameter_context = f"{source_name} → {target_name} ({mechanism.value})"
+        parameter_context = f"{source_name} → {target_name} ({mechanism_str})"
 
         # 接线强制（纪律1）：调用统一的 _build_reaction_for_mechanism，
         # 禁止 inline if/elif/else 兜底，禁止"默认：source → target"1:1 兜底。
         # 19 种机制各自体现生物学语义（见 _build_reaction_for_mechanism 注释）。
+        # [BENCHMARK CLOSURE / Gap-EGFR-PeakOrder] 传递 edge.modifier 字段供
+        #   gtp_gdp_exchange 等机制使用真实酶（如 SOS/RasGAP），而非 source 占位符。
+        edge_modifier = (edge.get("modifier") or "").strip()
         reactants, products, modifiers = _build_reaction_for_mechanism(
-            mechanism, source_id, target_id, source_name, target_name, name_to_species_id
+            mechanism, source_id, target_id, source_name, target_name,
+            name_to_species_id, edge_modifier=edge_modifier,
         )
 
         # compartments：从 species 查询
@@ -180,7 +250,7 @@ def build_from_network_json(
 
         reactions.append(ReactionV2(
             id=f"RXN_{i+1:03d}",
-            reaction_type=mechanism.value,
+            reaction_type=mechanism_str,  # [RC25] 保留原始机制名（含 feedback_regulation 等）
             kinetics_type=kinetics_type,
             reactants=reactants,
             products=products,
@@ -277,6 +347,7 @@ def _build_reaction_for_mechanism(
     source_name: str,
     target_name: str,
     name_to_species_id: dict[str, str],
+    edge_modifier: str = "",
 ) -> tuple[list, list, list]:
     """根据机制类型构建 (reactants, products, modifiers)。
 
@@ -287,6 +358,8 @@ def _build_reaction_for_mechanism(
         source_name: source 的规范名（用于自磷酸化判定等）
         target_name: target 的规范名
         name_to_species_id: 名称→species_id 映射（用于推导未磷酸化形式等）
+        edge_modifier: edge.modifier 字段（如 SOS/RasGAP），供 gtp_gdp_exchange
+            等机制使用真实酶而非 source 占位符。空字符串表示无显式 modifier。
 
     Returns:
         (reactants, products, modifiers) 三个列表
@@ -302,8 +375,19 @@ def _build_reaction_for_mechanism(
         modifiers.append(_make_modifier(source_id, "inhibitory"))
 
     elif mechanism in (MechanismType.DEGRADATION, MechanismType.PROTEASOMAL_DEGRADATION):
-        # 降解：source 为 substrate，无 product
+        # 降解：source 为 substrate
         reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
+        # [BENCHMARK CLOSURE / Gap-EGFR-MassLeak] 保留 target 作为 product（sink
+        #   物种如 EGFR_internalized）。
+        #   旧代码不添加 product，导致 v4_to_v3 adapter 的 _extract_target_name
+        #   fallback 返回 substrate 名（= source 名），经后续处理 target 被丢弃为 ""，
+        #   ODE 模板 degradation 分支因 t_idx=-1（target 未注册或为空）使降解质量
+        #   消失（dy[s_idx]-=_rate 但无 dy[t_idx]+=_rate），违反质量守恒。
+        #   修复：当 target_name 非空且 != source_name 时，添加 target 为 product，
+        #   保证 v4_to_v3 roundtrip 后 edge.target 保留为 sink 物种名，
+        #   ODE 模板即可将降解质量累积到 sink（EGFR_internalized）。
+        if target_name and target_name != source_name:
+            products.append(SpeciesRef(species_id=target_id, role="product"))
 
     elif mechanism == MechanismType.PHOSPHORYLATION:
         # B3 修复：区分自磷酸化与异磷酸化
@@ -382,12 +466,18 @@ def _build_reaction_for_mechanism(
 
     elif mechanism == MechanismType.GTP_GDP_EXCHANGE:
         # GTP/GDP 交换：source（GDP-form）→ target（GTP-form），GEF/GAP 作 modifier
-        # edge 通常只提供 source/target，GEF/GAP 未显式提供。
-        # 为保持酶催化语义（供 ODE 模板按 MM 渲染），将 source 作为 placeholder modifier，
-        # 并由 ODE 模板层识别 reaction_type=gtp_gdp_exchange 填入真实 GEF/GAP 浓度。
+        # [BENCHMARK CLOSURE / Gap-EGFR-PeakOrder] 修复：优先使用 edge.modifier 字段
+        #   （如 SOS/RasGAP），而非 source 占位符。旧代码使用 source_id 作 placeholder
+        #   modifier，导致 ODE 模板 modifiers=['RasGDP'] 而非 ['SOS']，酶信息丢失。
+        #   现在由 specialist_hook 保留 edge.modifier，reaction_builder 传递真实酶。
         reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
         products.append(SpeciesRef(species_id=target_id, role="product"))
-        modifiers.append(_make_modifier(source_id, "catalytic"))
+        if edge_modifier and edge_modifier in name_to_species_id:
+            _mod_id = name_to_species_id[edge_modifier]
+            modifiers.append(_make_modifier(_mod_id, "catalytic"))
+        else:
+            # 降级：edge 无 modifier 字段时用 source 作 placeholder（保持旧行为）
+            modifiers.append(_make_modifier(source_id, "catalytic"))
 
     elif mechanism == MechanismType.TRANSCRIPTION:
         # 转录：TF（source）作 modifier（不消耗），产物为 mRNA（target）
@@ -494,6 +584,27 @@ def _is_autophosphorylation(source_name: str, target_name: str) -> bool:
     return target_name.lower() == "p" + source_name.lower()
 
 
+def _is_dephosphorylation_pattern(source_name: str, target_name: str) -> bool:
+    """[RC25d] 判断是否为去磷酸化模式（source 是 target 的磷酸化形式）。
+
+    规则：source_name == "p" + target_name（大小写不敏感）
+    示例：
+        pEGFR → EGFR: True（pEGFR 去磷酸化为 EGFR，质量守恒转换）
+        pERK → ERK: True
+        pMEK → MEK: True
+        EGFR → pEGFR: False（这是磷酸化，不是去磷酸化）
+
+    用途：LLM 生成的 network_json 中常有 pX → X (activation) 边，
+    表示"pX 去磷酸化回 X"。但 activation 分支会无中生有地创建 X
+    而不消耗 pX，导致质量爆炸（如 pEGFR=42.4 nM，EGFR drift=14266%）。
+    检测到此模式时应将 mechanism 覆盖为 dephosphorylation，
+    使用守恒转换 dy[pX]-=_rate, dy[X]+=_rate。
+    """
+    if not source_name or not target_name:
+        return False
+    return source_name.lower() == "p" + target_name.lower()
+
+
 def _derive_substrate_id(
     target_name: str,
     target_id: str,
@@ -576,7 +687,7 @@ def build_from_pathway_graph(
                 hgnc_id=ont_entity.get("hgnc_id"),
                 uniprot_id=ont_entity.get("uniprot_id"),
                 chebi_id=ont_entity.get("chebi_id"),
-                go_terms=ont_entity.get("go_terms", []) or [],
+                go_terms=_normalize_go_terms(ont_entity.get("go_terms", [])),
                 sbo_term=ont_entity.get("sbo_term"),
                 verified=ont_entity.get("verified", False),
             )
@@ -592,7 +703,10 @@ def build_from_pathway_graph(
             ontology=ont,
             species_type=species_type,
             compartment=compartment,
-            initial_concentration=0.0,  # 初始浓度由 P3 ODE 注入
+            # [IC-Pipeline Fix 2] 从 KG node 读取 initial_concentration（specialist IC 透传）。
+            #   旧 bug：硬编码 0.0，注释声称"由 P3 ODE 注入"但从未注入，导致 EGF=1.0（应 680.0）。
+            #   or 0.0 兜底 None（其他来源的 KG node 可能无此字段）。
+            initial_concentration=node.get("initial_concentration") or 0.0,
             source_sbml=sbml_model_id,
         ))
 
@@ -631,8 +745,12 @@ def build_from_pathway_graph(
         # 接线强制（纪律1）：调用统一的 _build_reaction_for_mechanism，
         # 禁止 inline if/elif/else 兜底，禁止"默认：source → target"1:1 兜底。
         # 19 种机制各自体现生物学语义（见 _build_reaction_for_mechanism 注释）。
+        # [BENCHMARK CLOSURE / Gap-EGFR-PeakOrder] 传递 edge.modifier 字段供
+        #   gtp_gdp_exchange 等机制使用真实酶（如 SOS/RasGAP），而非 source 占位符。
+        edge_modifier = (edge.get("modifier") or "").strip()
         reactants, products, modifiers = _build_reaction_for_mechanism(
-            mechanism, source_id, target_id, source_name, target_name, name_to_species_id
+            mechanism, source_id, target_id, source_name, target_name,
+            name_to_species_id, edge_modifier=edge_modifier,
         )
 
         # compartments：从 species 查询

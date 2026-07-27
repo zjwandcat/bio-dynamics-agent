@@ -188,12 +188,12 @@ class ValidationAgent:
             "question": question,
             "options": [
                 {
-                    "key": "continue",
+                    "id": "continue",
                     "label": "继续生成报告（标记 low_confidence）",
                     "description": "保留验证失败标记，继续生成报告供人工 review",
                 },
                 {
-                    "key": "stop",
+                    "id": "stop",
                     "label": "停止本次仿真",
                     "description": "终止当前仿真流程，不生成报告",
                 },
@@ -263,10 +263,20 @@ class ValidationAgent:
 
         # 检查 metrics 是否可用（N8 输出）
         metrics = state.get("metrics") if isinstance(state, dict) else None
+        # [RC26-DEBUG] 添加调试日志，确认 metrics 的实际值和类型
+        logger.info(
+            "Level 4 metrics 检查: type=%s, is_dict=%s, bool(metrics)=%s, "
+            "keys=%s, metrics_summary_exists=%s",
+            type(metrics).__name__,
+            isinstance(metrics, dict),
+            bool(metrics) if metrics is not None else "None",
+            list(metrics.keys()) if isinstance(metrics, dict) else "N/A",
+            "metrics_summary" in (state if isinstance(state, dict) else {}),
+        )
         if not isinstance(metrics, dict) or not metrics:
             # TD-017 修复（硬门）：metrics 未计算 → pass=False（不再 pass=True 软门放水）
-            logger.debug(
-                "Level 4 Benchmark skipped: metrics 未计算（N8 未执行）→ pass=False（硬门）"
+            logger.warning(
+                "Level 4 Benchmark skipped: metrics 未计算或为空 → pass=False（硬门）"
             )
             return {
                 "pass": False,
@@ -334,6 +344,9 @@ def validation_pyramid_hook_node(state: dict[str, Any]) -> dict[str, Any]:
             clarification = agent.build_clarification_signal(report)
             if clarification is not None:
                 update["pending_clarification"] = clarification
+                # [BM 修复] 同时设置 clarification_request，供 main.py 发射
+                # clarification_needed SSE 事件到前端，否则前端看不到提示框。
+                update["clarification_request"] = clarification
                 logger.info(
                     "Validation Pyramid 短路：overall_pass=False, failed_levels=%s",
                     report.get("failed_levels", []),

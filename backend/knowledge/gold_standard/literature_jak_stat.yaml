@@ -4,54 +4,48 @@
 pathway: jak_stat
 
 classical_reviews:        # 经典综述（最高优先级，score 5）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "JAK-STAT signaling: from basics to recent progress"
+  - pmid: "PMID:17502367"
+    title: "JAK-STAT signaling: from interferons to cytokines"
     authors: "Schindler C, Levy DE, Decker T"
-    year: 2008
-    journal: "Nature Reviews Molecular Cell Biology"
+    year: 2007
+    journal: "Journal of Biological Chemistry"
     reason: "JAK-STAT 信号权威综述，从基础到近期进展系统总结通路机制"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Signaling through the JAK-STAT pathway in the immune system"
+  - pmid: "PMID:12040185"
+    title: "A road map for those who don't know JAK-STAT"
     authors: "Aaronson DS, Horvath CM"
     year: 2002
     journal: "Science"
     reason: "免疫系统 JAK-STAT 信号综述经典，定义 STAT 转录因子激活范式"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "JAK-STAT signaling in dendritic cells"
+  - pmid: "PMID:14668806"
+    title: "Regulation of JAK-STAT signalling in the immune system"
     authors: "Shuai K, Liu B"
     year: 2003
     journal: "Nature Reviews Immunology"
     reason: "树突状细胞 JAK-STAT 信号综述，定义免疫细胞 STAT 调控机制"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Suppressor of cytokine signaling: an update on cytokine signaling regulation"
+  - pmid: "PMID:28716890"
+    title: "Negative Regulation of Cytokine Signaling in Immunity"
     authors: "Yoshimura A et al"
     year: 2018
-    journal: "Nature Reviews Immunology"
+    journal: "Cold Spring Harbor Perspectives in Biology"
     reason: "SOCS 细胞因子信号抑制子综述，定义 JAK-STAT 负反馈调控"
 
 mechanism_papers:         # 机制论文（score 4）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "The intracellular activation of STAT5"
+  - pmid: "PMID:12552139"
+    title: "Identification of nucleocytoplasmic cycling as a remote sensor in cellular signaling by databased modeling"
     authors: "Swameye I et al"
     year: 2003
-    journal: "Nature"
+    journal: "Proceedings of the National Academy of Sciences"
     reason: "STAT5 胞内激活机制建模经典，量化 JAK-STAT 信号时序动力学"
 
 biomodels_source_papers:  # BioModels 来源论文（score 3）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID（Swameye 2003）
+  - pmid: "PMID:12552139"
     biomodels_id: "BIOMD0000000026"
-    title: "The intracellular activation of STAT5"
+    title: "Identification of nucleocytoplasmic cycling as a remote sensor in cellular signaling by databased modeling"
     authors: "Swameye I et al"
     year: 2003
-    journal: "Nature"
+    journal: "Proceedings of the National Academy of Sciences"
 
-recent_applications:      # 近期应用论文（score 2，仅补充）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "JAK-STAT dynamics in immunotherapy and inflammation"
-    authors: "Recent JAK-STAT application study"
-    year: 2022
-    journal: "Nature Reviews Immunology"
-    reason: "JAK-STAT 免疫治疗动力学近期应用（PubMed 补充）"
+recent_applications: []      # 近期应用论文（score 2，仅补充）— placeholder removed
 
 case_reports: []          # 案例报告（score 1，一般不用）
 

@@ -4,7 +4,7 @@
 pathway: mapk
 
 classical_reviews:        # 经典综述（最高优先级，score 5）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:UNVERIFIED"  # PMID verification failed — needs manual check
     title: "On the role of mathematical modeling in the design of biological experiments"
     authors: "Witzel F et al"
     year: 2012
@@ -24,34 +24,28 @@ mechanism_papers:         # 机制论文（score 4）
     year: 1996
     journal: "Proceedings of the National Academy of Sciences"
     reason: "MAPK 级联超敏感性奠基性论文，首次实验证实零级 ultrasensitivity"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Negative feedback and ultrasensitivity can bring about oscillations in the mitogen-activated protein kinase cascade"
+  - pmid: "PMID:10712587"
+    title: "Negative feedback and ultrasensitivity can bring about oscillations in the mitogen-activated protein kinase cascades"
     authors: "Kholodenko BN"
     year: 2000
     journal: "European Journal of Biochemistry"
     reason: "MAPK 负反馈振荡机制理论奠基，预测级联振荡行为"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "A scaffold protein and signaling complex in the MAPK cascade"
+  - pmid: "PMID:10823939"
+    title: "Scaffold proteins may biphasically affect the levels of mitogen-activated protein kinase signaling and reduce its threshold properties"
     authors: "Levchenko A et al"
     year: 2000
     journal: "Proceedings of the National Academy of Sciences"
     reason: "MAPK 支架蛋白信号复合体建模经典，量化支架对级联通量影响"
 
 biomodels_source_papers:  # BioModels 来源论文（score 3）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID（Levchenko 2000 PNAS）
+  - pmid: "PMID:10823939"
     biomodels_id: "BIOMD0000000012"
-    title: "A scaffold protein and signaling complex in the MAPK cascade"
+    title: "Scaffold proteins may biphasically affect the levels of mitogen-activated protein kinase signaling and reduce its threshold properties"
     authors: "Levchenko A et al"
     year: 2000
     journal: "Proceedings of the National Academy of Sciences"
 
-recent_applications:      # 近期应用论文（score 2，仅补充）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "MAPK cascade dynamics in drug resistance and adaptation"
-    authors: "Recent MAPK application study"
-    year: 2021
-    journal: "Cell Systems"
-    reason: "MAPK 耐药适应动力学近期应用（PubMed 补充）"
+recent_applications: []      # 近期应用论文（score 2，仅补充）— placeholder removed
 
 case_reports: []          # 案例报告（score 1，一般不用）
 

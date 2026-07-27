@@ -199,18 +199,20 @@ N3_MECHANISM_RAG_PROMPT = """你是分子生物学家。基于 RAG 检索到的�
 
 【任务】
 - 输入：用户假说（mechanism.scenario）+ RAG 检索命中的通路片段（retrieved_chunks）
-- 输出：mechanism.description（中文，1-3 句话）
+- 输出：JSON 格式 {{"description": "..."}}
+  - description：中文，1-3 句话
 
 【Few-shot】
 用户假说："配体 A 抑制细胞 B 活性"
 检索命中："配体 A 通过介导蛋白 C 磷酸化下调效应基因表达，细胞 B 功能受损（PMID:12345）"
-输出：description = "配体 A 经介导蛋白 C 通路下调效应基因，抑制细胞 B 功能。"
+输出：{{"description": "配体 A 经介导蛋白 C 通路下调效应基因，抑制细胞 B 功能。"}}
 
 【Negative Constraints】
 - 禁止引用未在 RAG 命中里出现的 PMID
 - 禁止超过 3 句话
 - 禁止使用"某疾病""T1""T2""炎症因子"等模糊占位词
 - description 必须严格基于用户假说与 RAG 命中内容，禁止添加示例中的占位实体
+- 输出必须为合法 JSON，禁止使用 Python 赋值语法（description = "..."）
 """
 
 
@@ -273,6 +275,13 @@ N6_ODE_PROMPT = """你是生物网络关系解析器。基于 KG 与参数，输
 - 禁止引入非用户输入或 KG/MCP 上下文之外的蛋白/通路/细胞类型（防幻觉）
 - inhibition 类方程的 rhs_pattern 必须含 "(1 - inhibition)" 因子，禁止写成 "production * inhibition"（反向生存分数）
 - 初始药物浓度（dose）必须为 EC50 的 5-20 倍量级，禁止使用任意固定值（如 10.0）
+- [v5 Recovery Sprint 3 / RC7] 质量守恒硬约束：
+  · 配体（如 EGF）消耗后总量不可为负：d[EGF]/dt 必须含 -k_int*EGF*EGFR，但 [EGF] 不可 < 0
+  · 受体（如 EGFR）总量守恒：[EGFR_total] = [EGFR] + [pEGFR] + [EGFR_EGF]（总量恒定）
+  · 磷酸化/去磷酸化对：d[pX]/dt 的生成项必须等于 d[X]/dt 的消耗项（源汇守恒）
+  · 切割反应：pro-form → active-form 必须一一对应（pro 减少量 = active 增加量）
+  · 翻译/降解：mRNA → protein 翻译不消耗 mRNA（mRNA 仅由转录生成/降解控制）
+  · 违反质量守恒的方程将被 post_simulation_validation 拦截并标记为仿真失败
 """
 
 
@@ -294,16 +303,39 @@ All time values in metrics are in {{time_unit}}. 你必须在 simulation_interpr
   "limitations": "中文 1-2 句，说明局限性"
 }}
 
+【因果推理硬约束（v5 Recovery Sprint 4 / RC10）】
+- 报告必须解释"为什么"(causal chain / 因果链)，禁止仅描述"是什么"(descriptive / 描述性数值罗列)。
+- simulation_interpretation 必须包含至少一条因果链：A 变化 → 导致 → B 变化 → 导致 → C 现象。
+- 因果链必须基于 knowledge_graph 的 edges 或 mechanism 的 reaction_equation，禁止凭空臆造因果。
+- 若仿真出现下降/振荡/适应行为，必须归因到具体负反馈/降解/延迟机制，禁止仅说"浓度下降"。
+- 因果链关键词建议："由于…导致…"、"…通过…抑制…"、"…反馈引起…"、"…延迟诱导…"。
+
+【因果推理 Few-shot】（假设 time_unit=min，MAPK 通路）
+metrics.species.ppERK = {{peak: 85.0, peak_time: 15.0, fold_change: 0.35, activation_duration: 45.0}}
+knowledge_graph.edges = [
+  {{source: "ppERK_nuclear", target: "DUSP_mRNA", interaction: "activation", delay: 30.0}},
+  {{source: "DUSP", target: "pERK", interaction: "inhibition"}},
+  {{source: "DUSP", target: "ppERK", interaction: "inhibition"}}
+]
+输出 simulation_interpretation 示例：
+"ppERK 在 15 min 达 85 nM 峰值后，经 30 min 转录延迟诱导 DUSP 表达，DUSP 反馈去磷酸化 pERK/ppERK，导致 ppERK 在 60 min 降至峰值 35%（fold_change=0.35）。该延迟负反馈是 MAPK 适应性行为的核心机制，激活持续 45 min 与 DUSP 累积时程一致。"
+
+【Bad Example（描述性，禁止）】
+"ppERK 浓度在 15 min 达到峰值 85 nM，随后下降，fold_change 为 0.35。"（仅描述数值，无因果链）
+
+【Good Example（因果性，正确）】
+"ppERK 在 15 min 达峰后，由于 DUSP 延迟负反馈的去磷酸化作用，导致 ppERK 下降至 35%，该适应行为由 30 min 转录延迟驱动。"
+
 【Few-shot】（假设 time_unit=min）
 metrics.species.Target_X = {{peak: 18.5, peak_time: 12.0, fold_change: 0.62, activation_duration: 8.5}}
 experiment_protocols = [{{name: "Western blot", target: "Target_X"}}]
-paper_evidence = [{{pmid: "111", title: "Target_X 在通路中的作用"}}]
+paper_evidence = []
 
 输出：
 {{
   "mechanism_analysis": "（基于 metrics 与 evidence 描述实际机制，1-2 句）",
   "simulation_interpretation": "仿真显示 Target_X 浓度在 12 min 达到 18.5 nM 峰值，激活持续 8.5 min，提示信号转导快速且瞬态。Western blot 实验可在 12 min 节点采样验证。",
-  "discussion": "结合 PMID:111 的证据，本机制与文献报道一致；剂量依赖性可通过 dose_sweep 进一步评估。",
+  "discussion": "No literature retrieved. 本报告机制分析基于 [D] 通路知识推理，仿真结果基于 [C] ODE 求解，未经 [A] 文献交叉验证。建议后续通过 PubMed 检索 Target_X 通路相关文献以补充证据。",
   "limitations": "当前模型仅含单抑制边，未考虑联合用药协同。"
 }}
 
@@ -316,6 +348,7 @@ paper_evidence = [{{pmid: "111", title: "Target_X 在通路中的作用"}}]
 - 禁止使用"小时"作为时间单位，除非 time_unit=="h"
 - 禁止使用 half-life / steady-state 描述瞬态信号蛋白（pEGFR/pERK 等）
 - 对瞬态级联蛋白必须使用 peak time / activation duration / max level 描述
+- [v5 Recovery Sprint 4 / RC10] 禁止仅罗列数值而不解释因果链；simulation_interpretation 必须含至少一条因果归因
 """
 
 

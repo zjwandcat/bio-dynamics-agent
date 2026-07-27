@@ -7,8 +7,7 @@ canonical_reviews:          # 权威综述 PMID 列表
   - "PMID:10854325"         # Massague 2000 Nature Cell Biology（SMAD 信号）
 
 canonical_models:           # 权威 BioModels ID 列表
-  - "BIOMD0000000252"       # Clark 2012 SMAD model
-  # TODO: verify BIOMD — 确认 Clark 2012 模型 ID
+  - "BIOMD0000000342"       # Zi2011 TGF-beta pathway (PMID:21613981)
 
 canonical_mechanism:
   required_nodes:           # 机制节点链（大写蛋白名）
@@ -60,6 +59,19 @@ expected_behavior:          # 动力学行为预期
   smad7_feedback: "required"
   sustained: false
 
+canonical_timeline:
+  - event: "TGF-beta receptor activation"
+    time_window: "1-5 min"
+  - event: "SMAD2/3 phosphorylation"
+    time_window: "5-15 min"
+  - event: "SMAD complex nuclear translocation"
+    time_window: "15-30 min"
+  - event: "SMAD7 induction"
+    time_window: "1-2 h"
+  - event: "Negative feedback"
+    present: true
+    mediator: "SMAD7, SnoN"
+
 known_negative_feedback:    # 已知负反馈
   - SMAD7
   - SnoN
@@ -71,3 +83,38 @@ consistency_rules:          # 供 Consistency Checker 加载的自洽规则
   - rule: "SMAD7 表达晚于 SMAD Peak"
     assertion: "smad7_expression_time > smad_peak_time"
     violation_label: "smad7_before_smad_peak"
+
+# ============================================================================
+# Task 12: Spec 补全字段（10 通路 Canonical 对齐）
+# ============================================================================
+expected_dynamics:          # 期望动力学（基于权威文献汇总）
+  SMAD2_phosphorylation:
+    peak_time: "5-15 min"
+    behavior: "peaks and declines"
+    must_decline: true
+  SMAD_nuclear:
+    peak_time: "15-30 min"
+    behavior: "transient nuclear accumulation"
+  SMAD7:
+    peak_time: "1-2 h"
+    behavior: "increasing (feedback)"
+
+curve_requirements:         # 曲线必须满足的硬约束
+  pSMAD2: "必须下降（adaptive）"
+  SMAD7: "持续增加"
+
+expected_experiments:       # 验证机制所需实验
+  - name: "pSMAD2 Western blot"
+    timepoints: [0, 5, 15, 30, 60, 120, 240]
+    mechanism_target: "SMAD2 phosphorylation dynamics"
+  - name: "SMAD7 qPCR"
+    timepoints: [15, 30, 60, 120, 240]
+    mechanism_target: "SMAD7 negative feedback"
+
+forbidden_experiments:      # 不能验证磷酸化动力学的实验
+  - "SMAD2 qPCR (不能反映磷酸化动力学)"
+
+# Task 12 Spec: Benchmark 10 TGFβ Canonical Assertion
+tgfb_assertions:
+  smad2_phosphorylation: "peaks and declines"
+  mechanism: ["SMAD7 negative feedback", "Receptor turnover"]

@@ -1,41 +1,147 @@
-# BioDynamics Scientific Alignment Gold Standard — NF-κB 通路
+# BioDynamics Scientific Alignment Benchmark — NF-κB 通路
+# Task 13: 对齐 Task 12 Canonical Answer，补全 acceptance_criteria / expected_curve_metrics / forbidden_patterns
 # 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
-# 参考：Hoffmann 2002 (PMID:12124261) Science — NF-κB oscillation 模型
-# TODO: verify PMID — Hayden 2006、Nelson 2004、O'Dea 2010
-pathway: NF_KB
-name: "NF-κB Inflammatory Signaling"
+# 参考 Canonical: knowledge/canonical/nf_kappa_b.yaml
+# Benchmark 07: NF-κB — TNFα 诱导 transient nuclear activation
+benchmark_id: nf_kappa_b_tnfa_transient
+pathway: nf_kappa_b
+category: positive
+question: >
+  TNFα 诱导 NF-κB 激活；为何核 NF-κB 表现为 transient（瞬态）而非持续？
+  请解释 IκBα-NF-κB 负反馈机制，并仿真 8 h 动力学。
+
+expected_answer: >
+  TNFα → IKK 激活 → IκBα 磷酸化降解 → NF-κB（p65）从胞质释放入核（15-30 min 达峰）→
+  NF-κB 转录 IκBα 与 A20 → IκBα 蛋白再合成（1-2 h）→ IκBα 入核结合 NF-κB 并将其输出胞质 →
+  核 NF-κB 下降（transient）。
+  A20 抑制 IKK，形成第二重负反馈。
+  因此核 NF-κB 表现为 transient activation with oscillation（周期约 2 小时），
+  而非持续高位。IκBα 降解后再合成是负反馈核心。
+  禁止回答"核 NF-κB 持续不下降"——这违反 IκBα 负反馈。
+
+# 从 knowledge/canonical/nf_kappa_b.yaml.canonical_mechanism.required_nodes 复制
+canonical_mechanism_nodes:
+  - IKK
+  - IkB_alpha
+  - NFkB_p65
+  - A20
+
+# 从 knowledge/canonical/nf_kappa_b.yaml.canonical_reviews 复制
+canonical_reviews:
+  - "PMID:12124261"         # Hoffmann 2002 Science（NF-κB 振荡）
+
+# 从 knowledge/canonical/nf_kappa_b.yaml.canonical_models 复制（Canonical 中为空）
+canonical_models: []
+
+# 期望动力学（基于 tnfa_assertions）
 expected_dynamics:
-  NFkB_nuclear_oscillation: "damped oscillation"
-  IkB_degradation: "rapid, within minutes"
-  A20_feedback: "induced, negative feedback"
-  pulse_period: "~2 hours"
-  NFkB_nuclear_translocation: "5-15 min after TNF"
-required_mechanisms:
-  - IKK_activation
-  - IkB_alpha_degradation
-  - NFkB_nuclear_translocation
-  - IkB_resynthesis_negative_feedback
-  - A20_feedback
-required_biomodels:
-  - BIOMD0000000072   # Hoffmann 2002 NF-κB model
-required_reviews:
-  - PMID:12124261     # Hoffmann 2002 Science (NF-κB oscillations) (confirmed)
-  - PMID:xxxxxxxx     # TODO: verify Hayden 2006 PMID
-  - PMID:xxxxxxxx     # TODO: verify Nelson 2004 PMID
-  - PMID:xxxxxxxx     # TODO: verify O'Dea 2010 PMID
-required_experiments:
-  - p65 Western blot nuclear fraction
-  - IkB alpha Western blot
-  - A20 qPCR
-  - IKK inhibitor BMS-345541 validation
-  - time course 0-6 hours
+  - molecule: NFkB_nuclear
+    peak_time: [15, 30]
+    behavior: "transient activation with oscillation"
+    must_decline: true
+  - molecule: IkB_alpha
+    peak_time: [10, 20]
+    behavior: "degradation then resynthesis"
+  - molecule: A20
+    peak_time: [60, 120]
+    behavior: "induced (negative feedback)"
+  - molecule: IKK
+    peak_time: [5, 15]
+    behavior: "rapid activation then decline"
+
+# 8 项 Curve Metrics 期望值
+expected_curve_metrics:
+  - molecule: NFkB_nuclear
+    peak_time_min: [15, 30]
+    peak_amplitude: [0.7, 1.0]
+    rise_time_min: [5, 15]
+    half_decay_min: [30, 90]
+    adaptation_ratio: [0.1, 0.4]          # 必须 < 1.0，证明下降
+    steady_state: [0.1, 0.4]
+    oscillation: true                     # NF-κB 振荡（damped）
+    auc: [40, 150]
+  - molecule: IkB_alpha
+    peak_time_min: [60, 120]              # resynthesis peak
+    peak_amplitude: [0.5, 1.0]
+    rise_time_min: [30, 60]
+    half_decay_min: null
+    adaptation_ratio: null
+    steady_state: [0.4, 0.8]
+    oscillation: true                     # 与 NF-κB 反相位振荡
+    auc: [50, 200]
+  - molecule: A20
+    peak_time_min: [60, 120]
+    peak_amplitude: [0.5, 1.0]
+    rise_time_min: [30, 60]
+    half_decay_min: null
+    adaptation_ratio: null
+    steady_state: [0.4, 0.8]
+    oscillation: false
+    auc: [50, 200]
+  - molecule: IKK
+    peak_time_min: [5, 15]
+    peak_amplitude: [0.8, 1.0]
+    rise_time_min: [0, 5]
+    half_decay_min: [20, 60]
+    adaptation_ratio: [0.1, 0.4]
+    steady_state: [0.05, 0.3]
+    oscillation: false
+    auc: [20, 80]
+
+# 从 knowledge/canonical/nf_kappa_b.yaml.expected_experiments 复制
+expected_experiments:
+  - name: "p65 NF-κB Western blot (nuclear/cytoplasmic fractionation)"
+    technique: "Western blot"
+    timepoints: [0, 15, 30, 60, 120, 240]
+    target: "NFkB_p65_nuclear"
+  - name: "IκBα Western blot"
+    technique: "Western blot"
+    timepoints: [0, 10, 20, 30, 60, 120]
+    target: "IkB_alpha"
+
+# 从 knowledge/canonical/nf_kappa_b.yaml.forbidden_experiments 复制
+forbidden_experiments:
+  - "NF-κB qPCR (不能反映 nuclear translocation 动力学)"
+
+# 禁止出现的模式（regex + reason）
 forbidden_patterns:
-  - "No PubMed evidence"
-  - "No BioModels comparison"
-  - "monotonic NF-κB nuclear accumulation without IκB feedback"
-key_time_scales:
-  IkB_degradation: "5-15 min"
-  NFkB_oscillation_period: "~2 hours"
-key_feedbacks:
-  - "IκBα resynthesis negative feedback (NF-κB dependent)"
-  - "A20 negative feedback on IKK"
+  - pattern: "NF-?kB.*sustained.*nuclear"
+    reason: "核 NF-κB 应 transient（IκBα 负反馈），不能持续高位"
+  - pattern: "NF-?kB.*monotonic.*nuclear.*accumulation"
+    reason: "违反 IκBα resynthesis 负反馈机制"
+  - pattern: "IkB.*not.*resynthesized"
+    reason: "IκBα 必须在 NF-κB 激活后再合成（负反馈）"
+  - pattern: "NF-?B qPCR"
+    reason: "NF-κB qPCR 不能反映 nuclear translocation 动力学"
+  - pattern: "no.*IkB.*feedback"
+    reason: "IκBα 负反馈是 NF-κB transient 的核心机制，必须提及"
+  - pattern: "no.*PubMed"
+    reason: "必须引用 PubMed 权威文献"
+  - pattern: "no.*BioModels"
+    reason: "必须引用 BioModels 模型比较"
+
+# 验收标准（对齐 spec acceptance_criteria）
+acceptance_criteria:
+  mechanism_nodes_required: true
+  mechanism_node_min_coverage: 0.8
+  pubmed_min_count: 1                    # NF-κB canonical reviews 较少
+  biomodels_min_count: 0                 # Canonical 中 NF-κB models 为空
+  experiment_min_count: 2
+  hallucination_tolerance: 0
+  curve_metric_pass_min: 6
+  forbidden_experiment_blocked: true
+  forbidden_pattern_absent: true
+  must_explain_ikb_feedback: true         # 必须解释 IκBα 负反馈
+  nfkb_must_be_transient: true            # 核 NF-κB 必须 transient
+  ikb_must_be_resynthesized: true         # IκBα 必须再合成
+
+# 从 knowledge/canonical/nf_kappa_b.yaml.tnfa_assertions 复制
+tnfa_assertions:
+  pathway: "IκBα → NF-κB → IκBα transcription → negative feedback"
+  behavior: "transient activation"
+
+# 参考 Canonical
+canonical_reference: "knowledge/canonical/nf_kappa_b.yaml"
+known_negative_feedback:
+  - IkB_alpha
+  - A20

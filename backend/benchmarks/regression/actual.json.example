@@ -1,0 +1,14 @@
+{
+  "comment": "示例格式 — 各 Sprint 运行 Benchmark 后填充实际值",
+  "simulation": {
+    "erk_peak_min": null,
+    "egfr_peak_min": null
+  },
+  "discussion": {
+    "topic_keywords": "",
+    "cited_pmids": []
+  },
+  "validation": {
+    "confidence": null
+  }
+}

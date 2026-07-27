@@ -204,6 +204,11 @@ class ReactionIR:
                 # True 表示 mechanism 与 reaction_equation 启发式不一致，供下游模板
                 # 编译器 / 测试消费（不阻断渲染，仅标记可疑反应）。
                 "mechanism_mismatch": _check_mechanism_mismatch(mechanism, reaction_eq),
+                # [RC24] 修复：保留 substrate/modifier 字段供 ODE 模板正确使用
+                # 磷酸化分支需要 substrate（底物）和 modifier（酶）来正确计算
+                # Michaelis-Menten 速率：v = k_cat * [E] * [S] / (Km + [S])
+                "substrate": e.get("substrate", ""),
+                "modifier": e.get("modifier", "") or "",
             })
 
             # 把 reaction 中的新 species 加入 species 列表

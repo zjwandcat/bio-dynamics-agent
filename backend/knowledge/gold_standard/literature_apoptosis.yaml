@@ -4,25 +4,25 @@
 pathway: apoptosis
 
 classical_reviews:        # 经典综述（最高优先级，score 5）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:18073771"
     title: "Apoptosis: controlled demolition at the cellular level"
     authors: "Taylor RC, Cullen SP, Martin SJ"
     year: 2008
     journal: "Nature Reviews Molecular Cell Biology"
     reason: "凋亡经典综述，系统定义内源/外源凋亡途径与 Caspase 级联框架"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "The Bcl-2 family: sensors and guards for apoptosis"
+  - pmid: "PMID:14744432"
+    title: "Cell death: critical control points"
     authors: "Danial NN, Korsmeyer SJ"
     year: 2004
     journal: "Cell"
     reason: "Bcl-2 家族凋亡调控权威综述，定义 Bcl-2 蛋白家族传感与守卫机制"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Life and death in the mitochondria"
-    authors: "Green DR"
+  - pmid: "PMID:15286356"
+    title: "The pathophysiology of mitochondrial cell death"
+    authors: "Green DR, Kroemer G"
     year: 2004
-    journal: "Nature Reviews Molecular Cell Biology"
+    journal: "Science"
     reason: "线粒体凋亡通路综述经典，定义 MOMP 与细胞色素 c 释放机制"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:UNVERIFIED"  # PMID verification failed — needs manual check
     title: "Apoptosis research meets systems biology in the 21st century"
     authors: "Bhatt S et al"
     year: 2019
@@ -30,7 +30,7 @@ classical_reviews:        # 经典综述（最高优先级，score 5）
     reason: "凋亡系统生物学近期综述，整合计算建模与实验数据"
 
 mechanism_papers:         # 机制论文（score 4）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:UNVERIFIED"  # PMID verification failed — needs manual check
     title: "Modeling of caspase-8 activation in type I and type II cells"
     authors: "Bhatt S et al"
     year: 2019
@@ -38,21 +38,10 @@ mechanism_papers:         # 机制论文（score 4）
     reason: "Caspase-8 在 I/II 型细胞的激活机制建模，量化两型细胞凋亡差异"
 
 biomodels_source_papers:  # BioModels 来源论文（score 3）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    biomodels_id: "BIOMD0000000224"
-    title: "Apoptosis caspase cascade model"
-    authors: "Apoptosis BioModels source"
-    year: 2009
-    journal: "Bioinformatics"
-    reason: "凋亡 Caspase 级联 BioModels 来源模型（具体 PMID 待核实）"
+  []                      # 占位条目已移除：原 BIOMD0000000224 实为 Meyer1991 Calcium Spiking 模型，与凋亡无关
 
 recent_applications:      # 近期应用论文（score 2，仅补充）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Apoptosis dynamics in cancer therapy and drug resistance"
-    authors: "Recent apoptosis application study"
-    year: 2022
-    journal: "Nature Reviews Cancer"
-    reason: "凋亡治疗耐药动力学近期应用（PubMed 补充）"
+  []                      # 占位条目已移除：原 "Recent apoptosis application study" 为 PLACEHOLDER
 
 case_reports: []          # 案例报告（score 1，一般不用）
 

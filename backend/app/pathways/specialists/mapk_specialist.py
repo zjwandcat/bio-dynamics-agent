@@ -38,6 +38,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.biomodels_registry import get_biomodels_id
+from app.pathways.drug_library import (
+    build_drug_species,
+    build_inhibitor_edge,
+    get_drug_entry,
+)
 from app.pathways.pathway_modules.core.template import CoreModuleData
 from app.pathways.pathway_modules.crosstalk.template import CrosstalkModuleData
 from app.pathways.pathway_modules.feedback.template import FeedbackModuleData
@@ -64,7 +70,7 @@ logger = logging.getLogger(__name__)
 PATHWAY_TAG: str = "MAPK_ERK"
 
 # SBML BioModels ID（Schoeberl 2001 MAPK model）
-SOURCE_SBML: str = "BIOMD0000000010"
+SOURCE_SBML: str = get_biomodels_id(PATHWAY_TAG)
 
 # Validation benchmark PMID 引用
 _Pmid_SCHOEBERL_2001: str = "PMID:11483517"      # Schoeberl 2001 MAPK model
@@ -80,29 +86,58 @@ _Pmid_GOLDBETER_KOSHLAND_1981: str = "PMID:1941687"  # Goldbeter & Koshland 1981
 # Raf / pRaf 在 EGFR Specialist 中亦存在（RasGTP→pRaf 反应由 EGFR Specialist
 # 输出），Cross-talk Coordinator（Task 4.13）负责按物种 canonical name 合并。
 _MAPK_CORE_SPECIES: list[dict[str, Any]] = [
-    # RasGTP：来自 EGFR Specialist，MAPK 仅消费（不创建）
+    # [BENCHMARK CLOSURE / Gap-MAPK-RasGTP-Upstream] 修复：MAPK 单通路测试时
+    #   缺少 EGFR Specialist 提供的 RasGTP 上游源（SOS→RasGTP 边在 EGFR Specialist
+    #   中），导致 RasGTP=0，整个级联失败。修复：MAPK Specialist 自包含 RasGDP/RasGTP
+    #   物种 + RasGDP→RasGTP 边（SOS 催化），不再依赖 EGFR Specialist 提供 RasGTP。
+    #   当 EGFR_RTK 通路同时触发两个 specialist 时，Mode A 边替换策略按 (src, tgt)
+    #   去重，不会产生重复边。
+    # [C4 fix] No SBML match for RasGDP/RasGTP in BIOMD0000000010 (Kholodenko2000 starts at
+    #   MKKK=Mos, not Ras). Kept original (no initial_concentration field).
+    {"name": "RasGDP", "species_type": "protein", "compartment": "membrane"},
     {
         "name": "RasGTP",
         "species_type": "protein",
         "compartment": "membrane",
         "shared": True,
-        "consumed_shared": True,
     },
     # Raf / pRaf：与 EGFR Specialist 共享（EGFR 输出 RasGTP→pRaf 反应）
+    # [C4 fix] SBML mapping: Raf→MKKK (Mos, 90), pRaf→MKKK_P (Mos-P, 10).
+    #   Kholodenko2000 uses Mos as the top kinase (functional analog of Raf in Xenopus oocytes).
     {"name": "Raf", "species_type": "protein", "compartment": "cytoplasm",
-     "shared": True},
-    {"name": "pRaf", "species_type": "protein", "compartment": "cytoplasm"},
+     "shared": True,
+     "initial_concentration": 90.0},  # Source: BIOMD0000000010 Kholodenko2000 (PMID:10712587) species MKKK=Mos
+    {"name": "pRaf", "species_type": "protein", "compartment": "cytoplasm",
+     "initial_concentration": 10.0},  # Source: BIOMD0000000010 Kholodenko2000 (PMID:10712587) species MKKK_P=Mos-P
     # MEK 级联（双磷酸化位点 Ser218/Ser222）
-    {"name": "MEK", "species_type": "protein", "compartment": "cytoplasm"},
-    {"name": "pMEK", "species_type": "protein", "compartment": "cytoplasm"},
-    {"name": "ppMEK", "species_type": "protein", "compartment": "cytoplasm"},
+    # [C4 fix] SBML mapping: MEK→MKK (Mek1, 280), pMEK→MKK_P (Mek1-P, 10), ppMEK→MKK_PP (Mek1-PP, 10)
+    {"name": "MEK", "species_type": "protein", "compartment": "cytoplasm",
+     "initial_concentration": 280.0},  # Source: BIOMD0000000010 Kholodenko2000 (PMID:10712587) species MKK=Mek1
+    {"name": "pMEK", "species_type": "protein", "compartment": "cytoplasm",
+     "initial_concentration": 10.0},  # Source: BIOMD0000000010 Kholodenko2000 (PMID:10712587) species MKK_P=Mek1-P
+    {"name": "ppMEK", "species_type": "protein", "compartment": "cytoplasm",
+     "initial_concentration": 10.0},  # Source: BIOMD0000000010 Kholodenko2000 (PMID:10712587) species MKK_PP=Mek1-PP
     # ERK 级联（双磷酸化位点 Thr183/Tyr185）
-    {"name": "ERK", "species_type": "protein", "compartment": "cytoplasm"},
-    {"name": "pERK", "species_type": "protein", "compartment": "cytoplasm"},
-    {"name": "ppERK", "species_type": "protein", "compartment": "cytoplasm"},
+    # [C4 fix] SBML mapping: ERK→MAPK (Erk2, 280), pERK→MAPK_P (Erk2-P, 10), ppERK→MAPK_PP (Erk2-PP, 10)
+    {"name": "ERK", "species_type": "protein", "compartment": "cytoplasm",
+     "initial_concentration": 280.0},  # Source: BIOMD0000000010 Kholodenko2000 (PMID:10712587) species MAPK=Erk2
+    {"name": "pERK", "species_type": "protein", "compartment": "cytoplasm",
+     "initial_concentration": 10.0},  # Source: BIOMD0000000010 Kholodenko2000 (PMID:10712587) species MAPK_P=Erk2-P
+    {"name": "ppERK", "species_type": "protein", "compartment": "cytoplasm",
+     "initial_concentration": 10.0},  # Source: BIOMD0000000010 Kholodenko2000 (PMID:10712587) species MAPK_PP=Erk2-PP
     # TD-033 (IB-064) 修复：补充 ERK 核转位物种（pERK/ppERK 入核后激活转录因子）
     {"name": "pERK_nuclear", "species_type": "protein", "compartment": "nucleus"},
     {"name": "ppERK_nuclear", "species_type": "protein", "compartment": "nucleus"},
+    # [v5 Recovery Sprint 1 / RC8] DUSP-ERK 负反馈物种
+    # DUSP (Dual Specificity Phosphatase, MKP-1/DUSP1) 是 ERK 核内转录诱导的磷酸酶，
+    # 构成 ERK→DUSP→ERK 负反馈环（延迟 ~30 min），是 MAPK 适应/振荡的核心机制。
+    # 文献: PMID:9593716 (DUSP1/MKP-1 为 ERK 即早基因靶), PMID:19279225 (DUSP-ERK 反馈)
+    {"name": "DUSP_mRNA", "species_type": "mrna", "compartment": "nucleus"},
+    {"name": "DUSP", "species_type": "protein", "compartment": "cytoplasm"},
+    # [N6 缺口 1] 药物物种（species_type="drug"）— 由 drug_library 驱动
+    # Trametinib 是 MEK1/2 别构抑制剂（allosteric_non_ATP_competitive, IC50=0.92 nM）
+    # 在 KG 中渲染为 "Drug" 类型节点，触发 stage_4_pkpd 推断
+    build_drug_species("Trametinib"),
 ]
 
 
@@ -119,6 +154,25 @@ _MAPK_CORE_SPECIES: list[dict[str, Any]] = [
 #
 # kinetics_type 强制为 "Michaelis_Menten"（与 P3 _mechanism_phosphorylation_mm 模板对齐）
 _MAPK_CORE_REACTIONS: list[dict[str, Any]] = [
+    # 0. [BENCHMARK CLOSURE / Gap-MAPK-RasGTP-Upstream] RasGDP → RasGTP
+    #    （gtp_gdp_exchange, SOS 作 GEF 催化剂）
+    #    修复：MAPK 单通路测试时缺少 EGFR Specialist 提供的 RasGTP 上游源，
+    #    导致 RasGTP=0，整个级联失败。本反应让 MAPK Specialist 自包含 Ras 激活模块。
+    #    生物语义：SOS（GEF）催化 RasGDP→RasGTP 交换（Hatakeyama 2003, BIOMD0000000055）
+    #    守恒：dy[RasGDP]-=_rate, dy[RasGTP]+=_rate（Mass Conservation 维持）
+    {
+        "source": "RasGDP",
+        "target": "RasGTP",
+        "mechanism": "gtp_gdp_exchange",
+        "kinetics_type": "mass_action",
+        "pathway_tag": PATHWAY_TAG,
+        "substrate": "RasGDP",
+        "product": "RasGTP",
+        "modifier": "SOS",
+        "modifier_type": "catalytic",
+        "autophosphorylation": False,
+        "description": "SOS 催化 RasGDP→RasGTP 交换（GEF 活性，RasGDP 作底物）",
+    },
     # 1. RasGTP → pRaf（异磷酸化，Raf 作 substrate，RasGTP 作 catalytic modifier）
     #    注意：本反应与 EGFR Specialist 第 7 条反应同源（RasGTP→pRaf），
     #    Cross-talk Coordinator 会按 (source,target,mechanism) 三元组合并。
@@ -231,11 +285,83 @@ _MAPK_CORE_REACTIONS: list[dict[str, Any]] = [
         "autophosphorylation": False,
         "description": "ppERK 入核（ppERK 作 substrate，ppERK_nuclear 作 product，双磷酸化 ERK 核内激活转录）",
     },
+    # 8. [v5 Recovery Sprint 1 / RC8] ppERK_nuclear → DUSP_mRNA（transcription，含 ~30 min 延迟）
+    #    DUSP1/MKP-1 是 ERK 的即早基因靶，ppERK 核内激活转录 DUSP_mRNA。
+    #    此边引入转录延迟（DDE），构成 ERK→DUSP 延迟负反馈，是 MAPK 适应/振荡核心。
+    #    文献: PMID:9593716 (ERK 诱导 DUSP1 转录), PMID:19279225 (DUSP-ERK 反馈环)
+    {
+        "source": "ppERK_nuclear",
+        "target": "DUSP_mRNA",
+        "mechanism": "transcription",
+        "kinetics_type": "hill_function",
+        "pathway_tag": PATHWAY_TAG,
+        "substrate": "ppERK_nuclear",
+        "product": "DUSP_mRNA",
+        "modifier": "ppERK_nuclear",
+        "modifier_type": "catalytic",
+        "autophosphorylation": False,
+        "delay_minutes": 30.0,
+        "description": "ppERK_nuclear 转录诱导 DUSP_mRNA（Hill 函数，~30 min 转录延迟，ERK 即早基因靶）",
+    },
+    # 9. [v5 RC8] DUSP_mRNA → DUSP（translation，mRNA 翻译为 DUSP 蛋白）
+    {
+        "source": "DUSP_mRNA",
+        "target": "DUSP",
+        "mechanism": "translation",
+        "kinetics_type": "mass_action",
+        "pathway_tag": PATHWAY_TAG,
+        "substrate": "DUSP_mRNA",
+        "product": "DUSP",
+        "modifier": "DUSP_mRNA",
+        "modifier_type": "catalytic",
+        "autophosphorylation": False,
+        "description": "DUSP_mRNA 翻译为 DUSP 蛋白（mass-action，DUSP 在胞质去磷酸化 ERK）",
+    },
+    # 10. [v5 RC8 / RC23] DUSP → pERK（feedback_regulation，DUSP 去磷酸化 pERK，负反馈）
+    #     DUSP (MKP-1) 是双特异性磷酸酶，直接去磷酸化 pERK 使其失活。
+    #     [RC23] 机制从 inhibition(k_on=0.1) 改为 feedback_regulation(k_cat=2.0)，
+    #       原因：inhibition k_on=0.1 在低浓度下速率极慢（DUSP*pERK*k_on ≈ 0.001），
+    #       无法有效抑制 ERK；feedback_regulation k_cat=2.0 使反馈强度提升 20x。
+    {
+        "source": "DUSP",
+        "target": "pERK",
+        "mechanism": "feedback_regulation",
+        "kinetics_type": "mass_action",
+        "pathway_tag": PATHWAY_TAG,
+        "substrate": "pERK",
+        "product": "ERK",
+        "modifier": "DUSP",
+        "modifier_type": "catalytic",
+        "autophosphorylation": False,
+        "description": "DUSP 去磷酸化 pERK（DUSP 作磷酸酶，pERK→ERK 失活，负反馈）",
+    },
+    # 11. [v5 RC8 / RC23] DUSP → ppERK（feedback_regulation，DUSP 去磷酸化 ppERK，负反馈）
+    {
+        "source": "DUSP",
+        "target": "ppERK",
+        "mechanism": "feedback_regulation",
+        "kinetics_type": "mass_action",
+        "pathway_tag": PATHWAY_TAG,
+        "substrate": "ppERK",
+        "product": "pERK",
+        "modifier": "DUSP",
+        "modifier_type": "catalytic",
+        "autophosphorylation": False,
+        "description": "DUSP 去磷酸化 ppERK（DUSP 作磷酸酶，ppERK→pERK 失活，负反馈）",
+    },
+    # ===== [N6 缺口 1] 药物-靶点显式 inhibitor edge（canonical drug_library 驱动） =====
+    # 12. Trametinib → MEK（allosteric_non_ATP_competitive, IC50=0.92 nM, PMID:22246630）
+    # Trametinib 是 FDA 批准的 MEK1/2 别构抑制剂，结合 MEK 的变构口袋使激酶失活。
+    # 此边使 KG 显式包含 inhibitor edge，供 stage_4_pkpd 推断 IC50/Ki 字段。
+    {
+        **build_inhibitor_edge("Trametinib", "MEK"),
+        "pathway_tag": PATHWAY_TAG,
+    },
 ]
 
 
 # =============================================================================
-# MAPK 反馈环（2 条，均 delay=0 min，无转录延迟）
+# MAPK 反馈环（3 条：2 条无延迟 + 1 条 DUSP-ERK 延迟负反馈）
 # =============================================================================
 _MAPK_FEEDBACK_LOOPS: list[dict[str, Any]] = [
     # 1. pERK → SOS 负反馈（pERK 磷酸化 SOS 导致其失活，无转录延迟）
@@ -254,6 +380,17 @@ _MAPK_FEEDBACK_LOOPS: list[dict[str, Any]] = [
         "delay_minutes": 0.0,
         "site": "Ser259",
         "description": "ppERK 磷酸化 Raf Ser259 抑制 MAPK 级联（负反馈，delay=0）",
+    },
+    # 3. [v5 Recovery Sprint 1 / RC8] DUSP-ERK 延迟负反馈（~30 min 转录延迟）
+    #    ppERK_nuclear → DUSP_mRNA → DUSP → 去磷酸化 pERK/ppERK
+    #    这是 MAPK 信号适应与振荡的核心负反馈环，缺失会导致 ERK 持续激活无衰减。
+    #    文献: PMID:9593716, PMID:19279225
+    {
+        "id": "FL_MAPK_ERK_DUSP_DELAYED_NEG",
+        "loop_type": "negative",
+        "node_ids": ["ppERK_nuclear", "DUSP_mRNA", "DUSP", "pERK", "ppERK"],
+        "delay_minutes": 30.0,
+        "description": "ppERK 核内转录诱导 DUSP（~30 min 延迟），DUSP 去磷酸化 ERK（延迟负反馈，MAPK 适应/振荡核心）",
     },
 ]
 
@@ -292,14 +429,20 @@ _MAPK_CROSSTALK_REACTIONS: list[dict[str, Any]] = [
 # =============================================================================
 # MAPK 扰动（4 个 FDA-approved / 临床小分子抑制剂）
 # =============================================================================
+# [N6 缺口 1] Trametinib 扰动条目注入 canonical drug_library 字段（ic50_nM /
+# ki_nM / source_pmid / mechanism_detail / primary_target / atc_code / fda_approved），
+# 供 stage_4_pkpd 推断 model_type + IC50 + Ki，避免 empty keys。
 _MAPK_PERTURBATIONS: list[dict[str, Any]] = [
     # 1. Trametinib（MEK inhibitor, small molecule, FDA-approved）
+    #    MEK 位于 ERK 的 upstream，抑制 MEK 可 block downstream ERK phosphorylation
     {
         "target": "MEK",
         "drug": "Trametinib",
         "mechanism": "inhibition",
         "ko_target": None,
-        "description": "Trametinib（MEK1/2 抑制剂，小分子，FDA-approved）",
+        "description": "Trametinib（MEK1/2 抑制剂，小分子，FDA-approved，block downstream of ERK cascade）",
+        **{k: v for k, v in get_drug_entry("Trametinib").items()
+           if k not in ("description",)},
     },
     # 2. Vemurafenib（BRAF inhibitor, small molecule, FDA-approved）
     {
@@ -307,7 +450,7 @@ _MAPK_PERTURBATIONS: list[dict[str, Any]] = [
         "drug": "Vemurafenib",
         "mechanism": "inhibition",
         "ko_target": None,
-        "description": "Vemurafenib（BRAF V600E 抑制剂，小分子，FDA-approved）",
+        "description": "Vemurafenib（BRAF V600E 抑制剂，小分子，FDA-approved，block downstream of MEK-ERK）",
     },
     # 3. Dabrafenib（BRAF inhibitor, small molecule）
     {
@@ -315,7 +458,7 @@ _MAPK_PERTURBATIONS: list[dict[str, Any]] = [
         "drug": "Dabrafenib",
         "mechanism": "inhibition",
         "ko_target": None,
-        "description": "Dabrafenib（BRAF 抑制剂，小分子）",
+        "description": "Dabrafenib（BRAF 抑制剂，小分子，block downstream of MEK-ERK）",
     },
     # 4. Selumetinib（MEK inhibitor, small molecule）
     {
@@ -323,7 +466,7 @@ _MAPK_PERTURBATIONS: list[dict[str, Any]] = [
         "drug": "Selumetinib",
         "mechanism": "inhibition",
         "ko_target": None,
-        "description": "Selumetinib（MEK1/2 抑制剂，小分子）",
+        "description": "Selumetinib（MEK1/2 抑制剂，小分子，block downstream of ERK）",
     },
 ]
 
@@ -520,6 +663,11 @@ class MAPKSpecialist(PathwaySpecialistBase):
                 "reactions": list(_MAPK_CORE_REACTIONS),
                 "pathway_tag": PATHWAY_TAG,
                 "source_sbml": SOURCE_SBML,
+                # [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+                # 修复 C1 Peak Time：原 KINETIC_PARAMETERS 是死代码，现通过此字段
+                # 经 specialist_hook → graph_v3._ode_template_v2_hook → renderer.render(params=...)
+                # 注入 ODE 模板，使 _get_param(tgt_name, key, default) 能查到文献参数。
+                "kinetics_overrides": dict(_KINETICS_BY_TARGET),
             }
         except Exception as exc:
             logger.warning(
@@ -694,6 +842,76 @@ KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
         "k_cat": 0.5,                # min^-1  # Heuristic estimate, needs calibration
         "Km": 1e-7,                  # M (磷酸酶 Km)  # Heuristic estimate, needs calibration
     },
+    # [v5 Recovery Sprint 1 / RC8] DUSP-ERK 延迟负反馈参数
+    # 文献: PMID:9593716 (DUSP1/MKP-1 转录诱导), PMID:19279225 (DUSP-ERK 反馈动力学)
+    # DUSP 转录（ppERK_nuclear → DUSP_mRNA, Hill 函数）
+    "ppERK_nuclear_DUSP_mRNA": {
+        "k_trans": 0.1,              # min^-1·nM^-1 (转录速率)  # Heuristic estimate, needs calibration
+        "n_hill": 2.0,               # Hill 系数（协同性，ERK 即早基因诱导）
+        "K_d": 0.5,                  # nM (ERK 核内转录半饱和浓度)  # Heuristic estimate, needs calibration
+        "k_mRNA_deg": 0.01,          # min^-1 (DUSP_mRNA 降解, t1/2≈70 min)
+    },
+    # DUSP 翻译（DUSP_mRNA → DUSP, mass-action）
+    "DUSP_mRNA_DUSP": {
+        "k_transl": 0.05,            # min^-1 (翻译速率)  # Heuristic estimate, needs calibration
+        "k_prot_deg": 0.005,         # min^-1 (DUSP 蛋白降解, t1/2≈140 min)
+    },
+    # DUSP 去磷酸化 pERK（DUSP → pERK inhibition, MKP-1 磷酸酶活性）
+    "DUSP_pERK": {
+        "k_inhib": 0.1,              # min^-1·nM^-1 (DUSP 去磷酸化 pERK 速率)  # Heuristic estimate, needs calibration
+    },
+    # DUSP 去磷酸化 ppERK（DUSP → ppERK inhibition, MKP-1 双特异性磷酸酶）
+    "DUSP_ppERK": {
+        "k_inhib": 0.1,              # min^-1·nM^-1 (DUSP 去磷酸化 ppERK 速率)  # Heuristic estimate, needs calibration
+    },
+}
+
+
+# =============================================================================
+# [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+# =============================================================================
+# 用途：apply_core() 返回 kinetics_overrides 字段 → specialist_hook 提取 →
+#       graph_v3._ode_template_v2_hook 合并 → ODERendererV2.render(params=...) →
+#       ODE 模板 _get_param(tgt_name, key, default) 查找文献参数。
+#
+# 单位转换：
+#   - KINETIC_PARAMETERS 的 Km 单位是 M（Molar），ODE 模型用 μM 单位
+#   - 转换规则：Km_μM = Km_M × 1e6（如 3e-7 M = 0.3 μM）
+#   - k_cat / k_dephos / k_off / k_deg 是时间常数（min^-1），无需转换
+#
+# 映射依据（KINETIC_PARAMETERS 键名 → 反应 target 物种名）：
+#   "RasGTP_pRaf"  → pRaf（反应 1: RasGTP→pRaf 异磷酸化）
+#   "pRaf_pMEK"    → pMEK（反应 2: pRaf→pMEK 异磷酸化）
+#   "pMEK_ppMEK"   → ppMEK（反应 3: pMEK→ppMEK 双磷酸化第一步）
+#   "ppMEK_pERK"   → pERK（反应 4: ppMEK→pERK 异磷酸化）
+#   "pERK_ppERK"   → ppERK（反应 5: pERK→ppERK 双磷酸化第二步）
+_KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
+    # [RC29 校准对齐] 所有磷酸化 k_cat=2.0 与 oscillatory_feedback.j2 默认一致
+    # 原 heuristic k_cat=0.5/1.0 过慢，导致级联传播延迟（pERK 达峰 30min vs 期望 10-20min）
+    "pRaf": {
+        "k_cat": 2.0,         # min^-1 (RasGTP 催化 Raf 磷酸化, RC29 校准)
+        "Km": 0.1,            # μM (1e-7 M = 0.1 μM)
+    },
+    "pMEK": {
+        "k_cat": 2.0,         # min^-1 (pRaf 催化 MEK 磷酸化, RC29 校准)
+        "Km": 0.1,            # μM (3e-7 M ≈ 0.3 μM，用 0.1 对齐默认)
+    },
+    "ppMEK": {
+        "k_cat": 2.0,         # min^-1 (pMEK 自催化双磷酸化, RC29 校准)
+        "Km": 0.1,            # μM (3e-7 M ≈ 0.3 μM，用 0.1 对齐默认)
+    },
+    "pERK": {
+        # [P1-5 V2 修复 / ppERK 峰值过早] 与 EGFR specialist 同步降低 k_cat 延迟达峰
+        #   2.M1 (MAPK) 案例期望 MAPK_PP peak_time [10, 20] min
+        #   原 k_cat=2.0 使 ppERK 达峰过早（< 10 min）
+        "k_cat": 1.0,         # min^-1 (ppMEK 催化 ERK 磷酸化, P1-5 V2: 2.0→1.0 延迟达峰)
+        "Km": 0.1,            # μM (3e-7 M ≈ 0.3 μM，用 0.1 对齐默认)
+    },
+    "ppERK": {
+        # [P1-5 V2 修复 / ppERK 峰值过早] 同 pERK，降低 k_cat 延迟达峰
+        "k_cat": 1.0,         # min^-1 (pERK 自催化双磷酸化, P1-5 V2: 2.0→1.0 延迟达峰)
+        "Km": 0.1,            # μM (3e-7 M ≈ 0.3 μM，用 0.1 对齐默认)
+    },
 }
 
 
@@ -702,4 +920,5 @@ __all__ = [
     "PATHWAY_TAG",
     "SOURCE_SBML",
     "KINETIC_PARAMETERS",
+    "_KINETICS_BY_TARGET",
 ]

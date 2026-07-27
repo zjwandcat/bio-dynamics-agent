@@ -20,9 +20,9 @@
 
 from __future__ import annotations
 
-import csv
 import logging
 import re
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -31,8 +31,16 @@ from app.biomodels_client import (
     SBML_ROLE_VALIDATION_ORACLE,
     detect_sbml_role,
     get_biomodels_client,
+    compare_trajectory_to_sbml,
 )
 from app.metrics import get_metrics
+from app.csv_io import read_csv_robust
+# N7 缺口 4：确定性动力学校准器集成（仿真后峰值窗口校准）
+from app.dynamics_calibrator import (
+    DynamicsCalibrator,
+    calibrate_dynamics,
+    check_peak_in_window,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -310,35 +318,12 @@ def _read_simulation_csv(csv_path: str) -> tuple[list[str], list[float], dict[st
     """
     if not csv_path or not Path(csv_path).exists():
         return [], [], {}
-    species_list: list[str] = []
-    time_points: list[float] = []
-    concentrations: dict[str, list[float]] = {}
     try:
-        with open(csv_path, "r", encoding="utf-8", newline="") as f:
-            reader = csv.reader(f)
-            header = next(reader, None)
-            if not header:
-                return [], [], {}
-            # header: ["time", "EGF", "EGFR", "pEGFR", ...]
-            species_list = [s.strip() for s in header[1:]]
-            for sp in species_list:
-                concentrations[sp] = []
-            for row in reader:
-                if not row:
-                    continue
-                try:
-                    time_points.append(float(row[0]))
-                    for i, sp in enumerate(species_list):
-                        if i + 1 < len(row):
-                            concentrations[sp].append(float(row[i + 1]))
-                        else:
-                            concentrations[sp].append(0.0)
-                except (ValueError, IndexError):
-                    continue
+        result = read_csv_robust(csv_path)
+        return list(result.species), result.times, result.species
     except Exception as exc:
         logger.warning("读取仿真 CSV 失败 (%s): %s", csv_path, exc)
         return [], [], {}
-    return species_list, time_points, concentrations
 
 
 # -----------------------------------------------------------------------------
@@ -449,6 +434,62 @@ class SBMLValidator:
                 sbml_text = self.biomodels.download(sbml_model_id)
         if not sbml_text:
             return self._skipped_report("sbml_download_failed", role)
+
+        trajectory = {
+            species: {"time": list(tpl_times), "values": list(values)}
+            for species, values in tpl_concs.items()
+            if len(values) == len(tpl_times)
+        }
+        duration = max(tpl_times) - min(tpl_times) if len(tpl_times) > 1 else t_end
+        oracle = compare_trajectory_to_sbml(
+            biomodel_id=sbml_model_id,
+            template_trajectory=trajectory,
+            sbml_xml=sbml_text,
+            duration=max(float(duration), 1.0),
+            n_points=max(len(tpl_times), 2),
+        )
+        oracle_payload = asdict(oracle)
+        numerical = oracle.track == "A" and oracle.simulation_run
+        passed = numerical and oracle.status == "passed"
+        report = {
+            "rmse": oracle.overall_distance if numerical else None,
+            "error_diff": oracle.overall_distance if numerical else None,
+            "max_relative_error": oracle.max_relative_error if numerical else None,
+            "peak_time_diff": max(
+                (
+                    float(item.get("peak_time_diff_min") or 0.0)
+                    for item in oracle.species_comparisons
+                ),
+                default=0.0,
+            ),
+            "amplification_diff": oracle.max_relative_error if numerical else None,
+            "sbml_sim_available": numerical,
+            "method": "libroadrunner_track_a" if numerical else "blocked",
+            "track": oracle.track,
+            "status": oracle.status if numerical else "blocked",
+            "role": role,
+            "sbml_model_id": sbml_model_id,
+            "model_id": sbml_model_id,
+            "solver": oracle.solver,
+            "solver_version": oracle.solver_version,
+            "manifest_id": oracle.manifest_id,
+            "model_sha256": oracle.model_sha256,
+            "checksum_verified": oracle.checksum_verified,
+            "unit_normalization": oracle.unit_normalization,
+            "matched_species_count": len(oracle.species_comparisons),
+            "species_comparisons": oracle.species_comparisons,
+            "structural_confidence_score": 1.0 if numerical else 0.0,
+            "pass": passed,
+            "details": {
+                "summary": oracle.summary,
+                "errors": oracle.errors,
+                "oracle_report": oracle_payload,
+            },
+        }
+        get_metrics().record_validation(
+            report["method"], passed, 1.0 if numerical else 0.0
+        )
+        return report
 
         # 4. 提取模板仿真的关键指标
         tpl_up = _extract_species_metrics(tpl_times, tpl_concs, upstream_species)
@@ -578,6 +619,246 @@ class SBMLValidator:
         get_metrics().record_validation("structural", passed, confidence_score)
         return report
 
+    def validate_multi_model(
+        self,
+        *,
+        simulation_csv_path: str,
+        models: list[dict[str, str]],
+        role: str,
+    ) -> dict[str, Any]:
+        """Audit a cross-pathway trajectory against each constituent SBML model."""
+        tpl_species, tpl_times, tpl_concs = _read_simulation_csv(simulation_csv_path)
+        if not tpl_species or not tpl_times:
+            return self._skipped_report("template_csv_unavailable", role)
+
+        trajectory = {
+            species: {"time": list(tpl_times), "values": list(values)}
+            for species, values in tpl_concs.items()
+            if len(values) == len(tpl_times)
+        }
+        duration = max(tpl_times) - min(tpl_times) if len(tpl_times) > 1 else 120.0
+        component_reports: list[dict[str, Any]] = []
+        for model in models:
+            model_id = str(model.get("model_id", ""))
+            oracle = compare_trajectory_to_sbml(
+                biomodel_id=model_id,
+                template_trajectory=trajectory,
+                sbml_xml=str(model.get("sbml_text", "")),
+                duration=max(float(duration), 1.0),
+                n_points=max(len(tpl_times), 2),
+            )
+            numerical = oracle.track == "A" and oracle.simulation_run
+            component_reports.append({
+                "model_id": model_id,
+                "track": oracle.track,
+                "status": oracle.status,
+                "sbml_sim_available": numerical,
+                "rmse": oracle.overall_distance if numerical else None,
+                "max_relative_error": oracle.max_relative_error if numerical else None,
+                "matched_species_count": len(oracle.species_comparisons),
+                "species_comparisons": oracle.species_comparisons,
+                "solver": oracle.solver,
+                "solver_version": oracle.solver_version,
+                "manifest_id": oracle.manifest_id,
+                "model_sha256": oracle.model_sha256,
+                "checksum_verified": oracle.checksum_verified,
+                "unit_normalization": oracle.unit_normalization,
+                "errors": oracle.errors,
+            })
+
+        complete = (
+            len(component_reports) >= 2
+            and all(item["sbml_sim_available"] for item in component_reports)
+            and all(item["matched_species_count"] > 0 for item in component_reports)
+            and all(item["checksum_verified"] for item in component_reports)
+        )
+        rmses = [
+            float(item["rmse"])
+            for item in component_reports
+            if isinstance(item.get("rmse"), (int, float))
+        ]
+        relative_errors = [
+            float(item["max_relative_error"])
+            for item in component_reports
+            if isinstance(item.get("max_relative_error"), (int, float))
+        ]
+        report = {
+            "rmse": sum(rmses) / len(rmses) if rmses else None,
+            "error_diff": sum(rmses) / len(rmses) if rmses else None,
+            "max_relative_error": max(relative_errors) if relative_errors else None,
+            "peak_time_diff": None,
+            "amplification_diff": None,
+            "sbml_sim_available": complete,
+            "method": "libroadrunner_multi_model",
+            "track": "multi_model",
+            "status": "passed" if complete else "blocked",
+            "role": role,
+            "track_a_semantics": "multi_model_no_single_target",
+            "model_ids": [item["model_id"] for item in component_reports],
+            "component_reports": component_reports,
+            "matched_species_count": sum(
+                int(item["matched_species_count"]) for item in component_reports
+            ),
+            "pass": complete,
+            "details": {
+                "reason": (
+                    "all constituent SBML models ran with mapped observables"
+                    if complete
+                    else "one or more constituent models lack numerical or observable coverage"
+                )
+            },
+        }
+        get_metrics().record_validation(
+            report["method"], complete, 1.0 if complete else 0.0
+        )
+        return report
+
+    def validate_with_calibration(
+        self,
+        user_input: str,
+        simulation_csv_path: str,
+        sbml_model_id: str = "",
+        sbml_text: str = "",
+        template_name: str = "",
+        t_end: float = 120.0,
+        upstream_species: str = "pEGFR",
+        downstream_species: str = "pMAPK",
+        expected_dynamics: dict[str, Any] | None = None,
+        adjustable_params: dict[str, Any] | None = None,
+        simulate_fn: Any = None,
+        calibration_enabled: bool = True,
+    ) -> dict[str, Any]:
+        """N7 缺口 4：在 SBML 验证后接入确定性动力学校准器。
+
+        集成策略：
+          1. 先调用 :meth:`validate` 得到基础 validation_report。
+          2. 若 ``calibration_enabled`` 且提供了 ``expected_dynamics`` +
+             ``adjustable_params`` + ``simulate_fn``，则用
+             :func:`check_peak_in_window` 检查峰值是否在期望窗口内。
+          3. 不在窗口内时调用 :func:`calibrate_dynamics` 做网格搜索校准，
+             把 ``calibration_log`` / ``final_params`` / ``error_class`` 写入
+             validation_report。
+          4. 校准不稳定（``error_class == "SimulatorFailed"``）时回滚到初始
+             参数并在 report 中标记 ``calibration_status="rolled_back"``。
+
+        Args:
+            user_input / simulation_csv_path / sbml_model_id / sbml_text /
+            template_name / t_end / upstream_species / downstream_species:
+                透传给 :meth:`validate`。
+            expected_dynamics: 期望动力学窗口（peak_time_min / peak_amplitude_fold
+                / species / baseline_mode）。``None`` 时跳过校准。
+            adjustable_params: 可调参数 spec dict（{name: {value, range, log_scale}}）。
+                ``None`` 时跳过校准。
+            simulate_fn: 接收 params dict、返回新 simulation_csv_path 的回调。
+                ``None`` 时跳过校准。
+            calibration_enabled: 总开关；``False`` 时直接返回基础 report。
+
+        Returns:
+            validation_report dict，附加字段：
+              - ``calibration_log``: list[dict]，每次迭代记录（含 params /
+                peak_time / peak_amplitude / in_window）。
+              - ``calibration_status``: ``"skipped"`` / ``"in_window"`` /
+                ``"calibrated"`` / ``"failed"`` / ``"rolled_back"``。
+              - ``calibration_error_class``: ``None`` / ``"MaxIterationsExceeded"``
+                / ``"SimulatorFailed"``。
+              - ``calibrated_params``: 校准后参数 dict（rolled_back 时为初始参数）。
+        """
+        # 1. 基础验证
+        report = self.validate(
+            user_input=user_input,
+            simulation_csv_path=simulation_csv_path,
+            sbml_model_id=sbml_model_id,
+            sbml_text=sbml_text,
+            template_name=template_name,
+            t_end=t_end,
+            upstream_species=upstream_species,
+            downstream_species=downstream_species,
+        )
+
+        # 默认值：未触发校准时也写入结构化字段，便于下游统一读取
+        report.setdefault("calibration_log", [])
+        report.setdefault("calibration_status", "skipped")
+        report.setdefault("calibration_error_class", None)
+        report.setdefault("calibrated_params", {})
+
+        # 2. 校准前置条件检查
+        if not calibration_enabled:
+            return report
+        if not expected_dynamics or not adjustable_params or simulate_fn is None:
+            return report
+        if not simulation_csv_path or not Path(simulation_csv_path).exists():
+            return report
+
+        # 3. 检查峰值是否已在期望窗口内
+        try:
+            in_window, peak_metrics = check_peak_in_window(
+                simulation_csv_path, expected_dynamics
+            )
+        except Exception as exc:
+            logger.warning("check_peak_in_window 失败，跳过校准：%s", exc)
+            report["calibration_status"] = "skipped"
+            report["calibration_error_class"] = None
+            return report
+
+        if in_window:
+            report["calibration_status"] = "in_window"
+            report["calibration_log"] = [{
+                "iter": 0,
+                "params": {k: v.get("value") for k, v in adjustable_params.items()},
+                "peak_time": peak_metrics.get("peak_time"),
+                "peak_amplitude": peak_metrics.get("peak_amplitude"),
+                "in_window": True,
+                "unstable": False,
+            }]
+            report["calibrated_params"] = {
+                k: v.get("value") for k, v in adjustable_params.items()
+            }
+            return report
+
+        # 4. 调用确定性网格搜索校准器
+        try:
+            calib_result = calibrate_dynamics(
+                simulation_csv_path=simulation_csv_path,
+                expected_dynamics=expected_dynamics,
+                adjustable_params=adjustable_params,
+                simulate_fn=simulate_fn,
+            )
+        except Exception as exc:
+            logger.exception("DynamicsCalibrator 异常：%s", exc)
+            report["calibration_status"] = "failed"
+            report["calibration_error_class"] = "SimulatorFailed"
+            report["calibrated_params"] = {
+                k: v.get("value") for k, v in adjustable_params.items()
+            }
+            return report
+
+        # 5. 合并校准结果到 validation_report
+        report["calibration_log"] = calib_result.get("calibration_log", [])
+        report["calibrated_params"] = calib_result.get("final_params", {})
+        report["calibration_iterations"] = calib_result.get("iterations", 0)
+        report["calibration_error_class"] = calib_result.get("error_class")
+
+        if calib_result.get("error_class") == "SimulatorFailed":
+            # C3 兜底：仿真不稳定，已由 calibrator 回滚到初始参数
+            report["calibration_status"] = "rolled_back"
+            # 同步标记整体验证状态，便于上游路由层识别 SimulatorFailed
+            report["status"] = "SimulatorFailed"
+            report["pass"] = False
+        elif calib_result.get("calibrated"):
+            report["calibration_status"] = "calibrated"
+        else:
+            report["calibration_status"] = "failed"
+
+        # 把校准后峰值指标同步到 report 顶层，便于上游 C3-C5 评估
+        final_metrics = calib_result.get("final_metrics") or {}
+        if final_metrics.get("peak_time") is not None:
+            report["calibrated_peak_time"] = final_metrics.get("peak_time")
+        if final_metrics.get("peak_amplitude") is not None:
+            report["calibrated_peak_amplitude"] = final_metrics.get("peak_amplitude")
+        report["calibrated_in_window"] = bool(final_metrics.get("in_window", False))
+
+        return report
+
     def _skipped_report(self, reason: str, role: str) -> dict[str, Any]:
         """跳过验证的占位报告。"""
         return {
@@ -589,7 +870,8 @@ class SBMLValidator:
             "role": role,
             "sbml_model_id": "",
             "structural_confidence_score": 0.0,  # 跳过验证无置信度
-            "pass": True,  # 跳过验证视为通过（不阻塞流水线）
+            "status": "blocked",
+            "pass": False,
             "details": {"reason": reason},
         }
 

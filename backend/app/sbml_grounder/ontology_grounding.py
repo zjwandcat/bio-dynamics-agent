@@ -108,6 +108,16 @@ _LOCAL_ONTOLOGY: dict[str, dict[str, str]] = {
     "GEFITINIB": {"chebi_id": "CHEBI:49668", "species_type": "drug"},
     "ERLOTINIB": {"chebi_id": "CHEBI:114331", "species_type": "drug"},
     "RAPAMYCIN": {"chebi_id": "CHEBI:9168", "species_type": "drug"},
+    # [RC27] 常见通路别名（非 HGNC 官方名但在 ODE 模型中常用）
+    "RAS": {"hgnc_id": "HGNC:5173", "uniprot_id": "P01112", "species_type": "protein"},
+    "RAF": {"hgnc_id": "HGNC:9829", "uniprot_id": "P04049", "species_type": "protein"},
+    "MEK": {"hgnc_id": "HGNC:6840", "uniprot_id": "Q02750", "species_type": "protein"},
+    "ERK": {"hgnc_id": "HGNC:6871", "uniprot_id": "P28482", "species_type": "protein"},
+    "DUSP": {"hgnc_id": "HGNC:3068", "uniprot_id": "Q13115", "species_type": "protein"},
+    "SOS": {"hgnc_id": "HGNC:11187", "uniprot_id": "Q07889", "species_type": "protein"},
+    "SHC": {"hgnc_id": "HGNC:10840", "uniprot_id": "P29353", "species_type": "protein"},
+    "GRB": {"hgnc_id": "HGNC:4566", "uniprot_id": "P62993", "species_type": "protein"},
+    "RASGAP": {"hgnc_id": "HGNC:9871", "uniprot_id": "P20936", "species_type": "protein"},
 }
 
 

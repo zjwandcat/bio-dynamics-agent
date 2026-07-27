@@ -1,0 +1,42 @@
+# Sprint 4 — Experiment Rule Engine
+# 100% Rule 驱动，Mechanism-aware，无 LLM
+pathway: APOPTOSIS
+name: "Extrinsic & intrinsic apoptosis signaling pathway"
+
+# 实验链（Mechanism-aware，非 Keyword）
+# canonical_timeline 参考 knowledge/canonical/apoptosis.yaml：
+#   Cytochrome c release 30-60 min；Caspase-9 activation 30-60 min；Caspase-3 activation 1-2h；PARP cleavage 1-2h
+experiments:
+  - name: "Western blot Cleaved Caspase-3"
+    technique: "Western blot"
+    target_node: "Cleaved Caspase-3"
+    mechanism_step: "Caspase-9 → Caspase-3 cleavage (activation)"
+    time_course: [0, 30, 60, 90, 120, 180, 240, 360]  # 分钟
+    cell_line: "Jurkat"
+    expected_result: "Cleaved Caspase-3 在 1-2 h 出现，标志凋亡执行阶段"
+    justification: "Cleaved Caspase-3 是 Caspase 级联的执行者，反映 MOMP 后不可逆凋亡激活"
+
+  - name: "Western blot Cleaved PARP"
+    technique: "Western blot"
+    target_node: "Cleaved PARP"
+    mechanism_step: "Caspase-3 → PARP cleavage"
+    time_course: [0, 30, 60, 90, 120, 180, 240, 360]  # 分钟
+    cell_line: "HeLa"
+    expected_result: "Cleaved PARP 在 1-2 h 出现，晚于 Caspase-3 激活"
+    justification: "PARP 是 Caspase-3 的经典底物，PARP cleavage 是凋亡执行的下游标志物"
+
+  - name: "Western blot Cleaved Caspase-9"
+    technique: "Western blot"
+    target_node: "Cleaved Caspase-9"
+    mechanism_step: "Cytochrome c → Apaf-1 → Caspase-9 activation (apoptosome)"
+    time_course: [0, 30, 60, 90, 120, 180, 240, 360]  # 分钟
+    cell_line: "Jurkat"
+    expected_result: "Cleaved Caspase-9 在 30-60 min 出现，早于 Caspase-3"
+    justification: "Caspase-9 是内源性凋亡通路的 initiator caspase，验证 apoptosome 上游时序"
+
+# 禁止的实验（Mechanism-aware 禁止）
+forbidden:
+  - name: "Caspase-3 qPCR"
+    technique: "qPCR"
+    target_node: "Caspase-3"
+    reason: "Caspase-3 激活依赖蛋白水解切割（cleavage）而非转录上调，需用 Western blot 检测 Cleaved Caspase-3；qPCR 仅测 CASP3 mRNA，不能反映蛋白切割或酶活激活状态"

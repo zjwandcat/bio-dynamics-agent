@@ -1,0 +1,8 @@
+{
+  "status": "SKIPPED",
+  "reason": "no actual.json found",
+  "rules_checked": 0,
+  "rules_passed": 0,
+  "rules_failed": 0,
+  "failures": []
+}

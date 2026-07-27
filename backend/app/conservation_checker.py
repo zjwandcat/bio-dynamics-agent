@@ -15,10 +15,12 @@ TASK 5 修复：检测 ODE 仿真结果中蛋白池的质量守恒违规。
 from __future__ import annotations
 
 import csv
+import io
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.csv_io import decode_csv_text
 from app.species_ontology import build_conservation_groups
 
 logger = logging.getLogger(__name__)
@@ -63,11 +65,13 @@ def check_conservation_from_csv(
     if not csv_file.exists():
         return ConservationReport(passed=False, summary=f"CSV 不存在：{csv_path}")
 
-    # 读取 CSV
-    with csv_file.open("r", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        header = next(reader)
-        rows = list(reader)
+    # 读取 CSV（多编码兼容，委托 app.csv_io 统一解码边界）
+    decoded, _encoding = decode_csv_text(csv_file)
+    if not decoded:
+        return ConservationReport(passed=False, summary="CSV 为空或不可读")
+    reader = csv.reader(io.StringIO(decoded, newline=""))
+    header = next(reader, None)
+    rows = list(reader)
 
     if not header or not rows:
         return ConservationReport(passed=False, summary="CSV 为空")

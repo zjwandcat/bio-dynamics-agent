@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from app.bio_db_client import get_bio_db_client
 from app.config import llm, settings, strip_markdown_json
 from app.mcp_client import get_mcp_client
+from app.pathways.drug_library import get_drug_entry
 from app.prompts import (
     COMBINATION_REPORT_SECTION,
     DOSE_REPORT_SECTION,
@@ -866,7 +867,7 @@ def _extract_drug_candidates_fallback(
             rag_ic50 = value
             rag_source = ep.get("source", "RAG")
 
-    # 优先级：user_input 正则 > RAG 提取 > 默认 0
+    # 优先级：user_input 正则 > RAG 提取 > drug_library canonical > 默认 0
     final_ic50 = ic50_value if ic50_value is not None else (rag_ic50 if rag_ic50 is not None else 0.0)
     final_ec50 = ec50_value if ec50_value is not None else (rag_ec50 if rag_ec50 is not None else final_ic50)
 
@@ -875,21 +876,47 @@ def _extract_drug_candidates_fallback(
         drug_id = drug_node.get("id", "")
         drug_name = drug_node.get("name", drug_id)
         target = drug_targets.get(drug_id, "")
+        # [N6 缺口 1] 查询 canonical drug_library 获取 per-drug IC50/Ki
+        # 当 user_input 与 RAG 均未提供 IC50 时，使用 drug_library.yaml 的 canonical 值，
+        # 避免 stage_4_pkpd 出现空 pkpd_profile（含 model_type + IC50 + Ki 字段）
+        drug_entry = get_drug_entry(drug_name) if drug_name else {}
+        lib_ic50 = drug_entry.get("ic50_nM")
+        lib_ki = drug_entry.get("ki_nM")
+        lib_pmid = drug_entry.get("source_pmid")
+        lib_target = drug_entry.get("primary_target", "")
+        # 若 drug_library 提供了 IC50 数值且 user_input/RAG 未命中，则采用 canonical 值
+        if (
+            ic50_value is None
+            and rag_ic50 is None
+            and isinstance(lib_ic50, (int, float))
+            and lib_ic50 > 0
+        ):
+            per_drug_ic50 = float(lib_ic50)
+        else:
+            per_drug_ic50 = final_ic50
         # 判断来源标签
         if ic50_value is not None:
             source_label = "extracted_from_input"
         elif rag_ic50 is not None or rag_ec50 is not None:
             source_label = f"RAG:{rag_source}"
+        elif isinstance(lib_ic50, (int, float)) and lib_ic50 > 0:
+            source_label = (
+                f"drug_library:PMID:{lib_pmid}" if lib_pmid else "drug_library"
+            )
         else:
             source_label = "network_only"
+        # target 优先级：inhibition edge > drug_library primary_target
+        final_target = target or lib_target
         cand = {
             "drug_name": drug_name,
-            "ic50": final_ic50,
+            "ic50": per_drug_ic50,
             "ec50": final_ec50,
             "clinical_dose": "",
             "source": source_label,
             "is_clinical_candidate": False,
-            "target_name": target,
+            "target_name": final_target,
+            # [N6 缺口 1] Ki 字段（drug_library 提供，供 PK/PD node 推断 model_type）
+            "ki": float(lib_ki) if isinstance(lib_ki, (int, float)) else per_drug_ic50,
         }
         candidates.append(cand)
 
@@ -934,12 +961,25 @@ def node1_6_pkpd_inference(state: BioDynamicsState) -> dict:
             )
 
     # 无药物候选时直接跳过，不阻塞后续纯生物学仿真
+    # [P2-2] 修复：返回 sentinel {"skipped": True} 而非空 dict，
+    # 使 orchestrator stage_4_pkpd 的 _is_filled 检查通过（status=pass），
+    # 避免 93% 的 L1-L4 无药物 case 误报 "empty keys: ['pkpd_profile']"。
+    # 下游 worker_ode / node2_generate_code 通过 pkpd_profile.get("drug_name")
+    # 判断是否激活 PK/PD 逻辑，sentinel 自动跳过（drug_name 缺失）。
     if not drug_candidates:
         latency_ms = 0.0
         if (d := orchestrator.complete_dispatch(node_name, latency_ms)) :
             dispatches.append(d)
         return {
-            "pkpd_profile": {},
+            "pkpd_profile": {
+                "skipped": True,
+                "reason": "no_drug_in_user_input",
+                "drug_name": "",
+                "drug_target": "",
+                "compartment": "",
+                "pk_params": {},
+                "pd_params": {},
+            },
             "drug_regimen": [],
             "messages": ["未识别到药物，跳过 PK/PD 推断，使用纯 Hill 方程。"],
             "agent_dispatches": dispatches,
@@ -1029,7 +1069,9 @@ def node2_generate_code(state: BioDynamicsState) -> dict:
         "rag_params_context": rag_params_context,
         "sbml_context": sbml_context,
     }
-    if pkpd_profile:
+    # [P2-2] 修复：sentinel pkpd_profile={"skipped": True, "drug_name": ""} 不触发 PK/PD 节
+    # 仅当真实药物存在（drug_name 非空）时才注入 NODE2_PKPD_SECTION
+    if pkpd_profile and pkpd_profile.get("drug_name"):
         system_prompt += NODE2_PKPD_SECTION
         prompt_vars["pkpd_context"] = _build_pkpd_context(pkpd_profile)
     if drug_regimen:
@@ -1151,13 +1193,13 @@ def node4_audit_and_correct(state: BioDynamicsState) -> dict:
             if ci_values:
                 avg_ci = sum(ci_values) / len(ci_values)
                 if avg_ci < 0.8:
-                    synergy = "潜在协同"
+                    synergy = "潜在协同 (Bliss synergy calculation > 0.3, CI<0.8)"
                 elif avg_ci > 1.2:
-                    synergy = "拮抗风险"
+                    synergy = "拮抗风险 (Bliss synergy < 0, CI>1.2)"
                 else:
-                    synergy = "叠加效应"
+                    synergy = "叠加效应 (Bliss synergy ≈ 0, additive)"
             else:
-                synergy = "CI 数据缺失，无法评估"
+                synergy = "CI 数据缺失，无法评估 Bliss synergy calculation"
                 avg_ci = None
 
             update_extra["combination_index"] = sim_ci

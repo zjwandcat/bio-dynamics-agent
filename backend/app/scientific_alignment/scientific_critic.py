@@ -57,6 +57,11 @@ from app.scientific_alignment.canonical_loader import (
 from app.scientific_alignment.consistency_checker import check_consistency
 from app.scientific_alignment.mechanism_checker import check_mechanism_alignment
 
+# === V4 Enhancement: 延迟导入 detect_inconsistencies（避免循环依赖与启动开销）===
+# 仅在 V4_SCIENTIFIC_REVIEWER_ENABLED=true 时实际调用，否则不引入。
+# detect_inconsistencies 是 Task 8 实现的纯规则化检测函数（无 LLM）。
+_detect_inconsistencies_lazy = None  # type: Any
+
 logger = logging.getLogger(__name__)
 
 
@@ -144,6 +149,11 @@ class CriticReport:
         summary: 人类可读总结。
         skipped: 是否跳过（Feature Flag 关闭时 True）。
         skip_reason: 跳过原因。
+        inconsistency_report: V4 Enhancement 字段（默认 None，不破坏现有调用方）。
+            V4_SCIENTIFIC_REVIEWER_ENABLED=true 时，由 detect_inconsistencies()
+            生成的 8 项规则化检测结果 dict（含 question_coverage_gaps /
+            missing_mechanism_nodes / failed_curve_metrics 等字段）。
+            Flag=false 时保持 None，不影响 v3/v4 行为。
     """
 
     pathway: str
@@ -157,6 +167,8 @@ class CriticReport:
     summary: str = ""
     skipped: bool = False
     skip_reason: str = ""
+    # === V4 Enhancement: Feature Flag 分支附加字段（默认 None，向后兼容）===
+    inconsistency_report: dict[str, Any] | None = None
 
 
 # =============================================================================
@@ -804,6 +816,114 @@ def _build_summary(
 
 
 # =============================================================================
+# V4 Enhancement 辅助：detect_inconsistencies 调用包装
+# =============================================================================
+def _run_detect_inconsistencies(
+    *,
+    pathway: str,
+    question: str,
+    report_text: str,
+    simulation_metrics: dict | None,
+    network_json: dict[str, Any] | None,
+    cited_pmids: list[str] | None,
+    biomodels_report: Any | None,
+    biomodels_result: dict[str, Any] | None,
+    experiments: list[dict] | None,
+    experiment_plan: dict[str, Any] | None,
+    validation_matrix_result: dict[str, Any] | None,
+    curve_metrics_result: dict[str, Any] | None,
+    evidence_graph_result: dict[str, Any] | None,
+    honesty_result: dict[str, Any] | None,
+    canonical: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """调用 Task 8 的 detect_inconsistencies()，返回结果 dict。
+
+    本函数仅在 V4_SCIENTIFIC_REVIEWER_ENABLED=true 时由 run_scientific_critic
+    调用。延迟导入 scientific_reviewer 模块，避免在 Flag=false 时引入额外依赖
+    与启动开销。
+
+    参数适配策略：
+      - simulation_result ← simulation_metrics（若为 None 用 {}）
+      - network_json ← network_json（若为 None 用 {}）
+      - retrieved_pmids ← cited_pmids（若为 None 用 []）
+      - biomodels_result ← biomodels_result 或 {}（不强制从 biomodels_report
+        对象提取，避免猜测 BioModelsOracleReport 内部字段结构）
+      - experiment_plan ← experiment_plan 或 {"experiments": experiments or []}
+        （调用方未显式提供 experiment_plan dict 时，用 experiments 列表构造）
+      - 其他 *_result dict ← 对应参数或 {}
+
+    Args:
+        pathway: 通路标识。
+        question: 用户原始问题文本。
+        report_text: Report 文本。
+        simulation_metrics: 仿真指标 dict（来自 run_scientific_critic 参数）。
+        network_json: 通路网络 dict。
+        cited_pmids: 报告引用的 PMID 列表。
+        biomodels_report: BioModelsOracleReport 实例（本函数不直接使用，
+            保留参数对称性，调用方若需传递请显式传 biomodels_result）。
+        biomodels_result: BioModels Oracle 结果 dict。
+        experiments: 实验列表（list[dict]）。
+        experiment_plan: 实验计划 dict（含 "experiments" 字段）。
+        validation_matrix_result: 12 轴 Validation Matrix 结果 dict。
+        curve_metrics_result: Curve Metrics 结果 dict。
+        evidence_graph_result: Evidence Graph 结果 dict。
+        honesty_result: Scientific Honesty 结果 dict。
+        canonical: Canonical Reference dict。
+
+    Returns:
+        detect_inconsistencies().to_dict() 结果，含 8 项检测字段 +
+        overall_status + pathway + timestamp。
+    """
+    # 延迟导入：仅在 Flag=true 时实际加载 scientific_reviewer 模块
+    global _detect_inconsistencies_lazy
+    if _detect_inconsistencies_lazy is None:
+        from app.scientific_alignment.scientific_reviewer import (
+            detect_inconsistencies as _detect_inconsistencies_impl,
+        )
+        _detect_inconsistencies_lazy = _detect_inconsistencies_impl
+    detect_inconsistencies_fn = _detect_inconsistencies_lazy
+
+    # 参数适配：将 run_scientific_critic 的输入转换为 detect_inconsistencies
+    # 所需的 dict / list 形式（None → 安全空值，避免 TypeError）
+    sim_result_dict: dict[str, Any] = dict(simulation_metrics) if simulation_metrics else {}
+    network_dict: dict[str, Any] = dict(network_json) if network_json else {}
+    pmids_list: list[str] = list(cited_pmids) if cited_pmids else []
+    biomodels_dict: dict[str, Any] = (
+        dict(biomodels_result) if biomodels_result else {}
+    )
+
+    # experiment_plan：调用方未提供 dict 时，用 experiments 列表构造
+    if experiment_plan is not None:
+        exp_plan_dict: dict[str, Any] = dict(experiment_plan)
+    else:
+        exp_plan_dict = {"experiments": list(experiments) if experiments else []}
+
+    vm_dict: dict[str, Any] = (
+        dict(validation_matrix_result) if validation_matrix_result else {}
+    )
+    cm_dict: dict[str, Any] = dict(curve_metrics_result) if curve_metrics_result else {}
+    eg_dict: dict[str, Any] = dict(evidence_graph_result) if evidence_graph_result else {}
+    ho_dict: dict[str, Any] = dict(honesty_result) if honesty_result else {}
+
+    inconsistency = detect_inconsistencies_fn(
+        question=question or "",
+        report_text=report_text or "",
+        simulation_result=sim_result_dict,
+        network_json=network_dict,
+        retrieved_pmids=pmids_list,
+        biomodels_result=biomodels_dict,
+        experiment_plan=exp_plan_dict,
+        validation_matrix_result=vm_dict,
+        curve_metrics_result=cm_dict,
+        evidence_graph_result=eg_dict,
+        honesty_result=ho_dict,
+        pathway=pathway,
+        canonical=canonical,
+    )
+    return inconsistency.to_dict()
+
+
+# =============================================================================
 # 主函数
 # =============================================================================
 def run_scientific_critic(
@@ -815,6 +935,18 @@ def run_scientific_critic(
     evidence_docs: list[Any] | None = None,
     experiments: list[dict] | None = None,
     retry_count: int = 0,
+    *,
+    # === V4 Enhancement: detect_inconsistencies 所需附加输入（仅 Flag=true 时使用）===
+    question: str = "",
+    report_text: str = "",
+    network_json: dict[str, Any] | None = None,
+    biomodels_result: dict[str, Any] | None = None,
+    experiment_plan: dict[str, Any] | None = None,
+    validation_matrix_result: dict[str, Any] | None = None,
+    curve_metrics_result: dict[str, Any] | None = None,
+    evidence_graph_result: dict[str, Any] | None = None,
+    honesty_result: dict[str, Any] | None = None,
+    canonical: dict[str, Any] | None = None,
 ) -> CriticReport:
     """运行 Scientific Critic 独立审查。
 
@@ -856,9 +988,29 @@ def run_scientific_critic(
         evidence_docs: Evidence 文档列表（EvidenceDoc 或 dict），可为空。
         experiments: 实验列表（list[dict]），每项可含 ``"mechanism_node"`` 键。
         retry_count: 当前重试次数（0=首次审查，>=max_retries 标记 unresolved）。
+        question: V4 Enhancement 专用——用户原始问题文本（用于
+            detect_inconsistencies 的 Question Coverage 检测）。
+            默认 ""，仅在 V4_SCIENTIFIC_REVIEWER_ENABLED=true 时使用。
+        report_text: V4 Enhancement 专用——最终 Report 文本（用于
+            detect_inconsistencies 的 Question Coverage 与 Honesty Fallback）。
+        network_json: V4 Enhancement 专用——通路网络 dict（含 "nodes" 字段），
+            用于 detect_inconsistencies 的 Mechanism 对照。
+        biomodels_result: V4 Enhancement 专用——BioModels Oracle 结果 dict。
+            若为 None，detect_inconsistencies 内部按空 dict 处理。
+        experiment_plan: V4 Enhancement 专用——实验计划 dict（含 "experiments"
+            字段）；若已提供 ``experiments`` 列表，调用方可不传本参数。
+        validation_matrix_result: V4 Enhancement 专用——12 轴 Validation Matrix
+            结果 dict（来自 Task 5 run_validation_matrix）。
+        curve_metrics_result: V4 Enhancement 专用——Curve Metrics 结果 dict。
+        evidence_graph_result: V4 Enhancement 专用——Evidence Graph 结果 dict。
+        honesty_result: V4 Enhancement 专用——Scientific Honesty 结果 dict。
+        canonical: V4 Enhancement 专用——Canonical Reference dict，用于
+            detect_inconsistencies 提取 canonical_pmids / forbidden_experiments。
 
     Returns:
         CriticReport。Feature Flag 关闭时返回 ``skipped=True`` 的空报告。
+        V4_SCIENTIFIC_REVIEWER_ENABLED=true 时，``inconsistency_report`` 字段
+        填充为 detect_inconsistencies() 结果 dict；Flag=false 时保持 None。
     """
     # -------------------------------------------------------------------------
     # Feature Flag 守护：默认 OFF，关闭时返回 skipped 不阻塞
@@ -1031,7 +1183,7 @@ def run_scientific_critic(
         retry_required, confidence_adjustment, unresolved,
     )
 
-    return CriticReport(
+    report = CriticReport(
         pathway=pathway,
         findings=findings,
         overall_status=overall_status,
@@ -1044,6 +1196,39 @@ def run_scientific_critic(
         skipped=False,
         skip_reason="",
     )
+
+    # === V4 Enhancement: Feature Flag 分支（默认 OFF，不影响 v3/v4）===
+    # V4_SCIENTIFIC_REVIEWER_ENABLED=true 时调用 Task 8 的 detect_inconsistencies()
+    # 将 8 项规则化检测结果附加到 CriticReport.inconsistency_report。
+    # 失败时记录 warning 并保持 inconsistency_report=None，不影响主流程。
+    # 铁律：Flag=false 时本分支整体跳过，CriticReport 行为与 v3/v4 完全一致。
+    if settings.V4_SCIENTIFIC_REVIEWER_ENABLED:
+        try:
+            inconsistency_report = _run_detect_inconsistencies(
+                pathway=pathway,
+                question=question,
+                report_text=report_text,
+                simulation_metrics=simulation_metrics,
+                network_json=network_json,
+                cited_pmids=cited_pmids,
+                biomodels_report=biomodels_report,
+                biomodels_result=biomodels_result,
+                experiments=experiments,
+                experiment_plan=experiment_plan,
+                validation_matrix_result=validation_matrix_result,
+                curve_metrics_result=curve_metrics_result,
+                evidence_graph_result=evidence_graph_result,
+                honesty_result=honesty_result,
+                canonical=canonical,
+            )
+            report.inconsistency_report = inconsistency_report
+        except Exception as exc:  # noqa: BLE001 —— Enhancement 失败不阻塞主流程
+            logger.warning(
+                "detect_inconsistencies 调用失败，跳过 inconsistency_report: %s",
+                exc,
+            )
+
+    return report
 
 
 __all__ = [

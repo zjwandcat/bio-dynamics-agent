@@ -60,6 +60,10 @@ class BioDynamicsState(TypedDict, total=False):
     sbml_model_text: str
     # P0-3 修复：SBML 模型 ID（用于 BioModels API 加载与模板选择 grounding）
     sbml_model_id: str
+    sbml_models: list[dict]
+    benchmark_biomodels_ids: list[str]
+    benchmark_run: bool
+    track_a_semantics: str
     sbml_parsed_network: dict
     rag_retrieved_params: list[dict]
     rag_selected_params: dict[str, dict]
@@ -131,6 +135,7 @@ class BioDynamicsState(TypedDict, total=False):
     clarification_request: dict | None  # 供 SSE 发射的 clarification 事件数据
     clarification_resolved: bool        # 人工干预是否已被消费并继续执行
     stop_requested: bool                # 用户是否点击停止生成
+    llm_auto_decisions: list[dict]      # [P0-4] LLM 超时自动决策记录（用于报告标注失真风险）
     raw_cache: dict                     # 超大原始数据的缓存（不传入 LLM prompt）
     next_worker: str                    # Supervisor 决定的下一个 Worker
 
@@ -150,6 +155,7 @@ class BioDynamicsState(TypedDict, total=False):
     # 缺失策略：当 confidence < 0.3 时必须标记 missing_parameter=True 并触发在线回退，
     # 禁止 LLM 估算默认值；is_fallback=True 表示已使用估算兜底（仅 Template-only 模式允许）。
     parameters: dict                    # {edge_key: {param_name, value, unit, source, confidence, origin, is_fallback, missing_parameter}}
+    sbml_parameter_grounding: dict      # canonical SBML extraction/mapping audit summary
 
     # N6 — ODE 生成（Template + Rule）
     ode_model: dict                     # {template, code, parameters_used, rule_violations, template_selection, reaction_graph, domain_check_summary, time_unit}
@@ -164,6 +170,10 @@ class BioDynamicsState(TypedDict, total=False):
     simulation_csv_path: str            # 沙箱代码生成的 simulation.csv 绝对路径
     error_class: str                    # "none" | "syntax_error" | "runtime_error" | "numerical_error" | "timeout"
     sandbox_failure_reason: str         # 重试耗尽时的失败原因描述，供报告模板使用
+    # [Sandbox Fix] 持久化工作目录参数化（避免 TEMP 路径被 Windows 安全策略拦截）
+    sandbox_case_id: str                # 用例标识，用于参数化产物持久化子目录
+    sandbox_artifacts_dir: str          # 持久化 artifacts 根目录（非 TEMP），如 log_dir/sandbox_artifacts
+    artifact_manifest: dict             # 沙箱产物清单（csv_path / sha256 / columns / row_count 等）
 
     # P0-4 升级：SBML Validator 节点输出（对应修复提示词1.md §二.6）
     # SBML 三角色定位 + 验证报告，量化模板仿真 vs SBML 真实仿真的差异

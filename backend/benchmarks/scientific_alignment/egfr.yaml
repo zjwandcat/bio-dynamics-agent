@@ -1,46 +1,231 @@
-# BioDynamics Scientific Alignment Gold Standard — EGFR/RTK 通路
+# BioDynamics Scientific Alignment Benchmark — EGFR/RTK 通路
+# Task 13: 对齐 Task 12 Canonical Answer，补全 acceptance_criteria / expected_curve_metrics / forbidden_patterns
 # 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
-# 参考：Schoeberl 2002 (PMID:12451180) / Levchenko 2000 / Marshall 1995 (PMID:7657691)
-# TODO: verify PMID — Levchenko 2000、Brightman 2018、Kolch 2000 Nature Reviews MCB
-#       （未确认的 PMID 在 required_reviews 中以 PMID:xxxxxxxx 标注）
-pathway: EGFR_RTK
-name: "EGFR Receptor Tyrosine Kinase Signaling"
-expected_dynamics:
-  pEGFR: "peak <=5 min after EGF stimulation"
-  ERK: "peak 10-20 min, transient"
-  ERK_decline: true
-  DUSP_feedback: "required, negative feedback on ERK"
-  EGFR_surface: "decay, half-life 10-15 min (internalization)"
-required_mechanisms:
+# 参考 Canonical: knowledge/canonical/egfr.yaml
+# Canonical Literature: Schoeberl 2002/2006 / Kholodenko 2000 FEBS Lett / Murphy & Blenis 2006 / Yarden & Sliwkowski 2001
+benchmark_id: egfr_adaptive_response
+pathway: egfr
+category: positive
+question: >
+  EGF 刺激诱导 EGFR 快速磷酸化；ERK 在 10-20 min 达峰后逐渐下降（尽管 EGF 持续存在）；
+  请解释该 adaptive response 的分子机制，并仿真 120 min 动力学曲线。
+
+expected_answer: >
+  EGF 结合 EGFR → 受体自磷酸化 → 招募 Grb2-SOS → 激活 Ras-GTP → Raf → MEK → ERK 磷酸化（10-20 min 达峰）→
+  ERK 核转位 → 转录 DUSP → DUSP 蛋白积累（60-120 min）→ 去磷酸化 ERK → ERK 下降。
+  至少需要一个适应性机制：DUSP 负反馈 / Sprouty 抑制 / 受体内吞 / Ras GAP / Cbl 介导受体降解。
+  pEGFR 在 2-5 min 达峰；Ras-GTP 5-10 min；pMEK 8-15 min；pERK 10-20 min；
+  DUSP mRNA 30-60 min；DUSP 蛋白 60-120 min。ERK 必须下降（不能持续升高）。
+
+# 从 knowledge/canonical/egfr.yaml.canonical_mechanism.required_nodes 复制
+canonical_mechanism_nodes:
+  - EGF
+  - EGFR
+  - SHC
+  - GRB2
+  - SOS
+  - RAS
+  - RAF
+  - MEK
+  - ERK
+  - DUSP
   - EGF_EGFR_binding
+  - EGFR_autophosphorylation
+  - Grb2_recruitment
+  - SOS_activation
   - Ras_activation
-  - Raf_MEK_ERK_cascade
-  - Nuclear_ERK
-  - DUSP_negative_feedback
-required_biomodels:
-  - BIOMD0000000010   # Schoeberl 2002 EGFR-MAPK model
-  - BIOMD0000000205
-required_reviews:
-  - PMID:12451180     # Schoeberl 2002 J Biol Chem (confirmed)
-  - PMID:16246870     # Orton 2005 Oncogene (MAPK signaling dynamics)
-  - PMID:7657691      # Marshall 1995 Cell (Ras/MAPK) (confirmed)
-  - PMID:xxxxxxxx     # TODO: verify Brightman 2018 PMID
-  - PMID:xxxxxxxx     # TODO: verify Kolch 2000 Nature Reviews MCB PMID
-required_experiments:
-  - pEGFR Western blot
-  - ppERK Western blot
-  - DUSP1 qPCR
-  - MEK inhibitor validation (U0126)
-  - EGFR inhibitor (Gefitinib) dose response
-  - Time course 0-120 min
+  - Raf_activation
+  - MEK_activation
+  - ERK_activation
+  - ERK_nuclear_translocation
+  - DUSP_transcription
+  - DUSP_protein_accumulation
+  - ERK_dephosphorylation_by_DUSP
+  - ERK_decline
+
+# 从 knowledge/canonical/egfr.yaml.canonical_reviews 复制
+canonical_reviews:
+  - "PMID:7657691"          # Marshall 1995 Cell（Ras/MAPK 信号特异性）
+  - "PMID:11743495"         # Yarden 2001 Nature Reviews MCB（ErbB 信号网络）
+  - "PMID:12451180"         # Schoeberl 2002 Nature Biotechnology（EGFR-MAPK 动力学建模）
+  - "PMID:10712587"         # Kholodenko 2000 Eur J Biochem（MAPK 级联负反馈振荡）
+  - "Murphy & Blenis 2006 TIBS — MAPK signal specificity"
+  - "Schoeberl 2006 Mol Syst Biol — EGFR-MAPK computational model"
+
+# 从 knowledge/canonical/egfr.yaml.canonical_models 复制
+canonical_models:
+  - "BIOMD0000000010"       # Kholodenko2000 MAPK cascade
+
+# 期望动力学（基于权威文献汇总）
+expected_dynamics:
+  - molecule: pEGFR
+    peak_time: [2, 5]
+    behavior: "rapid increase then decline"
+  - molecule: Ras_GTP
+    peak_time: [5, 10]
+    behavior: "transient activation"
+  - molecule: pMEK
+    peak_time: [8, 15]
+    behavior: "transient activation"
+  - molecule: pERK
+    peak_time: [10, 20]
+    behavior: "transient peak then decline (adaptive)"
+    must_decline: true
+  - molecule: DUSP_mRNA
+    peak_time: [30, 60]
+    behavior: "increasing"
+  - molecule: DUSP_protein
+    peak_time: [60, 120]
+    behavior: "持续增加"
+
+# 8 项 Curve Metrics 期望值
+expected_curve_metrics:
+  - molecule: pEGFR
+    peak_time_min: [2, 5]
+    peak_amplitude: [0.7, 1.0]
+    rise_time_min: [1, 3]
+    half_decay_min: [5, 15]
+    adaptation_ratio: [0.1, 0.4]
+    steady_state: [0.05, 0.3]
+    oscillation: false
+    auc: [10, 30]
+  - molecule: Ras_GTP
+    peak_time_min: [5, 10]
+    peak_amplitude: [0.6, 1.0]
+    rise_time_min: [2, 5]
+    half_decay_min: [10, 25]
+    adaptation_ratio: [0.2, 0.5]
+    steady_state: [0.1, 0.4]
+    oscillation: false
+    auc: [15, 40]
+  - molecule: pMEK
+    peak_time_min: [8, 15]
+    peak_amplitude: [0.7, 1.0]
+    rise_time_min: [3, 8]
+    half_decay_min: [15, 40]
+    adaptation_ratio: [0.2, 0.5]
+    steady_state: [0.1, 0.4]
+    oscillation: false
+    auc: [20, 60]
+  - molecule: pERK
+    peak_time_min: [10, 20]
+    peak_amplitude: [0.8, 1.0]
+    rise_time_min: [4, 10]
+    half_decay_min: [20, 60]
+    adaptation_ratio: [0.1, 0.5]   # 必须 < 1.0，证明下降
+    steady_state: [0.1, 0.5]
+    oscillation: false
+    auc: [25, 80]
+  - molecule: DUSP_mRNA
+    peak_time_min: [30, 60]
+    peak_amplitude: [0.5, 1.0]
+    rise_time_min: [10, 30]
+    half_decay_min: null            # 持续增加，无衰减
+    adaptation_ratio: null
+    steady_state: [0.5, 1.0]
+    oscillation: false
+    auc: [30, 100]
+  - molecule: DUSP_protein
+    peak_time_min: [60, 120]
+    peak_amplitude: [0.6, 1.0]
+    rise_time_min: [30, 60]
+    half_decay_min: null            # 持续增加
+    adaptation_ratio: null
+    steady_state: [0.7, 1.0]
+    oscillation: false
+    auc: [50, 150]
+
+# 从 knowledge/canonical/egfr.yaml.expected_experiments 复制
+expected_experiments:
+  - name: "pEGFR Western blot"
+    technique: "Western blot"
+    timepoints: [0, 2, 5, 10, 20, 30]
+    target: "pEGFR"
+  - name: "pERK Western blot"
+    technique: "Western blot"
+    timepoints: [0, 5, 10, 15, 20, 30, 45, 60, 120]
+    target: "pERK"
+  - name: "DUSP1 qPCR"
+    technique: "qPCR"
+    timepoints: [15, 30, 60, 120]
+    target: "DUSP1"
+  - name: "DUSP protein Western blot"
+    technique: "Western blot"
+    timepoints: [0, 30, 60, 120]
+    target: "DUSP"
+  - name: "EGFR internalization IF/FACS"
+    technique: "IF"
+    timepoints: [0, 10, 20, 30]
+    target: "EGFR_surface"
+    optional: true
+
+# 从 knowledge/canonical/egfr.yaml.forbidden_experiments 复制
+forbidden_experiments:
+  - "EGFR qPCR"
+  - "EGF ELISA"
+
+# 禁止出现的模式（regex + reason）
 forbidden_patterns:
-  - "EGFR qPCR as primary validation"
-  - "No PubMed evidence"
-  - "No BioModels comparison"
-key_time_scales:
-  pEGFR_peak: "<=5 min"
-  ERK_peak: "10-20 min"
-  EGFR_internalization: "10-15 min half-life"
-key_feedbacks:
-  - "DUSP1 negative feedback on ERK"
-  - "SOS feedback via ERK phosphorylation"
+  - pattern: "ERK.*monotonically.*increase"
+    reason: "违反 EGFR-MAPK adaptive response 基本原理，ERK 必须下降"
+  - pattern: "pERK.*steady.*state.*high"
+    reason: "ERK 应下降至低于峰值的稳态，不能持续高位"
+  - pattern: "EGFR qPCR"
+    reason: "EGFR qPCR 不能验证磷酸化动力学，需用 Western blot"
+  - pattern: "EGF ELISA"
+    reason: "EGF ELISA 不能验证 EGFR 通路动力学"
+  - pattern: "no.*DUSP.*feedback"
+    reason: "DUSP 负反馈是 ERK adaptive decline 的核心机制，必须提及"
+  - pattern: "no.*PubMed"
+    reason: "必须引用 PubMed 权威文献"
+  - pattern: "no.*BioModels"
+    reason: "必须引用 BioModels 模型比较"
+
+# 验收标准（对齐 spec acceptance_criteria）
+acceptance_criteria:
+  mechanism_nodes_required: true
+  mechanism_node_min_coverage: 0.8        # 至少 80% canonical 节点被覆盖
+  pubmed_min_count: 3
+  biomodels_min_count: 1
+  experiment_min_count: 2
+  hallucination_tolerance: 0
+  curve_metric_pass_min: 6                # 8 项中至少 6 项 PASS
+  forbidden_experiment_blocked: true
+  forbidden_pattern_absent: true
+  must_cite_adaptive_mechanism: true       # 至少提到 1 个 adaptive 机制
+  erk_must_decline: true                   # ERK 必须下降
+
+# ============================================================================
+# Benchmark 03/04 抑制剂场景（对齐 spec，附属于 EGFR 通路）
+# ============================================================================
+inhibitor_scenarios:
+  trametinib:                              # Benchmark 03 — MEK 抑制剂
+    benchmark_id: egfr_trametinib_inhibition
+    question: "仿真 Trametinib（MEK 抑制剂）对 EGFR-MAPK 通路的影响"
+    expected_answer: "EGFR 正常 / Ras 正常 / MEK↓ / ERK↓ / DUSP↓"
+    expected_experiment: "pERK Western blot（不是 EGFR qPCR）"
+    assertions:
+      EGFR: "正常"
+      Ras: "正常"
+      MEK: "down"
+      ERK: "down"
+      DUSP: "down"
+  gefitinib:                               # Benchmark 04 — EGFR 抑制剂
+    benchmark_id: egfr_gefitinib_inhibition
+    question: "仿真 Gefitinib（EGFR 抑制剂）在 EGF 刺激下的治疗效应"
+    expected_answer: "EGFR↓ → Ras↓ → ERK↓ → AKT↓；Dose-response；IC50"
+    assertions:
+      EGFR: "down"
+      Ras: "down"
+      ERK: "down"
+      AKT: "down"
+      includes: ["Dose-response", "IC50"]
+
+# 参考 Canonical
+canonical_reference: "knowledge/canonical/egfr.yaml"
+known_negative_feedback:
+  - DUSP
+  - SPRY
+  - receptor_internalization
+  - Ras_GAP
+  - Cbl

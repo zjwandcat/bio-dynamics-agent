@@ -146,9 +146,13 @@ zstandard==0.25.0
 #                  install: pip install SALib
 #   lxml        -> Faster SBML XML parsing in sbml_parser_v2 (else xml.etree)
 #                  install: pip install lxml
+#   jitcdde     -> DDE solver for p53/NFκB/Wnt/TGFβ/JAK-STAT oscillatory pathways
+#                  (else DDE degrades to ODE, delay terms approximated as y(t))
+#                  install: pip install jitcdde
 # =============================================================================
 # roadrunner
 # lmfit
 # SALib
 # lxml
+jitcdde
 

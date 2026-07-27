@@ -25,14 +25,31 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, List
+
+import yaml
 
 from app.config import settings
 from app.scientific_alignment.canonical_loader import load_canonical
 from app.scientific_alignment.mechanism_checker import normalize_node_name
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Sprint 4 — Experiment Rule Engine：YAML 规则目录
+# =============================================================================
+# 实验规则 YAML 根目录：backend/knowledge/experiments/
+# 与 canonical_loader.py 同样的路径解析模式（Path(__file__).resolve()）
+EXPERIMENTS_DIR: Path = (
+    Path(__file__).resolve().parent.parent.parent / "knowledge" / "experiments"
+)
+
+# pathway 白名单正则：仅允许 [a-zA-Z0-9_]，防止路径遍历
+_EXPERIMENT_PATHWAY_PATTERN: re.Pattern[str] = re.compile(r"^[a-zA-Z0-9_]+$")
 
 
 # =============================================================================
@@ -336,6 +353,7 @@ _PATHWAY_TO_CANONICAL: dict[str, str] = {
     "EGFR": "egfr",
     "EGFR_RTK": "egfr",
     "MAPK": "mapk",
+    "MAPK_CASCADE": "mapk",
     "PI3K-AKT-mTOR": "pi3k_akt_mtor",
     "PI3K_AKT_mTOR": "pi3k_akt_mtor",
     "PI3K_AKT_MTOR": "pi3k_akt_mtor",
@@ -344,6 +362,23 @@ _PATHWAY_TO_CANONICAL: dict[str, str] = {
     "P53_SIGNALING": "p53",
     "Apoptosis": "apoptosis",
     "APOPTOSIS": "apoptosis",
+    # Sprint 4 扩展：覆盖剩余 5 条通路
+    "JAK_STAT": "jak_stat",
+    "JAK-STAT": "jak_stat",
+    "JAKSTAT": "jak_stat",
+    "NFKB": "nf_kappa_b",
+    "NF-KB": "nf_kappa_b",
+    "NF_KB": "nf_kappa_b",
+    "NFKB_SIGNALING": "nf_kappa_b",
+    "TGF_BETA": "tgf_beta",
+    "TGF-BETA": "tgf_beta",
+    "TGFB": "tgf_beta",
+    "TGFβ": "tgf_beta",
+    "WNT": "wnt",
+    "WNT_SIGNALING": "wnt",
+    "CELL_CYCLE": "cell_cycle",
+    "CELLCYCLE": "cell_cycle",
+    "CELL-CYCLE": "cell_cycle",
 }
 
 
@@ -428,10 +463,111 @@ class ExperimentPlan:
 
 
 # =============================================================================
+# Sprint 4 — YAML 规则加载（Feature Flag 守护）
+# =============================================================================
+def _load_experiments_from_yaml(pathway_key: str) -> tuple[list[dict], list[dict]]:
+    """从 knowledge/experiments/{pathway_key}.yaml 加载实验链与禁止规则。
+
+    安全设计（与 canonical_loader.py 一致）：
+      1. pathway_key 白名单校验（仅 [a-zA-Z0-9_]）
+      2. Path.resolve() 后校验归属 EXPERIMENTS_DIR
+      3. yaml.safe_load
+
+    Args:
+        pathway_key: Canonical 文件 key（如 ``"egfr"`` / ``"pi3k_akt_mtor"``）。
+
+    Returns:
+        ``(experiments, forbidden)`` 元组。文件不存在或解析失败时返回
+        ``([], [])``，由调用方降级到硬编码模板。
+    """
+    if not pathway_key or not _EXPERIMENT_PATHWAY_PATTERN.match(pathway_key):
+        return [], []
+
+    yaml_path = (EXPERIMENTS_DIR / f"{pathway_key}.yaml").resolve()
+    try:
+        yaml_path.relative_to(EXPERIMENTS_DIR.resolve())
+    except ValueError:
+        logger.warning(
+            "[Sprint4] 实验 YAML 路径越界，拒绝加载: %s", yaml_path,
+        )
+        return [], []
+
+    if not yaml_path.exists():
+        logger.debug("[Sprint4] 实验 YAML 不存在: %s", yaml_path)
+        return [], []
+
+    try:
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except Exception as exc:
+        logger.warning("[Sprint4] 实验 YAML 解析失败 (%s): %s", yaml_path, exc)
+        return [], []
+
+    experiments = data.get("experiments", []) or []
+    forbidden = data.get("forbidden", []) or []
+
+    # 深拷贝避免修改缓存
+    return (
+        [dict(item) if isinstance(item, dict) else {} for item in experiments],
+        [dict(item) if isinstance(item, dict) else {} for item in forbidden],
+    )
+
+
+def _check_forbidden_yaml(
+    name: str, technique: str, target_node: str, yaml_forbidden: list[dict],
+) -> tuple[bool, str]:
+    """按 YAML forbidden 规则检测实验是否禁止。
+
+    YAML forbidden 每条含 name / technique / target_node / reason 字段。
+    匹配规则（大小写不敏感）：
+      - name 精确包含匹配，或
+      - technique 精确匹配且 target_node 匹配
+
+    Args:
+        name: 实验名称。
+        technique: 实验技术。
+        target_node: 验证的机制节点。
+        yaml_forbidden: YAML 加载的禁止规则列表。
+
+    Returns:
+        ``(forbidden, reason)`` 元组。
+    """
+    name_lower = (name or "").lower().strip()
+    technique_lower = (technique or "").lower().strip()
+    target_norm = normalize_node_name(target_node)
+
+    for rule in yaml_forbidden:
+        r_name = (rule.get("name", "") or "").lower().strip()
+        r_technique = (rule.get("technique", "") or "").lower().strip()
+        r_target = rule.get("target_node", "") or ""
+        r_reason = rule.get("reason", "") or ""
+        r_target_norm = normalize_node_name(r_target)
+
+        # 匹配 1: name 精确包含
+        if r_name and r_name in name_lower:
+            return True, r_reason
+        # 匹配 2: technique + target_node 双匹配
+        if (
+            r_technique
+            and r_technique == technique_lower
+            and r_target_norm
+            and r_target_norm == target_norm
+        ):
+            return True, r_reason
+
+    return False, ""
+
+
+# =============================================================================
 # 通路实验链模板选择
 # =============================================================================
 def get_experiment_chain_template(pathway: str) -> list[dict]:
     """返回通路对应的实验链模板。未知通路返回 EGFR 默认链。
+
+    Sprint 4 扩展：``SA_SPRINT4_EXPERIMENT_RULE_ENGINE`` Flag ON 时，
+    优先从 ``knowledge/experiments/{pathway_key}.yaml`` 加载 Mechanism-aware
+    实验链（覆盖全部 10 条通路）；YAML 不存在时降级到硬编码模板。
+    Flag OFF 时使用硬编码模板（v3/v4 行为不变）。
 
     Args:
         pathway: 通路标识（如 ``"EGFR"`` / ``"MAPK"`` /
@@ -440,6 +576,24 @@ def get_experiment_chain_template(pathway: str) -> list[dict]:
     Returns:
         实验模板 dict 列表（深拷贝，调用方可安全修改）。
     """
+    # -------------------------------------------------------------------------
+    # Sprint 4: Flag ON 时优先从 YAML 加载（100% Rule-driven，Mechanism-aware）
+    # -------------------------------------------------------------------------
+    if settings.is_sa_feature_enabled("SPRINT4_EXPERIMENT_RULE_ENGINE"):
+        canonical_key = _pathway_to_canonical_key(pathway)
+        yaml_experiments, _ = _load_experiments_from_yaml(canonical_key)
+        if yaml_experiments:
+            logger.debug(
+                "[Sprint4] 从 YAML 加载实验链: pathway=%s key=%s count=%d",
+                pathway, canonical_key, len(yaml_experiments),
+            )
+            # [D3] 修复：critic 期望 mechanism_node 字段，YAML 用 target_node
+            for exp in yaml_experiments:
+                if "mechanism_node" not in exp and "target_node" in exp:
+                    exp["mechanism_node"] = exp["target_node"]
+            return yaml_experiments
+        # YAML 不存在 → 降级到硬编码模板（下方逻辑）
+
     key = (pathway or "").strip().upper()
     # 归一化 PI3K 系列：去分隔符后比较
     compact = key.replace("-", "").replace("_", "").replace(" ", "")
@@ -459,7 +613,12 @@ def get_experiment_chain_template(pathway: str) -> list[dict]:
         template = EGFR_EXPERIMENT_CHAIN
 
     # 深拷贝避免修改模块级常量
-    return [dict(item) for item in template]
+    result = [dict(item) for item in template]
+    # [D3] 修复：critic 期望 mechanism_node 字段，模板用 target_node
+    for exp in result:
+        if "mechanism_node" not in exp and "target_node" in exp:
+            exp["mechanism_node"] = exp["target_node"]
+    return result
 
 
 # =============================================================================
@@ -608,6 +767,12 @@ def plan_experiments(
     # 1. 获取通路实验链模板
     template = get_experiment_chain_template(pathway)
 
+    # Sprint 4: Flag ON 时加载 YAML forbidden 规则（Mechanism-aware 禁止模式）
+    _yaml_forbidden: list[dict] = []
+    if settings.is_sa_feature_enabled("SPRINT4_EXPERIMENT_RULE_ENGINE"):
+        _canonical_key_for_yaml = _pathway_to_canonical_key(pathway)
+        _, _yaml_forbidden = _load_experiments_from_yaml(_canonical_key_for_yaml)
+
     # 2. 转换为 MechanismExperiment 对象并检测禁止模式 / justification
     experiments: list[MechanismExperiment] = []
     unjustified_count = 0
@@ -621,10 +786,15 @@ def plan_experiments(
             justification=item.get("justification", ""),
             expected_result=item.get("expected_result", ""),
         )
-        # 检测禁止模式
+        # 检测禁止模式（硬编码规则）
         forbidden, reason = _check_forbidden(
             exp.name, exp.technique, exp.target_node
         )
+        # Sprint 4: Flag ON 时追加 YAML forbidden 规则检测
+        if not forbidden and _yaml_forbidden:
+            forbidden, reason = _check_forbidden_yaml(
+                exp.name, exp.technique, exp.target_node, _yaml_forbidden
+            )
         if forbidden:
             exp.forbidden = True
             exp.forbidden_reason = reason
@@ -712,6 +882,12 @@ def check_experiments(
     target_nodes: list[str] = []
     checked: list[MechanismExperiment] = []
 
+    # Sprint 4: Flag ON 时加载 YAML forbidden 规则
+    _yaml_forbidden: list[dict] = []
+    if settings.is_sa_feature_enabled("SPRINT4_EXPERIMENT_RULE_ENGINE") and pathway:
+        _yaml_canonical_key = _pathway_to_canonical_key(pathway)
+        _, _yaml_forbidden = _load_experiments_from_yaml(_yaml_canonical_key)
+
     for item in experiments:
         if not isinstance(item, dict):
             continue
@@ -723,10 +899,15 @@ def check_experiments(
             justification=item.get("justification", ""),
             expected_result=item.get("expected_result", ""),
         )
-        # 检测禁止模式
+        # 检测禁止模式（硬编码规则）
         forbidden, reason = _check_forbidden(
             exp.name, exp.technique, exp.target_node
         )
+        # Sprint 4: Flag ON 时追加 YAML forbidden 规则检测
+        if not forbidden and _yaml_forbidden:
+            forbidden, reason = _check_forbidden_yaml(
+                exp.name, exp.technique, exp.target_node, _yaml_forbidden
+            )
         if forbidden:
             exp.forbidden = True
             exp.forbidden_reason = reason

@@ -1,40 +1,156 @@
-# BioDynamics Scientific Alignment Gold Standard — Wnt 通路
+# BioDynamics Scientific Alignment Benchmark — Wnt 通路
+# Task 13: 对齐 Task 12 Canonical Answer，补全 acceptance_criteria / expected_curve_metrics / forbidden_patterns
 # 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
-# 参考：Lee 2003 Wnt 模型 / BIOMD0000000256
-# TODO: verify PMID — Clevers 2006、Logan 2004、Macdonald 2009、Stamos 2013、Lee 2003
-pathway: WNT
-name: "Wnt/β-catenin Signaling"
+# 参考 Canonical: knowledge/canonical/wnt.yaml
+# Benchmark: Wnt — β-catenin 累积与 Axin2 负反馈
+benchmark_id: wnt_bcatenin_axin2_feedback
+pathway: wnt
+category: positive
+question: >
+  解释 Wnt3a 刺激后 β-catenin 累积动力学，以及 Axin2 负反馈如何调节信号。
+  为何 β-catenin 在 Wnt ON 时累积，而 Wnt OFF 时被 destruction complex 降解？
+  请解释 destruction complex 与 Axin2 负反馈机制，并仿真 4 h 动力学。
+
+expected_answer: >
+  Wnt OFF 状态：Axin-APC-GSK3 destruction complex 持续磷酸化 β-catenin → β-catenin 泛素化降解 → 低水平。
+  Wnt ON 状态：Wnt → Frizzled + LRP6 → LRP6 磷酸化 → 招募 Axin 至 LRP6 →
+  destruction complex 解聚/失活 → β-catenin 累积（30-120 min）→ 核转位（30-60 min）→
+  与 TCF/LEF 结合转录靶基因（包括 Axin2）→ Axin2 转录上调（1-2 h）→
+  Axin2 蛋白促进 destruction complex 重组 → β-catenin 降解增加（负反馈）→
+  β-catenin 信号被限制（accumulation then plateau）。
+  Axin2 negative feedback 与 Destruction complex turnover 是 Wnt 信号调节的核心。
+  禁止回答"Wnt OFF 时 β-catenin 持续累积"或"无 Axin 降解反馈"——这违反 destruction complex 机制。
+
+# 从 knowledge/canonical/wnt.yaml.canonical_mechanism.required_nodes 复制
+canonical_mechanism_nodes:
+  - Wnt
+  - Frizzled
+  - LRP6
+  - Axin
+  - APC
+  - GSK3
+  - beta_catenin
+  - TCF_LEF
+  - Axin2
+
+# 从 knowledge/canonical/wnt.yaml.canonical_reviews 复制
+canonical_reviews:
+  - "PMID:17081971"         # Clevers 2006 Cell（Wnt/β-catenin 信号）
+  - "PMID:14551908"         # Lee 2003 PLoS Biol（APC/Axin 实验与理论分析）
+  - "PMID:23169527"         # Stamos & Weis 2013 CSH Perspect Biol（β-catenin 破坏复合体）
+
+# 从 knowledge/canonical/wnt.yaml.canonical_models 复制
+canonical_models:
+  - "BIOMD0000000658"       # Lee 2003 Wnt pathway model - verified
+
+# 期望动力学（基于 axin_bcatenin_assertions）
 expected_dynamics:
-  beta_catenin_accumulation: "30-120 min after Wnt3a"
-  Axin2_feedback: "induced, negative feedback"
-  destruction_complex: "inhibited upon Wnt stimulation"
-  TCF_LEF_transcription: "delayed, 2-4 hours"
-required_mechanisms:
-  - Wnt_Frizzled_LRP6
-  - Destruction_complex_Axin_APC_GSK3
-  - beta_catenin_stabilization
-  - TCF_LEF_transcription
-  - Axin2_negative_feedback
-required_biomodels:
-  - BIOMD0000000256   # Lee 2003 Wnt model
-required_reviews:
-  - PMID:xxxxxxxx     # TODO: verify Clevers 2006 PMID
-  - PMID:xxxxxxxx     # TODO: verify Logan 2004 PMID
-  - PMID:xxxxxxxx     # TODO: verify Macdonald 2009 PMID
-  - PMID:xxxxxxxx     # TODO: verify Stamos 2013 PMID
-required_experiments:
-  - beta-catenin Western blot (cytosolic/nuclear)
-  - Axin2 qPCR
-  - TOPFLASH reporter assay
-  - Wnt3a treatment
-  - XAV939 tankyrase inhibitor validation
+  - molecule: beta_catenin
+    peak_time: [30, 120]
+    behavior: "accumulation then plateau (Wnt ON)"
+  - molecule: beta_catenin_nuclear
+    peak_time: [30, 60]
+    behavior: "nuclear accumulation"
+  - molecule: Axin2
+    peak_time: [60, 120]
+    behavior: "increasing (feedback)"
+  - molecule: destruction_complex_active
+    peak_time: [0, 30]
+    behavior: "high in Wnt OFF, inhibited in Wnt ON, restored by Axin2"
+
+# 8 项 Curve Metrics 期望值
+expected_curve_metrics:
+  - molecule: beta_catenin
+    peak_time_min: [30, 120]
+    peak_amplitude: [0.7, 1.0]
+    rise_time_min: [15, 60]
+    half_decay_min: null                  # Wnt ON 持续，plateau
+    adaptation_ratio: null
+    steady_state: [0.6, 0.9]              # plateau（Axin2 负反馈限制）
+    oscillation: false
+    auc: [80, 250]
+  - molecule: beta_catenin_nuclear
+    peak_time_min: [30, 60]
+    peak_amplitude: [0.7, 1.0]
+    rise_time_min: [15, 30]
+    half_decay_min: null
+    adaptation_ratio: null
+    steady_state: [0.5, 0.8]
+    oscillation: false
+    auc: [60, 200]
+  - molecule: Axin2
+    peak_time_min: [60, 120]
+    peak_amplitude: [0.6, 1.0]
+    rise_time_min: [30, 60]
+    half_decay_min: null                  # 持续增加（反馈）
+    adaptation_ratio: null
+    steady_state: [0.7, 1.0]
+    oscillation: false
+    auc: [50, 180]
+  - molecule: destruction_complex_active
+    peak_time_min: [0, 30]
+    peak_amplitude: [0.8, 1.0]
+    rise_time_min: [0, 10]
+    half_decay_min: [15, 60]              # Wnt ON 抑制
+    adaptation_ratio: [0.1, 0.4]
+    steady_state: [0.1, 0.4]              # Axin2 部分恢复
+    oscillation: false
+    auc: [20, 80]
+
+# 从 knowledge/canonical/wnt.yaml.expected_experiments 复制
+expected_experiments:
+  - name: "β-catenin Western blot (nuclear fraction)"
+    technique: "Western blot"
+    timepoints: [0, 15, 30, 60, 120, 240]
+    target: "beta_catenin_nuclear"
+  - name: "AXIN2 qPCR"
+    technique: "qPCR"
+    timepoints: [30, 60, 120, 240]
+    target: "AXIN2"
+
+# 从 knowledge/canonical/wnt.yaml.forbidden_experiments 复制
+forbidden_experiments:
+  - "β-catenin qPCR (蛋白水平需要 Western)"
+
+# 禁止出现的模式（regex + reason）
 forbidden_patterns:
-  - "No PubMed evidence"
-  - "No BioModels comparison"
-  - "β-catenin increase without destruction complex inhibition"
-key_time_scales:
-  beta_catenin_accumulation: "30-120 min"
-  Axin2_induction: "2-4 hours"
-key_feedbacks:
-  - "Axin2 negative feedback on β-catenin (destruction complex scaffold)"
-  - "LRP6 phosphorylation positive feedback"
+  - pattern: "Wnt.*OFF.*beta.*catenin.*accumulation"
+    reason: "Wnt OFF 时 β-catenin 应被 destruction complex 降解，不能累积"
+  - pattern: "no.*Axin.*destruction"
+    reason: "Axin 降解反馈（Axin2 negative feedback）是 Wnt 信号调节核心，必须提及"
+  - pattern: "destruction.*complex.*inactive.*without.*Wnt"
+    reason: "无 Wnt 时 destruction complex 应 ACTIVE（降解 β-catenin）"
+  - pattern: "beta.?catenin qPCR"
+    reason: "β-catenin qPCR 不能反映蛋白水平，需用 Western blot"
+  - pattern: "no.*PubMed"
+    reason: "必须引用 PubMed 权威文献"
+  - pattern: "no.*BioModels"
+    reason: "必须引用 BioModels 模型比较"
+
+# 验收标准（对齐 spec acceptance_criteria）
+acceptance_criteria:
+  mechanism_nodes_required: true
+  mechanism_node_min_coverage: 0.8
+  pubmed_min_count: 2                    # Wnt canonical reviews 较多
+  biomodels_min_count: 1                 # Canonical 中有 BIOMD0000000658
+  experiment_min_count: 2
+  hallucination_tolerance: 0
+  curve_metric_pass_min: 6
+  forbidden_experiment_blocked: true
+  forbidden_pattern_absent: true
+  must_explain_destruction_complex: true  # 必须解释 destruction complex
+  must_explain_axin2_feedback: true       # 必须解释 Axin2 负反馈
+  bcatenin_must_accumulate_on_wnt: true   # Wnt ON 时 β-catenin 必须累积
+  bcatenin_must_degrade_off_wnt: true     # Wnt OFF 时 β-catenin 必须降解
+
+# 从 knowledge/canonical/wnt.yaml.axin_bcatenin_assertions 复制
+axin_bcatenin_assertions:
+  destruction_complex: "APC/Axin/GSK3 → β-catenin degradation (Wnt OFF)"
+  wnt_on_behavior: "β-catenin stabilization and nuclear accumulation"
+  mechanism: ["Axin2 negative feedback", "Destruction complex turnover"]
+  forbidden_answer: "Wnt OFF 时 β-catenin 持续累积"
+
+# 参考 Canonical
+canonical_reference: "knowledge/canonical/wnt.yaml"
+known_negative_feedback:
+  - Axin2

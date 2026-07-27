@@ -454,6 +454,130 @@ class Settings:
         "SA_MULTI_DIM_CONFIDENCE", "false"
     ).lower() == "true"
 
+    # SA_SPRINT1_GROUND_TRUTH：Sprint 1 Ground Truth（Canonical Timeline + Benchmark Golden Answer）
+    #   - false（默认）：canonical 加载逻辑等同当前，不强制使用 Canonical Timeline
+    #   - true：在 SA 总开关开启时，启用 Sprint 1 增强的 Ground Truth 数据
+    # 铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时本子 Flag 永远不生效（由 is_sa_feature_enabled 强制）
+    SA_SPRINT1_GROUND_TRUTH: bool = os.getenv(
+        "SA_SPRINT1_GROUND_TRUTH", "false"
+    ).lower() == "true"
+
+    # SA_SPRINT2_EVIDENCE_RENDERER：Sprint 2 Evidence Renderer（Citation-driven Discussion）
+    #   - false（默认）：Discussion 走旧 LLM 生成路径（n11_scientific_report 的 N11_REPORT_FILL_PROMPT）
+    #   - true：在 SA 总开关开启时，Discussion 由 discussion_renderer.py 渲染：
+    #     1) 调用 evidence_fuser.fuse_evidence 生成 EvidenceFusionReport
+    #     2) 按 Evidence → Outline → Sentence 顺序渲染，每句仅含一个来源标签 [A]/[B]/[C]/[D]/[E]
+    #     3) 无文献时显式显示 "No literature retrieved"
+    # 铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时本子 Flag 永远不生效（由 is_sa_feature_enabled 强制）
+    SA_SPRINT2_EVIDENCE_RENDERER: bool = os.getenv(
+        "SA_SPRINT2_EVIDENCE_RENDERER", "false"
+    ).lower() == "true"
+
+    # SA_SPRINT3_CONSISTENCY_GATE：Sprint 3 Scientific Gate（硬 Gate + Validation Rule Engine + Scientific Review）
+    #   - false（默认）：Consistency Checker 仅 Warning（当前行为）
+    #   - true：在 SA 总开关开启时：
+    #     1) Consistency 违规 → 阻断后续 SA 阶段（Critic/MultiDim/Review），返回 Gate Failed
+    #     2) validation_rule_engine.py 基于 Rule 计算 Mass conservation / Peak time / Peak ordering / Evidence count
+    #     3) scientific_review.py 输出 Overall Scientific Score（Rule 计算，非 LLM）
+    # 铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时本子 Flag 永远不生效
+    SA_SPRINT3_CONSISTENCY_GATE: bool = os.getenv(
+        "SA_SPRINT3_CONSISTENCY_GATE", "false"
+    ).lower() == "true"
+
+    # SA_SPRINT4_EXPERIMENT_RULE_ENGINE：Sprint 4 Experiment Rule Engine（100% Rule，Mechanism-aware）
+    #   - false（默认）：实验推荐走当前 experiment_planner.py 硬编码模板路径
+    #   - true：在 SA 总开关开启时：
+    #     1) 从 knowledge/experiments/*.yaml 加载实验规则（YAML 化，非硬编码）
+    #     2) 100% Rule Engine，无 LLM 调用
+    #     3) Mechanism-aware：基于 pathway + mechanism 节点匹配实验
+    #     4) forbidden 字段强制（如 EGFR qPCR 被禁止）
+    # 铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时本子 Flag 永远不生效
+    SA_SPRINT4_EXPERIMENT_RULE_ENGINE: bool = os.getenv(
+        "SA_SPRINT4_EXPERIMENT_RULE_ENGINE", "false"
+    ).lower() == "true"
+
+    # SA_SPRINT5_PROVENANCE_EXPLAINABILITY：Sprint 5 Parameter Provenance + Explainability Log
+    #   - false（默认）：Report 不含 Parameter Traceability 表与 Scientific Decision Log
+    #   - true：在 SA 总开关开启时：
+    #     1) parameter_provenance.py 为每个参数标注 source + confidence
+    #     2) Report 自动生成 Parameter Traceability 表
+    #     3) explainability_log.py 生成 Scientific Decision Log（8 维来源与原因）
+    #     4) Report 末尾渲染 Decision Log
+    # 铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时本子 Flag 永远不生效
+    SA_SPRINT5_PROVENANCE_EXPLAINABILITY: bool = os.getenv(
+        "SA_SPRINT5_PROVENANCE_EXPLAINABILITY", "false"
+    ).lower() == "true"
+
+    # SA_BIOMODELS_CALIBRATION：Task F BioModels Parameter Calibration
+    #   - false（默认）：不执行 Agent ODE vs BioModels 对比
+    #   - true：在 SA 总开关开启时：
+    #     1) 用 RoadRunner 仿真对应 BioModels SBML
+    #     2) 与 Agent ODE 仿真 CSV 对比（Peak Time / Peak Value / RMSE / Correlation）
+    #     3) 差异超阈值 → 标记 needs_calibration=True，发射 SSE 事件
+    #   依赖：roadrunner 已安装、data/raw/ 下有对应 BIOMD SBML 文件
+    # 铁律：V4_SCIENTIFIC_ALIGNMENT_ENABLED=false 时本子 Flag 永远不生效
+    SA_BIOMODELS_CALIBRATION: bool = os.getenv(
+        "SA_BIOMODELS_CALIBRATION", "false"
+    ).lower() == "true"
+
+    # =============================================================================
+    # Scientific Reviewer 与 Validation Matrix 升级 Feature Flags
+    # （Spec: add-scientific-reviewer-and-validation-matrix）
+    # =============================================================================
+    # 设计原则：本组 Flag 控制 Nature 级 Scientific Reviewer / 12 轴 Validation
+    # Matrix / Curve Metrics / Evidence Graph / Scientific Honesty / Sequential
+    # Retriever / F5 Iteration Loop / Score Card 八大新能力的启用与回退。
+    # 铁律：V4_SCIENTIFIC_REVIEWER_ENABLED=false（默认）时，所有上述新能力全部
+    #       不启用，系统完全回退 v3/v4 行为，既有流水线无任何变化（项目硬约束）。
+    # 详见 spec：add-scientific-reviewer-and-validation-matrix
+    # =============================================================================
+
+    # V4_SCIENTIFIC_REVIEWER_ENABLED：Scientific Reviewer 与 Validation Matrix 主开关
+    #   - false（默认）：Scientific Reviewer / 12 轴 Matrix / Curve Metrics /
+    #     Evidence Graph / Scientific Honesty / F5 Loop / Score Card 全部不启用
+    #   - true：启用上述新能力，可由 V4_LEGACY_* / RAG_LEGACY_PARALLEL 控制回退
+    # 铁律：flag=false 时系统行为与 v3/v4 完全一致
+    V4_SCIENTIFIC_REVIEWER_ENABLED: bool = os.getenv(
+        "V4_SCIENTIFIC_REVIEWER_ENABLED", "false"
+    ).lower() == "true"
+
+    # V4_SEQUENTIAL_RETRIEVER：顺序优先级检索开关
+    #   - true（默认）：使用 Sequential Retriever（canonical.yaml → BioModels →
+    #     PubMed → Reactome/KEGG），经典 Review 优先
+    #   - false：回退到旧并行检索（仅当 RAG_LEGACY_PARALLEL=true 时生效）
+    # 注意：本 Flag 默认 true（与其他 v4 Flag 默认 false 不同），因为顺序检索
+    #       是 RAG 改进方向，且 V4_SCIENTIFIC_REVIEWER_ENABLED=false 时仍可独立生效
+    V4_SEQUENTIAL_RETRIEVER: bool = os.getenv(
+        "V4_SEQUENTIAL_RETRIEVER", "true"
+    ).lower() == "true"
+
+    # V4_LEGACY_CRITIC：旧 Scientific Critic Agent 回退开关
+    #   - false（默认）：Scientific Reviewer 启用时使用新 8 项结构化 Review.md
+    #   - true：回退到旧 scientific_critic.py（pass/fail/concerns 三态，@deprecated）
+    # 铁律：V4_SCIENTIFIC_REVIEWER_ENABLED=false 时本 Flag 不生效（旧 Critic 由
+    #       SA_SCIENTIFIC_CRITIC 控制）
+    V4_LEGACY_CRITIC: bool = os.getenv(
+        "V4_LEGACY_CRITIC", "false"
+    ).lower() == "true"
+
+    # V4_LEGACY_SEVEN_AXIS：旧 7 轴 Validation Pyramid 回退开关
+    #   - false（默认）：使用 12 轴 Validation Matrix（PASS/PARTIAL/FAIL 三态）
+    #   - true：回退到旧 seven_axis_validator.py（High/Medium/Low，@deprecated）
+    # 铁律：V4_SCIENTIFIC_REVIEWER_ENABLED=false 时本 Flag 不生效（旧 7 轴由
+    #       SA_SEVEN_AXIS 控制）
+    V4_LEGACY_SEVEN_AXIS: bool = os.getenv(
+        "V4_LEGACY_SEVEN_AXIS", "false"
+    ).lower() == "true"
+
+    # RAG_LEGACY_PARALLEL：旧并行 RAG 检索回退开关
+    #   - false（默认）：使用 Sequential Retriever 顺序优先级检索
+    #   - true：回退到 rag_client.py 旧并行检索
+    #     （PubMed/BioModels/Reactome/KEGG/UniProt 并发）
+    # 铁律：V4_SEQUENTIAL_RETRIEVER=true 时本 Flag 不生效（顺序检索优先）
+    RAG_LEGACY_PARALLEL: bool = os.getenv(
+        "RAG_LEGACY_PARALLEL", "false"
+    ).lower() == "true"
+
     # =============================================================================
     # Benchmark Runner 模式开关（Task 18）
     # 控制 BenchmarkRunner.run_benchmark() 的后端执行模式。
@@ -489,6 +613,12 @@ class Settings:
         "PARAMETER_CONFIDENCE": "SA_PARAMETER_CONFIDENCE",
         "SCIENTIFIC_CRITIC": "SA_SCIENTIFIC_CRITIC",
         "MULTI_DIM_CONFIDENCE": "SA_MULTI_DIM_CONFIDENCE",
+        "SPRINT1_GROUND_TRUTH": "SA_SPRINT1_GROUND_TRUTH",
+        "SPRINT2_EVIDENCE_RENDERER": "SA_SPRINT2_EVIDENCE_RENDERER",
+        "SPRINT3_CONSISTENCY_GATE": "SA_SPRINT3_CONSISTENCY_GATE",
+        "SPRINT4_EXPERIMENT_RULE_ENGINE": "SA_SPRINT4_EXPERIMENT_RULE_ENGINE",
+        "SPRINT5_PROVENANCE_EXPLAINABILITY": "SA_SPRINT5_PROVENANCE_EXPLAINABILITY",
+        "BIOMODELS_CALIBRATION": "SA_BIOMODELS_CALIBRATION",
     }
 
     # =============================================================================

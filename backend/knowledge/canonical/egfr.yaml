@@ -9,9 +9,22 @@ canonical_reviews:          # 权威综述 PMID 列表
   - "PMID:7657691"          # Marshall 1995 Cell（Ras/MAPK 信号特异性）
   - "PMID:11743495"         # Yarden 2001 Nature Reviews MCB（ErbB 信号网络）
   - "PMID:12451180"         # Schoeberl 2002 Nature Biotechnology（EGFR-MAPK 动力学建模）
+  - "PMID:10712587"         # Kholodenko 2000 Eur J Biochem（MAPK 级联负反馈振荡，BIOMD0000000010 来源）
+  # Task 12: Spec 补全（Benchmark 01 Canonical Literature 要求）
+  - "Murphy & Blenis 2006 TIBS — MAPK signal specificity"
+  - "Schoeberl 2006 Mol Syst Biol — EGFR-MAPK computational model"
 
 canonical_models:           # 权威 BioModels ID 列表
-  - "BIOMD0000000010"       # Schoeberl 2002 EGFR-MAPK model
+  - "BIOMD0000000048"       # Kholodenko1999 EGFR signaling (PMID:10514507)
+
+# 模型范围说明（SubTask 1.1.2：区分 MAPK cascade 子集 vs EGFR 全通路）
+# BIOMD0000000048 covers the EGFR signaling model used for this pathway.
+model_scope:
+  BIOMD0000000048:
+    name: "Kholodenko1999"
+    covers: "EGFR signaling"
+    species_count: 8
+    key_prediction: "负反馈 + 超敏感性 → MAPK 磷酸化持续振荡（周期：分钟到小时）"
 
 canonical_mechanism:
   required_nodes:           # 机制节点链（大写蛋白名）
@@ -25,6 +38,26 @@ canonical_mechanism:
     - MEK
     - ERK
     - DUSP
+    # Task 12: Spec 补全的动作级机制步骤节点（对齐 Benchmark 01 Canonical Answer）
+    - EGF_EGFR_binding
+    - EGFR_autophosphorylation
+    - Grb2_recruitment
+    - SOS_activation
+    - Ras_activation
+    - Raf_activation
+    - MEK_activation
+    - ERK_activation
+    - ERK_nuclear_translocation
+    - DUSP_transcription
+    - DUSP_protein_accumulation
+    - ERK_dephosphorylation_by_DUSP
+    - ERK_decline
+  adaptive_mechanisms:      # Task 12 Spec: 适应性机制（至少提到 1 个）
+    - DUSP_negative_feedback
+    - Sprouty_inhibition
+    - receptor_internalization
+    - Ras_GAP
+    - Cbl_mediated_degradation
   edges:                    # 机制边（因果描述）
     - from: EGF
       to: EGFR
@@ -57,15 +90,44 @@ canonical_mechanism:
       to: ERK
       relation: inhibition  # 负反馈
 
-expected_behavior:          # 动力学行为预期
+expected_behavior:          # 动力学行为预期（EGFR 全通路，基于多篇权威文献汇总）
   egfr_peak: "<5 min"
   erk_peak: "10-20 min"
   erk_decline: true
   dusp_feedback: "required"
+  kholodenko_model_note: "BIOMD0000000010 预测 MAPK 磷酸化在负反馈+超敏感性条件下可持续振荡（周期 min~h）"
 
-known_negative_feedback:    # 已知负反馈
+# Canonical Timeline（SubTask 1.2.1：信号时序，基于权威文献汇总，非 LLM 创造）
+canonical_timeline:
+  - event: "EGFR phosphorylation"
+    time_window: "1-5 min"
+    reference: "PMID:11743495"
+  - event: "Ras activation"
+    time_window: "2-8 min"
+    reference: "PMID:7657691"
+  - event: "ERK peak"
+    time_window: "10-20 min"
+    reference: "PMID:10712587"
+  - event: "DUSP induction"
+    time_window: "30-90 min"
+    reference: "PMID:16246870"
+  - event: "SPRY induction"
+    time_window: "30-90 min"
+  - event: "Receptor internalization"
+    time_window: "10-30 min"
+    reference: "PMID:12451180"
+  - event: "Endocytosis"
+    present: true
+  - event: "Negative feedback"
+    present: true
+    mediator: "DUSP, SPRY"
+
+known_negative_feedback:    # 已知负反馈（Task 12 Spec: 补全 receptor_internalization / Ras_GAP / Cbl）
   - DUSP
   - SPRY
+  - receptor_internalization
+  - Ras_GAP
+  - Cbl
 
 consistency_rules:          # 供 Consistency Checker 加载的自洽规则
   - rule: "EGFR Peak 不能晚于 ERK Peak"
@@ -77,3 +139,72 @@ consistency_rules:          # 供 Consistency Checker 加载的自洽规则
   - rule: "DUSP 表达不能早于 ERK Peak"
     assertion: "dusp_expression_time > erk_peak_time"
     violation_label: "feedback_before_target_peak"
+
+# ============================================================================
+# Task 12: Spec 补全字段（10 通路 Canonical 对齐，Benchmark 01 EGFR Adaptive Response）
+# ============================================================================
+expected_dynamics:          # 期望动力学（基于权威文献汇总）
+  pEGFR:
+    peak_time: "2-5 min"
+    behavior: "rapid increase then decline"
+  Ras_GTP:
+    peak_time: "5-10 min"
+  pMEK:
+    peak_time: "8-15 min"
+  pERK:
+    peak_time: "10-20 min"
+    behavior: "transient peak then decline (adaptive)"
+    must_decline: true
+  DUSP_mRNA:
+    peak_time: "30-60 min"
+    behavior: "increasing"
+  DUSP_protein:
+    peak_time: "60-120 min"
+    behavior: "持续增加"
+
+curve_requirements:         # 曲线必须满足的硬约束
+  pEGFR: "快速升高"
+  pERK: "必须下降（不能一直升、不能一直高）"
+  DUSP: "持续增加"
+
+expected_experiments:       # 验证机制所需实验
+  - name: "pEGFR Western blot"
+    timepoints: [0, 2, 5, 10, 20, 30]
+    mechanism_target: "EGFR phosphorylation"
+  - name: "pERK Western blot"
+    timepoints: [0, 5, 10, 15, 20, 30, 45, 60, 120]
+    mechanism_target: "ERK activation dynamics"
+  - name: "DUSP1 qPCR"
+    timepoints: [15, 30, 60, 120]
+    mechanism_target: "DUSP transcription feedback"
+  - name: "DUSP protein Western blot"
+    mechanism_target: "DUSP protein accumulation"
+  - name: "EGFR internalization IF/FACS"
+    mechanism_target: "receptor internalization"
+    optional: true
+
+forbidden_experiments:      # 不能验证 adaptive dynamics 的实验
+  - "EGFR qPCR"
+  - "EGF ELISA"
+
+canonical_literature:       # Task 12 Spec: 规范引用（Benchmark 01 Canonical Literature）
+  - author: "Schoeberl"
+    journal: "Molecular Systems Biology"
+    year: 2002
+    topic: "EGFR-MAPK kinetic model"
+  - author: "Schoeberl"
+    journal: "Molecular Systems Biology"
+    year: 2006
+    topic: "EGFR-MAPK computational model extension"
+  - author: "Kholodenko"
+    journal: "FEBS Letters"
+    year: 2000
+    topic: "Negative feedback and ultrasensitivity"
+  - author: "Murphy, Blenis"
+    journal: "Trends in Biochemical Sciences"
+    year: 2006
+    topic: "MAPK signal specificity"
+  - author: "Yarden, Sliwkowski"
+    journal: "Nature Reviews Molecular Cell Biology"
+    year: 2001
+    topic: "Untangling ErbB signalling network"

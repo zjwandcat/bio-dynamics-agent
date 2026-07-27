@@ -1,0 +1,17 @@
+# Golden Benchmark — MAPK Pathway
+pathway: MAPK
+question: "The MAPK/ERK cascade exhibits ultrasensitive signal amplification and transient ERK activation. ERK phosphorylation peaks within 10-20 minutes and then declines due to DUSP-mediated negative feedback. Explain the cascade mechanism and simulate expected dynamics."
+ground_truth: "The MAPK cascade (RAS-RAF-MEK-ERK) exhibits ultrasensitive signal amplification (10-100x) as characterized by Huang & Ferrell 1996, with ERK phosphorylation peaking at 10-20 min [PMID:8663050]. RAF activation occurs within 1-5 min, MEK phosphorylation 2-8 min, and ERK phosphorylation 5-15 min. Despite continuous upstream stimulus, ERK activation is transient and declines due to DUSP induction (30-90 min) forming negative feedback on ERK [PMID:16246870]. The cascade's ultrasensitivity and signal propagation properties have been characterized through mathematical modeling [PMID:16246870]."
+canonical_papers: ["PMID:8663050", "PMID:16246870"]  # Huang & Ferrell 1996; Orton 2005
+canonical_biomodels: ["BIOMD0000000010"]  # Kholodenko2000 MAPK cascade
+expected_mechanism: [RAS, RAF, MEK, ERK, DUSP]
+expected_time_scale:
+  raf_activation: "1-5 min"
+  mek_phosphorylation: "2-8 min"
+  erk_phosphorylation: "5-15 min"
+  erk_peak: "10-20 min"
+  dusp_induction: "30-90 min"
+expected_experiment: []  # 实验方案，待 Sprint 4 填充
+expected_discussion: {}  # Discussion 预期，待 Sprint 2 填充
+expected_validation: {}  # Validation 预期，待 Sprint 3 填充
+expected_confidence: 0.0  # 预期置信度，待 Sprint 3 填充

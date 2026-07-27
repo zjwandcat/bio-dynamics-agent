@@ -66,6 +66,11 @@ from app.scientific_alignment.evidence_ranker import (
 )
 from app.scientific_alignment.mechanism_checker import check_mechanism_alignment
 
+# === V4 Enhancement: 延迟导入 run_validation_matrix（避免循环依赖与启动开销）===
+# 仅在 V4_SCIENTIFIC_REVIEWER_ENABLED=true 时实际调用，否则不引入。
+# run_validation_matrix 是 Task 5 实现的 12 轴 Validation Matrix 入口。
+_run_validation_matrix_lazy = None  # type: Any
+
 logger = logging.getLogger(__name__)
 
 
@@ -186,6 +191,11 @@ class SevenAxisReport:
         degraded_axes: 降级轴名称列表。
         skipped: 是否跳过（Feature Flag 关闭时为 True）。
         skip_reason: 跳过原因（Feature Flag 关闭时填充）。
+        validation_matrix_result: V4 Enhancement 字段（默认 None，不破坏现有
+            调用方）。V4_SCIENTIFIC_REVIEWER_ENABLED=true 时，由
+            run_validation_matrix() 生成的 12 轴结果 dict（含 pathway /
+            axes / overall_status / overall_confidence / summary 字段）。
+            Flag=false 时保持 None，不影响 v3/v4 行为。
     """
 
     pathway: str
@@ -196,6 +206,8 @@ class SevenAxisReport:
     degraded_axes: list[str] = field(default_factory=list)
     skipped: bool = False
     skip_reason: str = ""
+    # === V4 Enhancement: Feature Flag 分支附加字段（默认 None，向后兼容）===
+    validation_matrix_result: dict[str, Any] | None = None
 
 
 # =============================================================================
@@ -824,6 +836,123 @@ def _evaluate_evidence_axis(evidence_sources: dict | None) -> AxisScore:
 
 
 # =============================================================================
+# V4 Enhancement 辅助：run_validation_matrix 调用包装
+# =============================================================================
+def _run_validation_matrix_safe(
+    *,
+    pathway: str,
+    question: str,
+    simulation_csv_path: str,
+    report_md: str,
+    network_json: dict | None,
+    parameter_priors: dict | None,
+    retrieved_papers: list[dict] | None,
+    biomodels_matches: list[dict] | None,
+    experiments: list[dict] | None,
+    canonical_yaml_path: str,
+    biomodels_validation_result: dict | None,
+    benchmark_result: dict | None,
+    reproducibility_metadata: dict | None,
+    # [BENCHMARK CLOSURE / Gap 3] 扁平化指标，供 _build_evidence_pool
+    simulation_metrics_flat: dict | None = None,
+) -> dict[str, Any]:
+    """调用 Task 5 的 run_validation_matrix()，返回序列化后的 dict。
+
+    本函数仅在 V4_SCIENTIFIC_REVIEWER_ENABLED=true 时由
+    run_seven_axis_validation 调用。延迟导入 validation_matrix 模块，
+    避免在 Flag=false 时引入额外依赖与启动开销。
+
+    参数适配策略：
+      - experiment_plan ← experiments 列表（run_validation_matrix 接受
+        list[dict]，与 run_seven_axis_validation 的 experiments 参数一致）
+      - 其他 dict / list 参数若为 None，传空容器（不传 None 以满足
+        run_validation_matrix 的非可选参数约束）
+      - simulation_csv_path / canonical_yaml_path 必须由调用方显式提供
+        有效路径，否则 run_validation_matrix 内部会抛 FileNotFoundError，
+        由上层 try-except 捕获并记录 warning
+
+    Args:
+        pathway: 通路标识。
+        question: 用户原始问题文本。
+        simulation_csv_path: simulation.csv 文件路径。
+        report_md: Report Markdown 文本。
+        network_json: 通路网络 dict。
+        parameter_priors: 参数先验 dict。
+        retrieved_papers: 检索论文列表。
+        biomodels_matches: BioModels 匹配列表。
+        experiments: 实验列表（直接作为 run_validation_matrix 的
+            experiment_plan 参数传入）。
+        canonical_yaml_path: Canonical YAML 文件路径。
+        biomodels_validation_result: BioModels Validation 结果 dict。
+        benchmark_result: Benchmark 结果 dict。
+        reproducibility_metadata: 可复现性元数据 dict。
+
+    Returns:
+        ValidationMatrixResult 序列化后的 dict，含 pathway / axes /
+        overall_status / overall_confidence / summary 字段。
+    """
+    # 延迟导入：仅在 Flag=true 时实际加载 validation_matrix 模块
+    global _run_validation_matrix_lazy
+    if _run_validation_matrix_lazy is None:
+        from app.scientific_alignment.validation_matrix import (
+            run_validation_matrix as _run_validation_matrix_impl,
+        )
+        _run_validation_matrix_lazy = _run_validation_matrix_impl
+    run_validation_matrix_fn = _run_validation_matrix_lazy
+
+    # 参数适配：None → 安全空容器
+    network_dict: dict = dict(network_json) if network_json else {}
+    priors_dict: dict = dict(parameter_priors) if parameter_priors else {}
+    papers_list: list[dict] = list(retrieved_papers) if retrieved_papers else []
+    matches_list: list[dict] = list(biomodels_matches) if biomodels_matches else []
+    exp_list: list[dict] = list(experiments) if experiments else []
+
+    result = run_validation_matrix_fn(
+        pathway=pathway,
+        question=question or "",
+        simulation_csv_path=simulation_csv_path or "",
+        report_md=report_md or "",
+        network_json=network_dict,
+        parameter_priors=priors_dict,
+        retrieved_papers=papers_list,
+        biomodels_matches=matches_list,
+        experiment_plan=exp_list,
+        canonical_yaml_path=canonical_yaml_path or "",
+        biomodels_validation_result=biomodels_validation_result,
+        benchmark_result=benchmark_result,
+        reproducibility_metadata=reproducibility_metadata,
+        # [BENCHMARK CLOSURE / Gap 3] 透传扁平化指标
+        simulation_metrics_flat=simulation_metrics_flat,
+    )
+
+    # ValidationMatrixResult → dict（无原生 to_dict() 方法，手工序列化）
+    return {
+        "pathway": result.pathway,
+        "axes": [
+            {
+                "axis": ax.axis,
+                "status": (
+                    ax.status.value
+                    if hasattr(ax.status, "value")
+                    else str(ax.status)
+                ),
+                "evidence": ax.evidence,
+                "reason": ax.reason,
+                "details": dict(ax.details) if ax.details else {},
+            }
+            for ax in result.axes
+        ],
+        "overall_status": (
+            result.overall_status.value
+            if hasattr(result.overall_status, "value")
+            else str(result.overall_status)
+        ),
+        "overall_confidence": float(result.overall_confidence),
+        "summary": result.summary or "",
+    }
+
+
+# =============================================================================
 # 主函数
 # =============================================================================
 def run_seven_axis_validation(
@@ -836,6 +965,21 @@ def run_seven_axis_validation(
     experiments: list[dict] | None = None,
     discussion_content: str = "",
     evidence_sources: dict | None = None,
+    *,
+    # === V4 Enhancement: run_validation_matrix 所需附加输入（仅 Flag=true 时使用）===
+    question: str = "",
+    simulation_csv_path: str = "",
+    report_md: str = "",
+    network_json: dict | None = None,
+    parameter_priors: dict | None = None,
+    retrieved_papers: list[dict] | None = None,
+    biomodels_matches: list[dict] | None = None,
+    canonical_yaml_path: str = "",
+    biomodels_validation_result: dict | None = None,
+    benchmark_result: dict | None = None,
+    reproducibility_metadata: dict | None = None,
+    # [BENCHMARK CLOSURE / Gap 3] 扁平化指标，透传给 validation_matrix
+    simulation_metrics_flat: dict | None = None,
 ) -> SevenAxisReport:
     """运行 7 轴验证。
 
@@ -853,9 +997,28 @@ def run_seven_axis_validation(
         experiments: 实验列表（Experiment 轴输入），None 或空时该轴降级。
         discussion_content: 讨论内容文本（Discussion 轴输入），空时该轴降级。
         evidence_sources: 证据源统计 dict（Evidence 轴输入），None 时该轴降级。
+        question: V4 Enhancement 专用——用户原始问题文本（run_validation_matrix
+            参数）。仅在 V4_SCIENTIFIC_REVIEWER_ENABLED=true 时使用。
+        simulation_csv_path: V4 Enhancement 专用——simulation.csv 文件路径，
+            用于 Simulation 与 Dynamics 轴。
+        report_md: V4 Enhancement 专用——Report Markdown 文本，用于 Evidence
+            Attribution 与 Scientific Writing 轴。
+        network_json: V4 Enhancement 专用——通路网络 dict，用于 Mechanism 与
+            Ontology 轴。
+        parameter_priors: V4 Enhancement 专用——参数先验 dict（参数名 → metadata）。
+        retrieved_papers: V4 Enhancement 专用——检索论文列表，用于 Literature 轴
+            与 evidence_pool 构建。
+        biomodels_matches: V4 Enhancement 专用——BioModels 匹配列表。
+        canonical_yaml_path: V4 Enhancement 专用——Canonical YAML 文件路径。
+        biomodels_validation_result: V4 Enhancement 专用——BioModels Validation
+            结果 dict。
+        benchmark_result: V4 Enhancement 专用——Benchmark 结果 dict。
+        reproducibility_metadata: V4 Enhancement 专用——可复现性元数据 dict。
 
     Returns:
         SevenAxisReport。Feature Flag 关闭时返回 skipped=True 的空报告。
+        V4_SCIENTIFIC_REVIEWER_ENABLED=true 时，``validation_matrix_result`` 字段
+        填充为 run_validation_matrix() 结果 dict；Flag=false 时保持 None。
     """
     # -------------------------------------------------------------------------
     # Feature Flag 守护：默认 OFF，关闭时返回 skipped=True 不阻塞
@@ -1001,7 +1164,7 @@ def run_seven_axis_validation(
         failed_axes, degraded_axes,
     )
 
-    return SevenAxisReport(
+    report = SevenAxisReport(
         pathway=pathway,
         axes=axes,
         overall_passed=overall_passed,
@@ -1011,6 +1174,39 @@ def run_seven_axis_validation(
         skipped=False,
         skip_reason="",
     )
+
+    # === V4 Enhancement: Feature Flag 分支（默认 OFF，不影响 v3/v4）===
+    # V4_SCIENTIFIC_REVIEWER_ENABLED=true 时委托 Task 5 的 run_validation_matrix()
+    # 生成 12 轴结果并附加到 SevenAxisReport.validation_matrix_result。
+    # 失败时记录 warning 并保持 validation_matrix_result=None，不影响主流程。
+    # 铁律：Flag=false 时本分支整体跳过，SevenAxisReport 行为与 v3/v4 完全一致。
+    if settings.V4_SCIENTIFIC_REVIEWER_ENABLED:
+        try:
+            vm_dict = _run_validation_matrix_safe(
+                pathway=pathway,
+                question=question,
+                simulation_csv_path=simulation_csv_path,
+                report_md=report_md,
+                network_json=network_json,
+                parameter_priors=parameter_priors,
+                retrieved_papers=retrieved_papers,
+                biomodels_matches=biomodels_matches,
+                experiments=experiments,
+                canonical_yaml_path=canonical_yaml_path,
+                biomodels_validation_result=biomodels_validation_result,
+                benchmark_result=benchmark_result,
+                reproducibility_metadata=reproducibility_metadata,
+                # [BENCHMARK CLOSURE / Gap 3] 透传扁平化指标
+                simulation_metrics_flat=simulation_metrics_flat,
+            )
+            report.validation_matrix_result = vm_dict
+        except Exception as exc:  # noqa: BLE001 —— Enhancement 失败不阻塞主流程
+            logger.warning(
+                "run_validation_matrix 调用失败，跳过 validation_matrix_result: %s",
+                exc,
+            )
+
+    return report
 
 
 __all__ = [

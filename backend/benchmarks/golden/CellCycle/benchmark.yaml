@@ -1,0 +1,17 @@
+# Golden Benchmark — CellCycle Pathway
+pathway: CellCycle
+question: "Cyclin-CDK complexes drive cell cycle progression through oscillatory dynamics. Cyclin D accumulates in G1 (1-4 h), Rb phosphorylation releases E2F (4-8 h), and Cyclin B-CDK1 triggers mitosis. APC/C-mediated degradation forms negative feedback. Explain the cyclin-CDK oscillation and cell cycle control mechanism and simulate expected dynamics."
+ground_truth: "Cyclin D-CDK4/6 accumulates in early G1 (1-4 h) and phosphorylates Rb at 4-8 h, releasing E2F to transcriptionally induce Cyclin E-CDK2 [PMID:15169868]. Cyclin E-CDK2 further phosphorylates Rb forming a positive feedback loop that creates a bistable G1/S switch [PMID:15169868]. Cyclin B-CDK1 peaks at G2/M to trigger mitosis, and APC/C-Cdc20 degrades Cyclin B-CDK1 forming negative feedback that drives cyclin-CDK oscillation [PMID:15169868]. The Chen 2004 model (BIOMD0000000056) of budding yeast cell cycle demonstrates that APC/C-dependent destruction and the RB-E2F bistable switch produce cell-cycle-dependent oscillations [PMID:15169868]."
+canonical_papers: ["PMID:15169868"]  # Chen 2004 Mol Biol Cell（budding yeast cell cycle model）
+canonical_biomodels: ["BIOMD0000000056"]  # Chen2004 Cell Cycle Regulation (budding yeast)，已验证
+expected_mechanism: [CyclinD-CDK4/6, CyclinE-CDK2, CyclinB-CDK1, RB, E2F, APC_C, Cdc20]
+expected_time_scale:
+  cyclin_d_accumulation: "1-4 h (G1 early)"
+  cdk46_activation: "2-6 h"
+  rb_phosphorylation: "4-8 h"
+  cyclin_e_peak: "G1/S transition"
+  cyclin_b_peak: "G2/M"
+expected_experiment: []  # 实验方案，待 Sprint 4 填充
+expected_discussion: {}  # Discussion 预期，待 Sprint 2 填充
+expected_validation: {}  # Validation 预期，待 Sprint 3 填充
+expected_confidence: 0.0  # 预期置信度，待 Sprint 3 填充

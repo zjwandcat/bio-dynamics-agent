@@ -10,37 +10,26 @@ classical_reviews:        # 经典综述（最高优先级，score 5）
     year: 2000
     journal: "Nature Reviews Molecular Cell Biology"
     reason: "TGF-β 信号读取权威综述，定义 Smad 转录复合体信号框架"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "TGF-beta signal transduction dynamics and crosstalk"
+  - pmid: "PMID:18000526"  # Schmierer 2007 - verified, year 2007 (not 2008), title corrected
+    title: "TGFbeta-SMAD signal transduction: molecular specificity and functional flexibility"
     authors: "Schmierer B, Hill CS"
-    year: 2008
+    year: 2007
     journal: "Nature Reviews Molecular Cell Biology"
-    reason: "TGF-β 信号转导动力学与串扰综述，定义 Smad 核质穿梭时序机制"
+    reason: "TGF-β 信号转导分子特异性与功能灵活性综述，定义 Smad 核质穿梭时序机制"
 
 mechanism_papers:         # 机制论文（score 4）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:10615055"  # Wu/Shi 2000 - verified, year 2000 Science (not 2003 Cell), authors corrected
     title: "Structural basis of Smad2 recognition by the Smad anchor for receptor activation"
-    authors: "Shi Y, Massague J"
-    year: 2003
-    journal: "Cell"
+    authors: "Wu G, Chen YG, Ozdamar B, Gyuricza CA, Chong PA, Wrana JL, Massagué J, Shi Y"
+    year: 2000
+    journal: "Science"
     reason: "Smad2 受体激活识别机制结构生物学经典，定义受体磷酸化位点"
 
 biomodels_source_papers:  # BioModels 来源论文（score 3）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID（Clark 2012）
-    biomodels_id: "BIOMD0000000252"
-    title: "TGF-beta signaling dynamics model"
-    authors: "Clark E et al"
-    year: 2012
-    journal: "Molecular Systems Biology"
-    reason: "TGF-β 信号动力学 BioModels 来源模型（具体 PMID 待核实）"
+  []                      # 占位条目已移除：原 BIOMD0000000252 实为 Hunziker 2010 p53 应激模型，非 Clark 2012 TGF-β；Clark 2012 模型未在 BioModels 检索到
 
 recent_applications:      # 近期应用论文（score 2，仅补充）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "TGF-beta dynamics in cancer metastasis and EMT"
-    authors: "Recent TGF-beta application study"
-    year: 2022
-    journal: "Nature Reviews Cancer"
-    reason: "TGF-β 癌症转移与 EMT 动力学近期应用（PubMed 补充）"
+  []                      # 占位条目已移除：原 "Recent TGF-beta application study" 为 PLACEHOLDER
 
 case_reports: []          # 案例报告（score 1，一般不用）
 

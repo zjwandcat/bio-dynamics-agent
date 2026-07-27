@@ -3,10 +3,13 @@
 pathway: JAK_STAT
 name: "JAK-STAT Cytokine Signaling"
 
-canonical_reviews: []      # TODO: verify PMID — Swameye 2003 / Schindler 2008 / Aaronson 2002
+canonical_reviews:          # 权威综述 PMID 列表
+  - "PMID:12552139"         # Swameye 2003 PNAS（STAT5 信号动力学建模）
+  - "PMID:17502367"         # Schindler 2007 J Biol Chem（JAK-STAT 信号转导原理）
+  - "PMID:12040185"         # Aaronson 2002 Science（JAK-STAT 路线图）
 
 canonical_models:           # 权威 BioModels ID 列表
-  - "BIOMD0000000026"       # Swameye 2003 STAT5 model
+  - "BIOMD0000000347"       # Bachmann2011 JAK2-STAT5 feedback control (PMID:21772264)
 
 canonical_mechanism:
   required_nodes:           # 机制节点链（大写蛋白名）
@@ -43,6 +46,19 @@ expected_behavior:          # 动力学行为预期
   socs_feedback: "required"
   transient: true
 
+canonical_timeline:
+  - event: "JAK phosphorylation"
+    time_window: "1-5 min"
+  - event: "STAT5 phosphorylation"
+    time_window: "5-15 min"
+  - event: "STAT5 nuclear translocation"
+    time_window: "10-20 min"
+  - event: "SOCS induction"
+    time_window: "30-60 min"
+  - event: "Negative feedback"
+    present: true
+    mediator: "SOCS, CIS"
+
 known_negative_feedback:    # 已知负反馈
   - SOCS3
   - CIS
@@ -54,3 +70,40 @@ consistency_rules:          # 供 Consistency Checker 加载的自洽规则
   - rule: "SOCS3 表达晚于 STAT5 Peak"
     assertion: "socs3_expression_time > stat5_peak_time"
     violation_label: "socs3_before_stat5_peak"
+
+# ============================================================================
+# Task 12: Spec 补全字段（10 通路 Canonical 对齐）
+# ============================================================================
+expected_dynamics:          # 期望动力学（基于权威文献汇总）
+  STAT5_phosphorylation:
+    peak_time: "5-15 min"
+    behavior: "transient peak then decline (adaptive)"
+    must_decline: true
+  STAT5_nuclear:
+    peak_time: "10-20 min"
+    behavior: "transient nuclear accumulation"
+  SOCS3:
+    peak_time: "30-60 min"
+    behavior: "increasing (feedback)"
+
+curve_requirements:         # 曲线必须满足的硬约束
+  pSTAT5: "必须下降（adaptive）"
+  SOCS3: "持续增加"
+
+expected_experiments:       # 验证机制所需实验
+  - name: "pSTAT5 Western blot"
+    timepoints: [0, 5, 15, 30, 60, 120]
+    mechanism_target: "STAT5 activation dynamics"
+  - name: "SOCS3 qPCR"
+    timepoints: [15, 30, 60, 120]
+    mechanism_target: "SOCS3 negative feedback"
+
+forbidden_experiments:      # 不能验证磷酸化动力学的实验
+  - "STAT5 qPCR (不能反映磷酸化动力学)"
+
+# Task 12 Spec: JAK-STAT Canonical Assertion (SOCS 负反馈)
+socs_feedback_assertions:
+  pathway: "Cytokine → JAK → STAT5 → SOCS3/CIS transcription → JAK inhibition"
+  behavior: "transient STAT5 activation then decline (adaptive)"
+  mechanism: "SOCS3-mediated JAK negative feedback"
+  forbidden_answer: "STAT5 持续高位不下降"

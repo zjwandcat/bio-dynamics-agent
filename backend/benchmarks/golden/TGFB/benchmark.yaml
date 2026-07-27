@@ -1,0 +1,16 @@
+# Golden Benchmark — TGFB Pathway
+pathway: TGFB
+question: "TGF-β stimulation activates TGFBR1 within 1-5 min, leading to SMAD2/3 phosphorylation and SMAD complex nuclear translocation. SMAD7 and SnoN form negative feedback attenuating receptor and SMAD4 activity, producing transient (non-sustained) signaling. Explain the TGF-β/SMAD signaling dynamics and simulate expected behavior."
+ground_truth: "TGF-β binds TGFBR1/TGFBR2 activating the receptor within 1-5 min, which phosphorylates SMAD2/3 at 5-15 min [PMID:10854325]. Phosphorylated SMAD2/3 form heterodimers with SMAD4 and translocate to the nucleus at 15-30 min [PMID:10854325]. Nuclear SMAD complex transcriptionally induces SMAD7 and SnoN (1-2 h), which form negative feedback: SMAD7 inhibits TGFBR1 and SnoN inhibits SMAD4 [PMID:10854325]. This negative feedback makes TGF-β/SMAD signaling transient (non-sustained); SMAD7 feedback is required for signal attenuation [PMID:10854325]."
+canonical_papers: ["PMID:10854325"]  # Massague 2000 Nature Cell Biology（SMAD 信号）
+canonical_biomodels: ["BIOMD0000000342"]  # Zi2011 TGF-beta pathway
+expected_mechanism: [TGFbeta, TGFBR1, TGFBR2, SMAD2, SMAD3, SMAD4, SMAD7, SnoN]
+expected_time_scale:
+  tgf_beta_receptor_activation: "1-5 min"
+  smad23_phosphorylation: "5-15 min"
+  smad_nuclear_translocation: "15-30 min"
+  smad7_induction: "1-2 h"
+expected_experiment: []  # 实验方案，待 Sprint 4 填充
+expected_discussion: {}  # Discussion 预期，待 Sprint 2 填充
+expected_validation: {}  # Validation 预期，待 Sprint 3 填充
+expected_confidence: 0.0  # 预期置信度，待 Sprint 3 填充

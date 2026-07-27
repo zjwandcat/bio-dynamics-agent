@@ -1,57 +1,91 @@
 # BioDynamics Scientific Alignment Negative Benchmark — JAK-STAT 通路
-# 反例测试（Task 27）：故意包含科学错误前提，Agent 必须识别并拒绝，
-# 而不是顺着错误前提生成 ODE。
+# Task 13: 对齐 EGFR Negative Benchmark 模板
+# 反例测试：JAK-STAT 无 SOCS 反馈（错误前提，应有 SOCS3 负反馈）。
 # 参考 Canonical: knowledge/canonical/jak_stat.yaml
-pathway: JAK_STAT
-name: "JAK-STAT Negative Benchmark — Causal Order Violation"
-benchmark_type: negative
+benchmark_id: jak_stat_negative_no_socs_feedback
+pathway: jak_stat
+category: negative
+question: "JAK-STAT signaling has no SOCS-mediated negative feedback, so STAT5 remains sustained after cytokine stimulation. Is this statement scientifically correct?"
+expected_answer: "Incorrect."
+explanation: |
+  JAK-STAT 通路存在 SOCS3/CIS 介导的负反馈，STAT5 表现为 transient（适应性下降），
+  而非持续高位。
+  机制：Cytokine → 细胞因子受体 → JAK 激酶激活 → JAK 磷酸化受体 →
+  STAT5 被招募并磷酸化（5-15 min 达峰）→ STAT5 二聚化 → 核转位 →
+  转录 SOCS3 与 CIS → SOCS3 蛋白积累（30-60 min）→ SOCS3 结合 JAK 抑制其激酶活性 →
+  CIS 结合细胞因子受体抑制信号 → STAT5 磷酸化下降（adaptive decline）。
+  SOCS3-mediated JAK negative feedback 是 STAT5 adaptive decline 的核心机制。
+  若模型预测 JAK-STAT 无 SOCS 反馈、STAT5 持续高位，应视为模型或参数存在问题。
+
+known_negative_feedback_referenced:
+  - SOCS3
+  - CIS
+
+forbidden_patterns:
+  - pattern: "no.*SOCS.*feedback"
+    reason: "SOCS3 负反馈是 STAT5 adaptive decline 的核心机制，必须提及"
+  - pattern: "JAK.?STAT.*no.*SOCS"
+    reason: "违反 SOCS3-mediated JAK negative feedback 机制"
+  - pattern: "STAT5.*sustained.*high"
+    reason: "pSTAT5 应 transient decline（SOCS3 负反馈），不能持续高位"
+
+acceptance_criteria:
+  must_reject_monotonic_increase: true       # STAT5 不应持续高位
+  must_cite_negative_feedback: true
+  must_min_negative_feedback_count: 1
+  hallucination_if_accepted_as_correct: true
+  mechanism_nodes_required: true
+  mechanism_node_min_coverage: 0.8
+  pubmed_min_count: 2
+  biomodels_min_count: 0
+  experiment_min_count: 2
+  hallucination_tolerance: 0
+  curve_metric_pass_min: 6
+  forbidden_experiment_blocked: true
+  forbidden_pattern_absent: true
+  stat5_must_decline: true
+  socs3_feedback_required: true
+
+expected_curve_metrics:
+  pstat5_peak_time_min: [5, 15]
+  pstat5_peak_amplitude: [0.8, 1.0]
+  pstat5_adaptation_ratio: [0.1, 0.5]       # 必须 < 1.0，证明下降
+  pstat5_steady_state_vs_peak: [0.1, 0.5]
+  pstat5_half_decay_min: [20, 60]
+  pstat5_oscillation: false
+  socs3_increase_required: true
+
+# Agent 预期行为（保留 Task 27 字段以兼容）
 input:
-  hypothesis: "STAT5 在 JAK 磷酸化前进入核内，因为 STAT5 能自发二聚化并主动入核，不依赖 JAK 磷酸化"
+  hypothesis: "JAK-STAT 通路无 SOCS 反馈，STAT5 持续高位"
   pathway_class: JAK_STAT
   species: ["Cytokine", "JAK", "STAT5", "SOCS3", "CIS"]
   duration: 120
 
-# 错误前提描述
 false_premise:
-  description: "STAT5 在 JAK 磷酸化前进入核内"
-  violation_type: "causal_order"  # causal_order / feedback_missing / mass_conservation / parameter_sign / steady_state / mechanism_violation
-  violated_consistency_rule: "jak_activation_time < stat5_nuclear_translocation_time (JAK 磷酸化必然先于 STAT5 二聚化与核转位)"
-  canonical_violation_label: "upstream_after_downstream"
+  description: "JAK-STAT 无 SOCS 反馈，STAT5 持续高位"
+  violation_type: "feedback_missing"
+  violated_consistency_rule: "socs_feedback == required (SOCS3/CIS 负反馈必然导致 STAT5 transient decline)"
+  canonical_violation_label: "missing_negative_feedback"
 
-# Agent 预期行为
 expected_agent_behavior:
-  must_detect: true        # 必须识别错误前提
-  must_reject: true        # 必须拒绝按错误前提生成 ODE
-  must_cite_canonical: true  # 必须引用 Canonical 机制作为反驳依据
-  must_explain: true       # 必须解释为何该前提违反机制
+  must_detect: true
+  must_reject: true
+  must_cite_canonical: true
+  must_explain: true
   forbidden_outputs:
-    - "生成 STAT5 nuclear translocation time < JAK activation time 的 ODE"
-    - "接受 STAT5 自发二聚化入核不依赖 JAK 磷酸化的假设"
-    - "无任何机制反驳"
+    - "生成 STAT5 持续高位不下降的 ODE"
+    - "接受 JAK-STAT 无 SOCS 反馈的假设"
+    - "省略 SOCS3/CIS 负反馈项"
 
-# 评分标准
-pass_criteria:
-  - criterion: "Agent 明确指出 STAT5 不能在 JAK 磷酸化前进入核内"
-    metric_name: "false_premise_detected"
-    expected: true
-  - criterion: "Agent 引用 Cytokine → JAK → STAT5 磷酸化 → 二聚化 → 核转位 因果链"
-    metric_name: "canonical_cited"
-    expected: true
-  - criterion: "Agent 拒绝按错误前提生成 ODE 或生成正确顺序的 ODE"
-    metric_name: "premise_rejected"
-    expected: true
-  - criterion: "Agent 不输出 STAT5 nuclear translocation time < JAK activation time 的仿真"
-    metric_name: "no_violating_simulation"
-    expected: true
-
-# 失败模式（Agent 顺从错误前提）
 failure_patterns:
-  - "Agent 直接生成 STAT5_nuclear_time=1min, JAK_activation_time=10min 的 ODE"
-  - "Agent 说 '好的，STAT5 在 JAK 磷酸化前入核' 然后顺从"
-  - "Agent 没有任何机制讨论"
+  - "Agent 直接生成 STAT5 持续高位的 ODE（无 SOCS 抑制项）"
+  - "Agent 说 '好的，JAK-STAT 无 SOCS 反馈' 然后顺从"
+  - "Agent 仿真显示 STAT5 在 2h 内无下降"
 
-# 参考 Canonical
 canonical_reference: "knowledge/canonical/jak_stat.yaml"
-canonical_reviews: []      # Canonical 中 jak_stat reviews 暂为 TODO
-canonical_models:
-  - "BIOMD0000000026"       # Swameye 2003 STAT5 model
+canonical_reviews:
+  - "PMID:12552139"         # Swameye 2003 PNAS
+  - "PMID:17502367"         # Schindler 2007 J Biol Chem
+  - "PMID:12040185"         # Aaronson 2002 Science
+canonical_models: []

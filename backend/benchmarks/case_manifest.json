@@ -1,0 +1,1423 @@
+{
+  "schema_version": "1.0",
+  "generated_from": "C:\\Users\\27553\\Desktop\\gzlab\\Benchmark_QA_Collection.md",
+  "registry_source": "biomodels_registry.py",
+  "total_cases": 43,
+  "total_weight": 363,
+  "weight_target": 363,
+  "pathways": {
+    "EGFR": 4,
+    "MAPK": 4,
+    "PI3K": 4,
+    "p53": 4,
+    "CellCycle": 4,
+    "Apoptosis": 4,
+    "NFkB": 4,
+    "JAK_STAT": 4,
+    "Wnt": 4,
+    "TGF_beta": 4,
+    "CrossPathway": 3
+  },
+  "cases": {
+    "1.E1": {
+      "case_id": "1.E1",
+      "pathway": "EGFR",
+      "title": "EGFR Canonical Activation",
+      "difficulty": "L1",
+      "weight": 10,
+      "expected_biomodels_ids": [
+        "BIOMD0000000048"
+      ],
+      "verified_biomodels_id": "BIOMD0000000048",
+      "canonical_required_pmids": [
+        "11743495",
+        "12451180"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "1.E2": {
+      "case_id": "1.E2",
+      "pathway": "EGFR",
+      "title": "EGFR Negative Feedback Dynamics",
+      "difficulty": "L2",
+      "weight": 9,
+      "expected_biomodels_ids": [
+        "BIOMD0000000048"
+      ],
+      "verified_biomodels_id": "BIOMD0000000048",
+      "canonical_required_pmids": [
+        "11024454",
+        "12451180"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C7",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "1.E3": {
+      "case_id": "1.E3",
+      "pathway": "EGFR",
+      "title": "EGFR Pathway Perturbation",
+      "difficulty": "L3",
+      "weight": 7,
+      "expected_biomodels_ids": [
+        "BIOMD0000000048"
+      ],
+      "verified_biomodels_id": "BIOMD0000000048",
+      "canonical_required_pmids": [
+        "12451180"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "1.E4": {
+      "case_id": "1.E4",
+      "pathway": "EGFR",
+      "title": "EGFR BioModels Track A Validation",
+      "difficulty": "L5",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000048"
+      ],
+      "verified_biomodels_id": "BIOMD0000000048",
+      "canonical_required_pmids": [
+        "12451180"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C4",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "10.T1": {
+      "case_id": "10.T1",
+      "pathway": "TGF_beta",
+      "title": "TGF-β Canonical Smad Activation",
+      "difficulty": "L1",
+      "weight": 10,
+      "expected_biomodels_ids": [
+        "BIOMD0000000342"
+      ],
+      "verified_biomodels_id": "BIOMD0000000342",
+      "canonical_required_pmids": [
+        "10854325",
+        "18000526"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C6",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "10.T2": {
+      "case_id": "10.T2",
+      "pathway": "TGF_beta",
+      "title": "SMAD7 Negative Feedback",
+      "difficulty": "L2",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000342"
+      ],
+      "verified_biomodels_id": "BIOMD0000000342",
+      "canonical_required_pmids": [
+        "18000526",
+        "10854325"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C7",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "10.T3": {
+      "case_id": "10.T3",
+      "pathway": "TGF_beta",
+      "title": "SB431542 TβRI Inhibitor",
+      "difficulty": "L3",
+      "weight": 7,
+      "expected_biomodels_ids": [
+        "BIOMD0000000342"
+      ],
+      "verified_biomodels_id": "BIOMD0000000342",
+      "canonical_required_pmids": [
+        "10854325"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "10.T4": {
+      "case_id": "10.T4",
+      "pathway": "TGF_beta",
+      "title": "Zi 2011 TGF-beta pathway BioModels Track A Validation",
+      "difficulty": "L5",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000342"
+      ],
+      "verified_biomodels_id": "BIOMD0000000342",
+      "canonical_required_pmids": [
+        "10854325"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C4",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "11.X1": {
+      "case_id": "11.X1",
+      "pathway": "CrossPathway",
+      "title": "Drug Combination EGFR + MEK Inhibitor",
+      "difficulty": "L4",
+      "weight": 9,
+      "expected_biomodels_ids": [
+        "BIOMD0000000048",
+        "BIOMD0000000010"
+      ],
+      "verified_biomodels_id": "",
+      "canonical_required_pmids": [
+        "11706397",
+        "21245089"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C6",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": false,
+      "track_a_semantics": "multi_model_no_single_target"
+    },
+    "11.X2": {
+      "case_id": "11.X2",
+      "pathway": "CrossPathway",
+      "title": "Drug Resistance EGFR + PI3K Bypass",
+      "difficulty": "L4",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000048",
+        "BIOMD0000000262"
+      ],
+      "verified_biomodels_id": "",
+      "canonical_required_pmids": [
+        "17463250",
+        "21430269"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": false,
+      "track_a_semantics": "multi_model_no_single_target"
+    },
+    "11.X3": {
+      "case_id": "11.X3",
+      "pathway": "CrossPathway",
+      "title": "TP53-Dependent Response to BCL-2 Inhibition",
+      "difficulty": "L4",
+      "weight": 9,
+      "expected_biomodels_ids": [
+        "BIOMD0000000252",
+        "BIOMD0000000102"
+      ],
+      "verified_biomodels_id": "",
+      "canonical_required_pmids": [
+        "23291630",
+        "31048320"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C6",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": false,
+      "track_a_semantics": "multi_model_no_single_target"
+    },
+    "2.M1": {
+      "case_id": "2.M1",
+      "pathway": "MAPK",
+      "title": "MAPK Three-tier Cascade Amplification",
+      "difficulty": "L1",
+      "weight": 10,
+      "expected_biomodels_ids": [
+        "BIOMD0000000010"
+      ],
+      "verified_biomodels_id": "BIOMD0000000010",
+      "canonical_required_pmids": [
+        "8663050",
+        "10712587"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C6",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "2.M2": {
+      "case_id": "2.M2",
+      "pathway": "MAPK",
+      "title": "MAPK Negative Feedback Oscillation",
+      "difficulty": "L2",
+      "weight": 9,
+      "expected_biomodels_ids": [
+        "BIOMD0000000010"
+      ],
+      "verified_biomodels_id": "BIOMD0000000010",
+      "canonical_required_pmids": [
+        "10712587"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C7",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "2.M3": {
+      "case_id": "2.M3",
+      "pathway": "MAPK",
+      "title": "MAPK Cascade Perturbation",
+      "difficulty": "L3",
+      "weight": 7,
+      "expected_biomodels_ids": [
+        "BIOMD0000000010"
+      ],
+      "verified_biomodels_id": "BIOMD0000000010",
+      "canonical_required_pmids": [
+        "10712587"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "2.M4": {
+      "case_id": "2.M4",
+      "pathway": "MAPK",
+      "title": "MAPK Bistability Validation",
+      "difficulty": "L5",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000010",
+        "BIOMD0000000015"
+      ],
+      "verified_biomodels_id": "BIOMD0000000010",
+      "canonical_required_pmids": [
+        "10712587"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C4",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "3.P1": {
+      "case_id": "3.P1",
+      "pathway": "PI3K",
+      "title": "PI3K-AKT Canonical Activation",
+      "difficulty": "L1",
+      "weight": 10,
+      "expected_biomodels_ids": [
+        "BIOMD0000000262"
+      ],
+      "verified_biomodels_id": "BIOMD0000000262",
+      "canonical_required_pmids": [
+        "17255734",
+        "15718470"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C6",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "3.P2": {
+      "case_id": "3.P2",
+      "pathway": "PI3K",
+      "title": "mTORC1-S6K1 Negative Feedback",
+      "difficulty": "L2",
+      "weight": 9,
+      "expected_biomodels_ids": [
+        "BIOMD0000000262"
+      ],
+      "verified_biomodels_id": "BIOMD0000000262",
+      "canonical_required_pmids": [
+        "17255734",
+        "21157483"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C7",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "3.P3": {
+      "case_id": "3.P3",
+      "pathway": "PI3K",
+      "title": "PI3K Pathway Perturbation",
+      "difficulty": "L3",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000262"
+      ],
+      "verified_biomodels_id": "BIOMD0000000262",
+      "canonical_required_pmids": [
+        "17255734"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "3.P4": {
+      "case_id": "3.P4",
+      "pathway": "PI3K",
+      "title": "PI3K BioModels Track A Validation",
+      "difficulty": "L5",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000262"
+      ],
+      "verified_biomodels_id": "BIOMD0000000262",
+      "canonical_required_pmids": [
+        "17255734"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C4",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "4.P1": {
+      "case_id": "4.P1",
+      "pathway": "p53",
+      "title": "p53 Canonical DNA Damage Response",
+      "difficulty": "L1",
+      "weight": 10,
+      "expected_biomodels_ids": [
+        "BIOMD0000000252"
+      ],
+      "verified_biomodels_id": "BIOMD0000000252",
+      "canonical_required_pmids": [
+        "11099028",
+        "9039259"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C6",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "4.P2": {
+      "case_id": "4.P2",
+      "pathway": "p53",
+      "title": "p53-Mdm2 Negative Feedback Oscillation",
+      "difficulty": "L2",
+      "weight": 9,
+      "expected_biomodels_ids": [
+        "BIOMD0000000252"
+      ],
+      "verified_biomodels_id": "BIOMD0000000252",
+      "canonical_required_pmids": [
+        "11016968",
+        "14977579"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C7",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "4.P3": {
+      "case_id": "4.P3",
+      "pathway": "p53",
+      "title": "p53 Pathway Perturbation (Nutlin-3)",
+      "difficulty": "L3",
+      "weight": 7,
+      "expected_biomodels_ids": [
+        "BIOMD0000000252"
+      ],
+      "verified_biomodels_id": "BIOMD0000000252",
+      "canonical_required_pmids": [
+        "11099028"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "4.P4": {
+      "case_id": "4.P4",
+      "pathway": "p53",
+      "title": "p53 BioModels Track A Validation",
+      "difficulty": "L5",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000252"
+      ],
+      "verified_biomodels_id": "BIOMD0000000252",
+      "canonical_required_pmids": [
+        "11016968"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C4",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "5.C1": {
+      "case_id": "5.C1",
+      "pathway": "CellCycle",
+      "title": "Cyclin-CDK Four Phase Progression",
+      "difficulty": "L1",
+      "weight": 10,
+      "expected_biomodels_ids": [
+        "BIOMD0000000056"
+      ],
+      "verified_biomodels_id": "BIOMD0000000056",
+      "canonical_required_pmids": [
+        "11381155",
+        "19238148"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "5.C2": {
+      "case_id": "5.C2",
+      "pathway": "CellCycle",
+      "title": "Rb-E2F Bistable Switch",
+      "difficulty": "L2",
+      "weight": 9,
+      "expected_biomodels_ids": [
+        "BIOMD0000000056"
+      ],
+      "verified_biomodels_id": "BIOMD0000000056",
+      "canonical_required_pmids": [
+        "11371178",
+        "15363676"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C7",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "5.C3": {
+      "case_id": "5.C3",
+      "pathway": "CellCycle",
+      "title": "Palbociclib CDK4/6 Inhibition",
+      "difficulty": "L3",
+      "weight": 7,
+      "expected_biomodels_ids": [
+        "BIOMD0000000056"
+      ],
+      "verified_biomodels_id": "BIOMD0000000056",
+      "canonical_required_pmids": [
+        "19238148"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "5.C4": {
+      "case_id": "5.C4",
+      "pathway": "CellCycle",
+      "title": "Cell Cycle BioModels Track A Validation",
+      "difficulty": "L5",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000056"
+      ],
+      "verified_biomodels_id": "BIOMD0000000056",
+      "canonical_required_pmids": [
+        "15169868"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C4",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "6.A1": {
+      "case_id": "6.A1",
+      "pathway": "Apoptosis",
+      "title": "Extrinsic Apoptosis Canonical Pathway",
+      "difficulty": "L1",
+      "weight": 10,
+      "expected_biomodels_ids": [
+        "BIOMD0000000102"
+      ],
+      "verified_biomodels_id": "BIOMD0000000102",
+      "canonical_required_pmids": [
+        "18073771",
+        "14744432"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C6",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "6.A2": {
+      "case_id": "6.A2",
+      "pathway": "Apoptosis",
+      "title": "Intrinsic Apoptosis MOMP",
+      "difficulty": "L2",
+      "weight": 9,
+      "expected_biomodels_ids": [
+        "BIOMD0000000102"
+      ],
+      "verified_biomodels_id": "BIOMD0000000102",
+      "canonical_required_pmids": [
+        "15286356",
+        "14744432"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C7",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "6.A3": {
+      "case_id": "6.A3",
+      "pathway": "Apoptosis",
+      "title": "ABT-199 BH3 Mimetic",
+      "difficulty": "L3",
+      "weight": 7,
+      "expected_biomodels_ids": [
+        "BIOMD0000000102"
+      ],
+      "verified_biomodels_id": "BIOMD0000000102",
+      "canonical_required_pmids": [
+        "14744432"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "6.A4": {
+      "case_id": "6.A4",
+      "pathway": "Apoptosis",
+      "title": "Apoptosis BioModels Track A Validation",
+      "difficulty": "L5",
+      "weight": 7,
+      "expected_biomodels_ids": [
+        "BIOMD0000000102"
+      ],
+      "verified_biomodels_id": "BIOMD0000000102",
+      "canonical_required_pmids": [
+        "18073771"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C4",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "7.N1": {
+      "case_id": "7.N1",
+      "pathway": "NFkB",
+      "title": "NF-κB Canonical Activation",
+      "difficulty": "L1",
+      "weight": 10,
+      "expected_biomodels_ids": [
+        "BIOMD0000000140"
+      ],
+      "verified_biomodels_id": "BIOMD0000000140",
+      "canonical_required_pmids": [
+        "15371334",
+        "12124261"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C6",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "7.N2": {
+      "case_id": "7.N2",
+      "pathway": "NFkB",
+      "title": "NF-κB IκBα Negative Feedback Oscillation",
+      "difficulty": "L2",
+      "weight": 9,
+      "expected_biomodels_ids": [
+        "BIOMD0000000140"
+      ],
+      "verified_biomodels_id": "BIOMD0000000140",
+      "canonical_required_pmids": [
+        "12124261",
+        "15499023"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C7",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "7.N3": {
+      "case_id": "7.N3",
+      "pathway": "NFkB",
+      "title": "Bortezomib Proteasome Inhibition",
+      "difficulty": "L3",
+      "weight": 7,
+      "expected_biomodels_ids": [
+        "BIOMD0000000140"
+      ],
+      "verified_biomodels_id": "BIOMD0000000140",
+      "canonical_required_pmids": [
+        "15371334"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "7.N4": {
+      "case_id": "7.N4",
+      "pathway": "NFkB",
+      "title": "Hoffmann 2002 IkB/NF-kB signalling BioModels Track A Validation",
+      "difficulty": "L5",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000140"
+      ],
+      "verified_biomodels_id": "BIOMD0000000140",
+      "canonical_required_pmids": [
+        "12124261"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C4",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "8.J1": {
+      "case_id": "8.J1",
+      "pathway": "JAK_STAT",
+      "title": "JAK-STAT Canonical Activation",
+      "difficulty": "L1",
+      "weight": 10,
+      "expected_biomodels_ids": [
+        "BIOMD0000000347"
+      ],
+      "verified_biomodels_id": "BIOMD0000000347",
+      "canonical_required_pmids": [
+        "17502367",
+        "12040185"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C6",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "8.J2": {
+      "case_id": "8.J2",
+      "pathway": "JAK_STAT",
+      "title": "SOCS Negative Feedback Adaptation",
+      "difficulty": "L2",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000347"
+      ],
+      "verified_biomodels_id": "BIOMD0000000347",
+      "canonical_required_pmids": [
+        "28716890",
+        "17502367"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C7",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "8.J3": {
+      "case_id": "8.J3",
+      "pathway": "JAK_STAT",
+      "title": "Ruxolitinib JAK Inhibitor",
+      "difficulty": "L3",
+      "weight": 7,
+      "expected_biomodels_ids": [
+        "BIOMD0000000347"
+      ],
+      "verified_biomodels_id": "BIOMD0000000347",
+      "canonical_required_pmids": [
+        "17502367"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "8.J4": {
+      "case_id": "8.J4",
+      "pathway": "JAK_STAT",
+      "title": "Bachmann 2011 JAK2/STAT5 feedback control BioModels Track A Validation",
+      "difficulty": "L5",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000347"
+      ],
+      "verified_biomodels_id": "BIOMD0000000347",
+      "canonical_required_pmids": [
+        "12552139"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C4",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "9.W1": {
+      "case_id": "9.W1",
+      "pathway": "Wnt",
+      "title": "Wnt Canonical β-catenin Activation",
+      "difficulty": "L1",
+      "weight": 10,
+      "expected_biomodels_ids": [
+        "BIOMD0000000658"
+      ],
+      "verified_biomodels_id": "BIOMD0000000658",
+      "canonical_required_pmids": [
+        "17081971",
+        "23169527"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C6",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "9.W2": {
+      "case_id": "9.W2",
+      "pathway": "Wnt",
+      "title": "Wnt Destruction Complex + Axin2 Negative Feedback",
+      "difficulty": "L2",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000658"
+      ],
+      "verified_biomodels_id": "BIOMD0000000658",
+      "canonical_required_pmids": [
+        "17081971",
+        "14551908"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C7",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "9.W3": {
+      "case_id": "9.W3",
+      "pathway": "Wnt",
+      "title": "XAV939 Tankyrase Inhibitor",
+      "difficulty": "L3",
+      "weight": 7,
+      "expected_biomodels_ids": [
+        "BIOMD0000000658"
+      ],
+      "verified_biomodels_id": "BIOMD0000000658",
+      "canonical_required_pmids": [
+        "17081971"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C4",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    },
+    "9.W4": {
+      "case_id": "9.W4",
+      "pathway": "Wnt",
+      "title": "Wnt BioModels Track A Validation",
+      "difficulty": "L5",
+      "weight": 8,
+      "expected_biomodels_ids": [
+        "BIOMD0000000658"
+      ],
+      "verified_biomodels_id": "BIOMD0000000658",
+      "canonical_required_pmids": [
+        "14551908"
+      ],
+      "critical_criteria": [
+        "C1",
+        "C3",
+        "C4",
+        "C5",
+        "C8",
+        "C9"
+      ],
+      "optional_criteria": [
+        "C2",
+        "C6",
+        "C7",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "track_a_required": true,
+      "track_a_semantics": "standard"
+    }
+  }
+}

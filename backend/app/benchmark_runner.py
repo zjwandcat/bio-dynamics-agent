@@ -413,6 +413,8 @@ class BenchmarkRunner:
             "multi_dim_confidence": orch_result.multi_dim_confidence,
             "acceptance_report": orch_result.acceptance_report,
             "scientific_alignment": orch_result.scientific_alignment,
+            # [Sandbox Fix] 沙箱产物清单（csv_path / sha256 / columns / row_count）
+            "artifact_manifest": orch_result.artifact_manifest,
         }
 
         # 从真实 metrics 评估 pass_criteria（替代 synthetic metrics）

@@ -55,16 +55,17 @@ setup_logging(level=settings.LOG_LEVEL, json_output=settings.LOG_JSON)
 # =============================================================================
 # Task 21 Step 2: Scientific Alignment 后处理（chat 流集成）
 # =============================================================================
-# pathway_class → canonical 名映射（与 orchestrator.py _PATHWAY_CLASS_TO_CANONICAL 对齐）
+# pathway_class → canonical 名映射（与 PATHWAY_REGISTRY / benchmark_runner._PATHWAY_CLASS_TO_CANONICAL 对齐）
+# P0-SA-1 修复：键名必须与 ontology/pathway_registry.py PATHWAY_REGISTRY 完全一致
 _SA_PATHWAY_TO_CANONICAL: dict[str, str] = {
     "EGFR_RTK": "egfr",
-    "MAPK_CASCADE": "mapk",
-    "PI3K_AKT_MTOR": "pi3k_akt_mtor",
+    "MAPK_ERK": "mapk",
+    "PI3K_AKT_mTOR": "pi3k_akt_mtor",
     "JAK_STAT": "jak_stat",
     "TGF_BETA": "tgf_beta",
     "WNT": "wnt",
-    "P53": "p53",
-    "NFKB": "nf_kappa_b",
+    "p53": "p53",
+    "NF_KB": "nf_kappa_b",
     "APOPTOSIS": "apoptosis",
     "CELL_CYCLE": "cell_cycle",
 }
@@ -133,18 +134,30 @@ async def _run_scientific_alignment_postprocess(
     knowledge_graph: dict,
     paper_evidence: list,
     report_markdown: str,
+    simulation_csv_path: str = "",
 ):
-    """Scientific Alignment 后处理：Consistency Checker + Critic + Multi-dim Confidence。
+    """Scientific Alignment 后处理：Consistency Checker + Critic + Multi-dim Confidence + BioModels Calibration。
 
     在 worker_report 完成后运行，受 SA Feature Flags 守护。
-    发射 SSE 事件：sa_consistency_report / sa_critic_report / sa_multi_dim_confidence。
+    发射 SSE 事件：sa_consistency_report / sa_critic_report / sa_multi_dim_confidence /
+                   sa_biomodels_calibration。
     任何异常被上层 try/except 捕获，不影响主流程。
     """
     canonical_name = _SA_PATHWAY_TO_CANONICAL.get(pathway_class, "")
     if not canonical_name:
-        # 通路不在映射表中，跳过 SA 后处理
-        logger.info("[SA] 通路 %s 无 canonical 映射，跳过后处理", pathway_class)
-        return
+        # Sprint 6 修复：MULTI:EGFR_RTK+MAPK_ERK 多通路格式解析
+        # 取第一个通路作为 canonical name（主通路驱动 SA 后处理）
+        if pathway_class and pathway_class.startswith("MULTI:"):
+            _sub_pathways = pathway_class[6:].split("+")
+            if _sub_pathways:
+                canonical_name = _SA_PATHWAY_TO_CANONICAL.get(_sub_pathways[0], "")
+        if not canonical_name:
+            logger.info("[SA] 通路 %s 无 canonical 映射，跳过后处理", pathway_class)
+            return
+        logger.info(
+            "[SA] MULTI 通路 %s → 使用主通路 %s 的 canonical (%s)",
+            pathway_class, _sub_pathways[0], canonical_name,
+        )
 
     metrics_flat = _sa_flatten_metrics(metrics)
     extracted_nodes = _sa_extract_node_names(knowledge_graph)
@@ -157,6 +170,7 @@ async def _run_scientific_alignment_postprocess(
     )
 
     # --- 阶段 9: Consistency Checker ---
+    _consistency_passed = True  # 默认通过（Flag OFF 时）
     if settings.is_sa_feature_enabled("CONSISTENCY_CHECKER"):
         try:
             from app.scientific_alignment import check_consistency
@@ -164,6 +178,7 @@ async def _run_scientific_alignment_postprocess(
                 pathway=canonical_name,
                 simulation_metrics=metrics_flat,
             )
+            _consistency_passed = report.passed
             yield _sse_event({
                 "event": "sa_consistency_report",
                 "data": {
@@ -190,10 +205,36 @@ async def _run_scientific_alignment_postprocess(
             )
         except Exception as exc:
             logger.warning("[SA] Consistency Checker 异常: %s", exc)
+            _consistency_passed = False
             yield _sse_event({
                 "event": "sa_consistency_error",
                 "data": {"message": str(exc)},
             })
+
+    # --- Sprint 3: Consistency 硬 Gate ---
+    # Flag ON 时，Consistency 违规 → 阻断后续 SA 阶段（Critic/MultiDim/Validation/Review）
+    # Flag OFF 时，Consistency 仅 Warning，继续后续阶段（当前行为）
+    if settings.is_sa_feature_enabled("SPRINT3_CONSISTENCY_GATE"):
+        if not _consistency_passed:
+            _gate_labels = [
+                v.violation_label for v in report.violations
+            ] if not _consistency_passed and 'report' in dir() else ["unknown"]
+            yield _sse_event({
+                "event": "sa_consistency_gate_failed",
+                "data": {
+                    "gate": "Consistency Gate",
+                    "passed": False,
+                    "violation_labels": _gate_labels,
+                    "message": f"Consistency Gate Failed: {'; '.join(_gate_labels)}",
+                    "pathway": canonical_name,
+                    "blocked_stages": ["critic", "multi_dim_confidence", "validation_rule_engine", "scientific_review"],
+                },
+            })
+            logger.warning(
+                "[SA] Sprint 3 Consistency Gate FAILED — 阻断后续 SA 阶段: %s",
+                _gate_labels,
+            )
+            return  # 阻断后续 SA 阶段
 
     # --- 阶段 11: Scientific Critic Agent ---
     if settings.is_sa_feature_enabled("SCIENTIFIC_CRITIC"):
@@ -273,6 +314,203 @@ async def _run_scientific_alignment_postprocess(
                 "event": "sa_multi_dim_error",
                 "data": {"message": str(exc)},
             })
+
+    # --- Sprint 3: Validation Rule Engine ---
+    # 100% Rule 驱动：Mass conservation / Peak time / Peak ordering / Evidence count
+    _validation_passed = True
+    if settings.is_sa_feature_enabled("SPRINT3_CONSISTENCY_GATE"):
+        try:
+            from app.scientific_alignment.validation_rule_engine import run_validation_rules
+            from app.scientific_alignment.canonical_loader import load_canonical
+
+            # P0-SA-2 修复：load_canonical() 返回 CanonicalReference dataclass，不是 dict
+            # canonical_timeline 在 raw YAML dict 中；consistency_rules 用 raw 保持 list[dict] 格式
+            try:
+                _canonical_ref = load_canonical(canonical_name)
+                _raw = _canonical_ref.raw or {}
+                _canonical_timeline = _raw.get("canonical_timeline", [])
+                _consistency_rules = _raw.get("consistency_rules", [])
+            except Exception:
+                _canonical_timeline = []
+                _consistency_rules = []
+
+            _val_report = run_validation_rules(
+                pathway=canonical_name,
+                simulation_metrics=metrics_flat,
+                canonical_timeline=_canonical_timeline,
+                consistency_rules=_consistency_rules,
+                evidence_count=len(paper_evidence),
+            )
+            _validation_passed = _val_report.overall_passed
+
+            yield _sse_event({
+                "event": "sa_validation_rule_engine",
+                "data": {
+                    "enabled": _val_report.enabled,
+                    "skipped": _val_report.skipped,
+                    "overall_passed": _val_report.overall_passed,
+                    "passed_count": _val_report.passed_count,
+                    "failed_count": _val_report.failed_count,
+                    "results": [
+                        {
+                            "rule_name": r.rule_name,
+                            "passed": r.passed,
+                            "message": r.message,
+                            "expected": r.expected,
+                            "actual": r.actual,
+                        }
+                        for r in _val_report.results
+                    ],
+                    "pathway": canonical_name,
+                },
+            })
+            logger.info(
+                "[SA] Sprint 3 Validation Rule Engine: passed=%s (%d/%d)",
+                _val_report.overall_passed,
+                _val_report.passed_count,
+                _val_report.passed_count + _val_report.failed_count,
+            )
+        except Exception as exc:
+            logger.warning("[SA] Sprint 3 Validation Rule Engine 异常: %s", exc)
+            yield _sse_event({
+                "event": "sa_validation_error",
+                "data": {"message": str(exc)},
+            })
+
+    # --- Sprint 3: Scientific Review ---
+    # 100% Rule 驱动：Overall Scientific Score（非 LLM "Looks reasonable"）
+    if settings.is_sa_feature_enabled("SPRINT3_CONSISTENCY_GATE"):
+        try:
+            from app.scientific_alignment.scientific_review import run_scientific_review
+
+            # P0-SA-2 修复：load_canonical() 返回 CanonicalReference dataclass，不是 dict
+            # canonical_models 是 dataclass 字段 List[str]；canonical_timeline 在 raw YAML dict 中
+            try:
+                _canonical_ref = load_canonical(canonical_name)
+                _raw = _canonical_ref.raw or {}
+                _canonical_timeline = _raw.get("canonical_timeline", [])
+                _canonical_models = _canonical_ref.canonical_models
+            except Exception:
+                _canonical_timeline = []
+                _canonical_models = []
+            _biomodels_matched = len(_canonical_models) > 0
+
+            _review_report = run_scientific_review(
+                pathway=canonical_name,
+                simulation_metrics=metrics_flat,
+                consistency_passed=_consistency_passed,
+                validation_passed=_validation_passed,
+                evidence_count=len(paper_evidence),
+                biomodels_matched=_biomodels_matched,
+                canonical_timeline=_canonical_timeline,
+            )
+
+            yield _sse_event({
+                "event": "sa_scientific_review",
+                "data": {
+                    "enabled": _review_report.enabled,
+                    "skipped": _review_report.skipped,
+                    "overall_score": _review_report.overall_score,
+                    "overall_passed": _review_report.overall_passed,
+                    "summary": _review_report.summary,
+                    "items": [
+                        {
+                            "name": item.name,
+                            "passed": item.passed,
+                            "score": item.score,
+                            "reason": item.reason,
+                        }
+                        for item in _review_report.items
+                    ],
+                    "pathway": canonical_name,
+                },
+            })
+            logger.info(
+                "[SA] Sprint 3 Scientific Review: score=%s/10 passed=%s",
+                _review_report.overall_score,
+                _review_report.overall_passed,
+            )
+        except Exception as exc:
+            logger.warning("[SA] Sprint 3 Scientific Review 异常: %s", exc)
+            yield _sse_event({
+                "event": "sa_scientific_review_error",
+                "data": {"message": str(exc)},
+            })
+
+    # --- Task F: BioModels Parameter Calibration ---
+    # Agent ODE vs RoadRunner vs BioModels 对比
+    # 输出 Peak Time / Peak Value / RMSE / Correlation 差异
+    # 差异超阈值 → needs_calibration=True
+    if settings.is_sa_feature_enabled("BIOMODELS_CALIBRATION"):
+        if not simulation_csv_path:
+            logger.info("[SA] Task F BioModels Calibration 跳过：无 simulation_csv_path")
+            yield _sse_event({
+                "event": "sa_biomodels_calibration_skipped",
+                "data": {"reason": "no_simulation_csv", "pathway": canonical_name},
+            })
+        else:
+            try:
+                from app.scientific_alignment.biomodels_calibration import BioModelsComparator
+
+                _comparator = BioModelsComparator()
+                _calib_result = _comparator.compare(
+                    agent_csv_path=simulation_csv_path,
+                    pathway=pathway_class,  # 传 v4_pathway_class（含 MULTI 前缀也无妨，模块内部解析）
+                    duration=120.0,
+                    n_points=500,
+                )
+
+                yield _sse_event({
+                    "event": "sa_biomodels_calibration",
+                    "data": {
+                        "pathway": _calib_result.pathway,
+                        "biomodel_id": _calib_result.biomodel_id,
+                        "biomodel_loaded": _calib_result.biomodel_loaded,
+                        "agent_species_count": _calib_result.agent_species_count,
+                        "biomodel_species_count": _calib_result.biomodel_species_count,
+                        "matched_count": _calib_result.matched_count,
+                        "overall_rmse": round(_calib_result.overall_rmse, 4),
+                        "overall_correlation": round(_calib_result.overall_correlation, 4),
+                        "needs_calibration": _calib_result.needs_calibration,
+                        "error": _calib_result.error,
+                        # validation_report 兼容字段（对接 _c4/_c8 期望命名）
+                        "rmse": round(_calib_result.rmse, 4),
+                        "correlation": round(_calib_result.correlation, 4),
+                        "sbml_sim_available": _calib_result.sbml_sim_available,
+                        "checksum_verified": _calib_result.checksum_verified,
+                        "method": _calib_result.method,
+                        "pass": _calib_result.pass_,
+                        "species": [
+                            {
+                                "agent_species": c.agent_species,
+                                "biomodel_species": c.biomodel_species,
+                                "matched": c.matched,
+                                "peak_time_diff_min": round(c.peak_time_diff, 2),
+                                "peak_value_diff_pct": round(c.peak_value_diff_pct, 4),
+                                "rmse": round(c.rmse, 4),
+                                "correlation": round(c.correlation, 4),
+                                "needs_calibration": c.needs_calibration,
+                            }
+                            for c in _calib_result.species_comparisons
+                        ],
+                    },
+                })
+                logger.info(
+                    "[SA] Task F BioModels Calibration: biomodel=%s loaded=%s "
+                    "matched=%d rmse=%.3f corr=%.3f needs_calibration=%s",
+                    _calib_result.biomodel_id,
+                    _calib_result.biomodel_loaded,
+                    _calib_result.matched_count,
+                    _calib_result.overall_rmse,
+                    _calib_result.overall_correlation,
+                    _calib_result.needs_calibration,
+                )
+            except Exception as exc:
+                logger.warning("[SA] Task F BioModels Calibration 异常: %s", exc)
+                yield _sse_event({
+                    "event": "sa_biomodels_calibration_error",
+                    "data": {"message": str(exc), "pathway": canonical_name},
+                })
 
 
 @asynccontextmanager
@@ -749,6 +987,7 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
         sa_paper_evidence: list = []   # 从 worker_report 捕获
         sa_metrics: dict = {}          # 从 worker_report 捕获
         sa_pathway_class: str = ""     # 从 _pathway_planner_hook 捕获
+        sa_simulation_csv: str = ""    # Task F: 从 worker_sandbox 捕获仿真 CSV 路径
 
         try:
             # 在流开始时下发当前使用的模型名，供前端展示真实模型而非硬编码占位
@@ -790,27 +1029,45 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
                     # 在 continue 之前捕获该字段，合并 worker_report 载荷后发射 SSE。
                     if event_name == "on_chain_end":
                         _hook_output = event.get("data", {}).get("output", {})
-                        if isinstance(_hook_output, dict) and _hook_output.get("v4_validation_report"):
-                            latest_validation_report = _hook_output["v4_validation_report"]
-                            logger.info(
-                                "[SSE] 捕获 v4_validation_report（来源: %s, "
-                                "overall_pass=%s, failed_levels=%s）",
-                                event_chain_name,
-                                latest_validation_report.get("overall_pass"),
-                                latest_validation_report.get("failed_levels", []),
-                            )
-                            # 合并 level1~level5 + overall_pass 到 worker_report 载荷，
-                            # 重新发射 v4_validation_report SSE（覆盖之前无 level 的版本）
-                            _vp_payload = dict(worker_report_payload)
-                            for _vk in ("level1", "level2", "level3", "level4",
-                                        "level5", "overall_pass", "failed_levels",
-                                        "short_circuit", "agent_version"):
-                                if _vk in latest_validation_report:
-                                    _vp_payload[_vk] = latest_validation_report[_vk]
-                            yield _sse_event({
-                                "event": "v4_validation_report",
-                                "data": _vp_payload,
-                            })
+                        if isinstance(_hook_output, dict):
+                            # RC30: 捕获 v4_validation_report
+                            if _hook_output.get("v4_validation_report"):
+                                latest_validation_report = _hook_output["v4_validation_report"]
+                                logger.info(
+                                    "[SSE] 捕获 v4_validation_report（来源: %s, "
+                                    "overall_pass=%s, failed_levels=%s）",
+                                    event_chain_name,
+                                    latest_validation_report.get("overall_pass"),
+                                    latest_validation_report.get("failed_levels", []),
+                                )
+                                # 合并 level1~level5 + overall_pass 到 worker_report 载荷，
+                                # 重新发射 v4_validation_report SSE（覆盖之前无 level 的版本）
+                                _vp_payload = dict(worker_report_payload)
+                                for _vk in ("level1", "level2", "level3", "level4",
+                                            "level5", "overall_pass", "failed_levels",
+                                            "short_circuit", "agent_version"):
+                                    if _vk in latest_validation_report:
+                                        _vp_payload[_vk] = latest_validation_report[_vk]
+                                yield _sse_event({
+                                    "event": "v4_validation_report",
+                                    "data": _vp_payload,
+                                })
+                            # Sprint 6 修复：_pathway_planner_hook / _pathway_graph_hook
+                            # 不在 NODE_NAMES_V3 中，on_chain_end 事件会在此 continue，
+                            # 导致 v4_pathway_class 永远不被捕获，SA 后处理永远不触发。
+                            # 在 continue 之前捕获 v4_pathway_class + knowledge_graph。
+                            _pc = _hook_output.get("v4_pathway_class")
+                            if _pc and isinstance(_pc, str) and _pc.strip():
+                                current_pathway_class = _pc.strip()
+                                sa_pathway_class = current_pathway_class
+                                logger.info(
+                                    "[SSE] 捕获 v4_pathway_class=%s（来源节点: %s, hook 通道）",
+                                    current_pathway_class, event_chain_name,
+                                )
+                            # 捕获 knowledge_graph（worker_mechanism 内部 hook 可能输出）
+                            _kg = _hook_output.get("knowledge_graph")
+                            if _kg and isinstance(_kg, dict):
+                                sa_knowledge_graph = _kg
                     continue
 
                 output = event.get("data", {}).get("output", {})
@@ -838,6 +1095,11 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
                     if node_name == "worker_report":
                         sa_metrics = output.get("metrics") or {}
                         sa_paper_evidence = output.get("paper_evidence") or []
+                    # Task F: 捕获 worker_sandbox 的仿真 CSV 路径供 BioModels 对比
+                    if node_name == "worker_sandbox":
+                        _sim_csv = output.get("simulation_csv_path")
+                        if _sim_csv and isinstance(_sim_csv, str):
+                            sa_simulation_csv = _sim_csv
 
                 # 在 pre_router 拿到 execution_plan 之后下发按 plan 过滤的 agent_registry
                 # 让前端只看到本次会激活的圈；仅下发一次
@@ -923,6 +1185,28 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
                         "passed": bool(_wr_metrics and not _wr_metrics.get("has_errors", False)),
                     }
 
+                    # Sprint 2 — Evidence Bundle SSE 事件
+                    _sprint2_bundle = _wr_report.get("sprint2_evidence_bundle")
+                    if _sprint2_bundle is not None:
+                        yield _sse_event({
+                            "event": "sa_evidence_bundle",
+                            "data": _sprint2_bundle,
+                        })
+
+                    # Sprint 5 — Parameter Provenance + Decision Log SSE 事件
+                    _sprint5_prov = _wr_report.get("sprint5_provenance")
+                    if _sprint5_prov is not None:
+                        yield _sse_event({
+                            "event": "sa_parameter_provenance",
+                            "data": _sprint5_prov,
+                        })
+                    _sprint5_log = _wr_report.get("sprint5_decision_log")
+                    if _sprint5_log is not None:
+                        yield _sse_event({
+                            "event": "sa_decision_log",
+                            "data": _sprint5_log,
+                        })
+
             # =============================================================
             # Task 21 Step 2: Scientific Alignment 后处理
             # 在 worker_report 完成后、流结束前运行 SA 闭环。
@@ -937,6 +1221,7 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
                         knowledge_graph=sa_knowledge_graph,
                         paper_evidence=sa_paper_evidence,
                         report_markdown=worker_report_payload.get("report_markdown", ""),
+                        simulation_csv_path=sa_simulation_csv,
                     ):
                         yield sa_event
                 except Exception as sa_exc:
@@ -975,39 +1260,35 @@ def _load_timeseries_from_csv(
     后续行为数值。降采样到 max_points 个点以控制 SSE 事件体积（图片 base64
     已占 ~33KB，time_points×species 矩阵若全量发送会显著膨胀）。
 
+    多编码兼容（UTF-8-SIG/GB18030/CP1252），委托 app.csv_io 统一解码边界，
+    避免非 UTF-8 CSV 导致前端曲线加载失败。
+
     Returns:
         (time_points, species_data) — time_points 为时间列 list[float]；
         species_data 为 {species_name: list[float]} 各物种浓度时序。
         读取失败时返回 ([], {})，调用方应回退到空值。
     """
     try:
-        with open(csv_path, "r", newline="", encoding="utf-8") as f:
-            reader = csv_module.reader(f)
-            header = next(reader, None)
-            rows = [r for r in reader if r]
+        from app.csv_io import read_csv_robust
+
+        result = read_csv_robust(csv_path)
     except Exception as exc:
         logger.warning("读取仿真 CSV 失败 (path=%s): %s", csv_path, exc)
         return [], {}
-    if not header or not rows or len(header) < 2:
+    if result.empty or not result.columns:
         return [], {}
-    species_names = [h.strip() for h in header[1:]]
+    n = result.row_count
+    if n == 0:
+        return [], {}
     # 降采样：等步长取样 + 保留末点，避免曲线失真
-    n = len(rows)
     step = max(1, n // max_points)
-    sampled = rows[::step]
-    if sampled[-1] is not rows[-1]:
-        sampled.append(rows[-1])
-    time_points: list[float] = []
-    species_data: dict[str, list[float]] = {name: [] for name in species_names}
-    for row in sampled:
-        if len(row) < len(header):
-            continue
-        try:
-            time_points.append(float(row[0]))
-            for i, name in enumerate(species_names):
-                species_data[name].append(float(row[i + 1]))
-        except (ValueError, IndexError):
-            continue
+    indices = list(range(0, n, step))
+    if indices and indices[-1] != n - 1:
+        indices.append(n - 1)
+    time_points = [result.times[i] for i in indices]
+    species_data: dict[str, list[float]] = {
+        name: [vals[i] for i in indices] for name, vals in result.species.items()
+    }
     return time_points, species_data
 
 

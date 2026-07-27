@@ -1,6 +1,8 @@
 # BioDynamics Scientific Alignment Loop — EGFR Pathway Literature Gold Standard
 # Task 3.1: 文献级 Gold Standard（经典综述/机制论文/BioModels 来源/近期应用/案例报告）
+# Task E:  Canonical Literature Ranking — 每条 Canonical PMID 附 stars（1-5）星级
 # 排序策略：Review(5) > Mechanism(4) > BioModels Source(3) > Recent Application(2) > Case Report(1)
+#           + Canonical stars (1-5) 作为三重排序 Canonical+Embedding+BM25 的 Canonical 分量
 # PubMed 检索结果仅当经典文献不足时补充，不得让随机新论文排在经典文献前面。
 pathway: egfr
 
@@ -10,18 +12,21 @@ classical_reviews:        # 经典综述（最高优先级，score 5）
     authors: "Marshall CJ"
     year: 1995
     journal: "Cell"
+    stars: 5              # ★★★★★ 定义性经典综述
     reason: "EGFR/RTK 信号特异性经典综述，定义 RTK 信号转导范式，被引用数千次"
   - pmid: "PMID:11743495"  # 已确认
     title: "Untangling the ErbB signalling network"
     authors: "Yarden Y, Sliwkowski MX"
     year: 2001
     journal: "Nature Reviews Molecular Cell Biology"
+    stars: 5              # ★★★★★ ErbB 家族权威综述
     reason: "ErbB/EGFR 家族信号网络权威综述，定义 ErbB 异二聚体信号框架"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:16227978"
     title: "Coordinating ERK/MAPK signalling through scaffolds and inhibitors"
     authors: "Kolch W"
-    year: 2000
+    year: 2005
     journal: "Nature Reviews Molecular Cell Biology"
+    stars: 4              # ★★★★ MAPK 支架蛋白综述
     reason: "MAPK/ERK 信号支架蛋白协调机制综述，连接 EGFR 与下游 MAPK"
 
 mechanism_papers:         # 机制论文（score 4）
@@ -30,25 +35,23 @@ mechanism_papers:         # 机制论文（score 4）
     authors: "Schoeberl B et al"
     year: 2002
     journal: "Nature Biotechnology"
+    stars: 5              # ★★★★★ EGFR-MAPK 动力学建模奠基
+    biomodels_id: "BIOMD0000000010"
     reason: "首个 EGFR-MAPK 完整动力学计算模型，量化受体内存化与信号放大"
   - pmid: "PMID:16246870"  # 已确认
     title: "Mathematical modelling of the eukaryotic MAPK signalling cascade"
     authors: "Orton RJ et al"
     year: 2005
     journal: "Computational Biology and Chemistry"
+    stars: 4              # ★★★★ MAPK 建模比较研究
     reason: "MAPK 级联数学建模经典比较研究，覆盖 EGFR 下游多个反馈机制"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Differential feedback and regulation of receptor internalization by EGF"
+  - pmid: "PMID:11024454"
+    title: "Differential feedback regulation of the MAPK cascade underlies the quantitative differences in EGF and NGF signalling in PC12 cells"
     authors: "Brightman FA, Fell DA"
     year: 2000
-    journal: "Biochemical Pharmacology"
+    journal: "FEBS Letters"
+    stars: 3              # ★★★ EGFR 反馈调控建模
     reason: "EGFR 内吞与反馈调控机制建模，揭示受体下调动力学"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Modeling EGFR signaling network for understanding biological robustness"
-    authors: "Chen L et al"
-    year: 2009
-    journal: "Journal of Bioinformatics and Computational Biology"
-    reason: "EGFR 网络鲁棒性建模，分析信号通路的系统级稳定性"
 
 biomodels_source_papers:  # BioModels 来源论文（score 3）
   - pmid: "PMID:12451180"  # 已确认（与 mechanism_papers 重叠，分类时取更高优先级 MECHANISM）
@@ -57,14 +60,9 @@ biomodels_source_papers:  # BioModels 来源论文（score 3）
     authors: "Schoeberl B et al"
     year: 2002
     journal: "Nature Biotechnology"
+    stars: 5              # ★★★★★ BioModels 来源（同 mechanism_papers）
 
-recent_applications:      # 近期应用论文（score 2，仅补充）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "EGFR signaling dynamics in cancer drug resistance"
-    authors: "Recent EGFR application study"
-    year: 2020
-    journal: "Nature Reviews Cancer"
-    reason: "EGFR 耐药动力学近期应用（PubMed 补充，不得排在经典综述前）"
+recent_applications: []      # 近期应用论文（score 2，仅补充）— placeholder removed
 
 case_reports: []          # 案例报告（score 1，一般不用）
 
@@ -75,3 +73,7 @@ ranking_policy:
   application_score: 2
   case_report_score: 1
   rule: "经典综述与机制论文优先；PubMed 结果仅当经典文献不足时补充"
+  # Task E: Canonical stars 融合权重
+  canonical_weight: 0.4    # Canonical stars 分量权重
+  embedding_weight: 0.35   # Embedding 语义相似度权重
+  bm25_weight: 0.25        # BM25 关键词匹配权重

@@ -7,8 +7,7 @@ canonical_reviews:          # 权威综述 PMID 列表
   - "PMID:17255734"         # Manning & Cantley 2007 Cell（AKT/PKB 信号）
 
 canonical_models:           # 权威 BioModels ID 列表
-  - "BIOMD0000000205"       # PI3K-AKT-mTOR pathway model
-  # TODO: verify BIOMD — Gold Standard 引用 BIOMD0000000056，需确认哪个为 PI3K 通路权威模型
+  - "BIOMD0000000262"       # Fujita2010 Akt signalling under EGF (PMID:20664065)
 
 canonical_mechanism:
   required_nodes:           # 机制节点链（大写蛋白名）
@@ -47,6 +46,19 @@ expected_behavior:          # 动力学行为预期
   mtorc1_sustained: true
   tsc2_phosphorylation: true
 
+canonical_timeline:
+  - event: "PI3K activation"
+    time_window: "1-5 min"
+  - event: "AKT phosphorylation"
+    time_window: "5-15 min"
+  - event: "mTOR activation"
+    time_window: "15-30 min"
+  - event: "S6K phosphorylation"
+    time_window: "30-60 min"
+  - event: "Negative feedback"
+    present: true
+    mediator: "S6K-IRS1"
+
 known_negative_feedback:    # 已知负反馈
   - S6K-IRS1
   - mTORC1-RTK
@@ -58,3 +70,55 @@ consistency_rules:          # 供 Consistency Checker 加载的自洽规则
   - rule: "PI3K 活化不能晚于 AKT Peak"
     assertion: "pi3k_activation_time < akt_peak_time"
     violation_label: "upstream_after_downstream"
+
+# ============================================================================
+# Task 12: Spec 补全字段（10 通路 Canonical 对齐）
+# ============================================================================
+expected_dynamics:          # 期望动力学（基于权威文献汇总）
+  AKT:
+    peak_time: "5-15 min"
+    behavior: "sustained activation"
+  mTORC1:
+    peak_time: "15-30 min"
+    behavior: "persistent"
+  S6K:
+    peak_time: "30-60 min"
+    behavior: "increasing then plateau"
+
+curve_requirements:         # 曲线必须满足的硬约束
+  pAKT: "持续激活（不下降）"
+  pS6K: "持续激活"
+
+expected_experiments:       # 验证机制所需实验
+  - name: "pAKT Western blot"
+    timepoints: [0, 5, 15, 30, 60, 120]
+    mechanism_target: "AKT activation dynamics"
+  - name: "pS6K Western blot"
+    timepoints: [0, 15, 30, 60, 120]
+    mechanism_target: "mTORC1 downstream activation"
+
+forbidden_experiments:      # 不能验证 adaptive dynamics 的实验
+  - "AKT qPCR"
+
+# Task 12 Spec: Benchmark 05 PI3K vs MAPK Crosstalk Canonical Assertion
+crosstalk_assertions:
+  mapk_adaptive: true       # ERK 下降
+  akt_persistent: true      # AKT 持续激活
+  reason: "反馈不同"
+  forbidden_answer: "两个一起下降"
+
+# Task 12 Spec: Benchmark 03/04 Inhibitor Canonical Assertions
+inhibitor_assertions:
+  trametinib:               # MEK 抑制剂
+    EGFR: "正常"
+    Ras: "正常"
+    MEK: "down"
+    ERK: "down"
+    DUSP: "down"
+    expected_experiment: "pERK WB (not EGFR qPCR)"
+  gefitinib:                # EGFR 抑制剂
+    EGFR: "down"
+    Ras: "down"
+    ERK: "down"
+    AKT: "down"
+    includes: ["Dose-response", "IC50"]

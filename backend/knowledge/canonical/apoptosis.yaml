@@ -3,10 +3,13 @@
 pathway: APOPTOSIS
 name: "Extrinsic & Intrinsic Apoptosis Signaling"
 
-canonical_reviews: []      # TODO: verify PMID — Taylor 2008 / Danial 2004 / Green 2004
+canonical_reviews:          # 权威综述 PMID 列表
+  - "PMID:18073771"         # Taylor 2008 Nat Rev MCB（凋亡控制性拆除）
+  - "PMID:14744432"         # Danial & Korsmeyer 2004 Cell（细胞死亡关键控制点）
+  - "PMID:15286356"         # Green & Kroemer 2004 Science（线粒体细胞死亡病理生理学）
 
 canonical_models:           # 权威 BioModels ID 列表
-  - "BIOMD0000000205"       # caspase cascade model
+  - "BIOMD0000000102"       # Legewie2006 apoptosis WT (PMID:16978046)
 
 canonical_mechanism:
   required_nodes:           # 机制节点链（大写蛋白名）
@@ -45,6 +48,21 @@ expected_behavior:          # 动力学行为预期
   momp: "irreversible"
   tBid_amplification: true
 
+canonical_timeline:
+  - event: "Cytochrome c release"
+    time_window: "30-60 min after stimulus"
+  - event: "Caspase-9 activation"
+    time_window: "30-60 min"
+  - event: "Caspase-3 activation"
+    time_window: "1-2 h"
+  - event: "PARP cleavage"
+    time_window: "1-2 h"
+  - event: "MOMP"
+    present: true
+  - event: "Negative feedback"
+    present: false
+    note: "Apoptosis is irreversible once MOMP occurs"
+
 known_negative_feedback:    # 已知负反馈
   - XIAP-Caspase3
 
@@ -55,3 +73,37 @@ consistency_rules:          # 供 Consistency Checker 加载的自洽规则
   - rule: "Caspase 激活呈双稳态开关"
     assertion: "caspase_bistable_switch == true"
     violation_label: "no_bistable_switch"
+
+# ============================================================================
+# Task 12: Spec 补全字段（10 通路 Canonical 对齐）
+# ============================================================================
+expected_dynamics:          # 期望动力学（基于权威文献汇总）
+  Caspase3:
+    activation: "threshold / switch-like"
+    behavior: "non-linear (not linear increase)"
+    irreversible: true
+  MOMP:
+    behavior: "all-or-none commitment"
+
+curve_requirements:         # 曲线必须满足的硬约束
+  Caspase3: "开关式激活（非线性、不可逆）"
+  MOMP: "全或无"
+
+expected_experiments:       # 验证机制所需实验
+  - name: "Caspase-3 activity assay (DEVD-AFC)"
+    timepoints: [0, 30, 60, 90, 120, 180]
+    mechanism_target: "Caspase-3 threshold activation"
+  - name: "Cytochrome c release Western blot"
+    timepoints: [0, 30, 60, 120]
+    mechanism_target: "MOMP commitment"
+  - name: "PARP cleavage Western blot"
+    timepoints: [0, 60, 120, 180]
+    mechanism_target: "Caspase-3 downstream substrate cleavage"
+
+forbidden_experiments:      # 不能验证 caspase 活性的实验
+  - "Caspase-3 qPCR (蛋白活性需要 activity assay)"
+
+# Task 12 Spec: Benchmark 08 Apoptosis Canonical Assertion
+trail_assertions:
+  caspase3_activation: "Threshold / Switch-like / irreversible"
+  behavior: "non-linear (not linear increase)"

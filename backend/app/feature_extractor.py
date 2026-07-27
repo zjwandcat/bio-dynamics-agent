@@ -10,11 +10,12 @@
 
 from __future__ import annotations
 
-import csv
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+from app.csv_io import read_csv_robust
 
 
 @dataclass
@@ -33,31 +34,13 @@ class SpeciesMetrics:
 
 
 def _read_csv(csv_path: str) -> tuple[list[float], dict[str, list[float]], list[str]]:
-    """读取 simulation.csv → (t, {species: y}, 列名列表)。"""
-    path = Path(csv_path)
-    if not path.exists():
-        return [], {}, []
-    with path.open("r", encoding="utf-8", newline="") as f:
-        reader = csv.reader(f)
-        header: list[str] = []
-        rows: list[list[float]] = []
-        for idx, row in enumerate(reader):
-            if not row:
-                continue
-            if idx == 0:
-                header = [c.strip() for c in row]
-                continue
-            try:
-                rows.append([float(x) for x in row])
-            except (TypeError, ValueError):
-                continue
-    if not header or not rows:
-        return [], {}, []
-    t = [r[0] for r in rows]
-    species: dict[str, list[float]] = {}
-    for col_idx, name in enumerate(header[1:], start=1):
-        species[name] = [r[col_idx] if col_idx < len(r) else float("nan") for r in rows]
-    return t, species, header[1:]
+    """读取 simulation.csv → (t, {species: y}, 列名列表)。
+
+    委托 :func:`app.csv_io.read_csv_robust`，多编码兼容
+    （UTF-8-SIG/GB18030/CP1252），单一可信源。
+    """
+    result = read_csv_robust(csv_path)
+    return result.times, result.species, result.columns
 
 
 def _peak(y: list[float], t: list[float]) -> tuple[float, float]:
@@ -315,6 +298,45 @@ class ScientificFeatureExtractor:
         per_species_dict = {k: asdict(v) for k, v in per_species.items()}
         combo_dict = {k: asdict(v) for k, v in combo_species.items()}
 
+        # [v5 Recovery Sprint 3 / RC11] 数值爆炸派生指标拦截
+        # 旧实现：half-life=1276115132h（≈14.5 万年）、fold_change>1e6 直接输出到报告。
+        # 修复：不合理派生指标拦截并标记 warning，防止荒谬数值出现在报告中。
+        _HALF_LIFE_MAX_H = 1000.0    # half-life > 1000h 视为数值爆炸
+        _FOLD_CHANGE_MAX = 1e6       # fold_change > 1e6 视为数值爆炸
+        _AUC_MAX = 1e9               # AUC > 1e9 视为数值爆炸
+        for sp_name, sp_metrics in per_species_dict.items():
+            _hl = sp_metrics.get("half_life")
+            if _hl is not None and abs(_hl) > _HALF_LIFE_MAX_H:
+                warnings.append(
+                    f"RC11 half_life explosion: {sp_name} half_life={_hl:.3f}h > {_HALF_LIFE_MAX_H}h, set to None"
+                )
+                sp_metrics["half_life"] = None
+                sp_metrics["half_life_warning"] = "numerical_explosion_intercepted"
+            _fc = sp_metrics.get("fold_change")
+            if _fc is not None and abs(_fc) > _FOLD_CHANGE_MAX:
+                warnings.append(
+                    f"RC11 fold_change explosion: {sp_name} fold_change={_fc:.3e} > {_FOLD_CHANGE_MAX:.0e}, capped"
+                )
+                sp_metrics["fold_change"] = _FOLD_CHANGE_MAX
+                sp_metrics["fold_change_warning"] = "numerical_explosion_intercepted"
+            _auc = sp_metrics.get("auc")
+            if _auc is not None and abs(_auc) > _AUC_MAX:
+                warnings.append(
+                    f"RC11 AUC explosion: {sp_name} AUC={_auc:.3e} > {_AUC_MAX:.0e}, capped"
+                )
+                sp_metrics["auc"] = _AUC_MAX
+                sp_metrics["auc_warning"] = "numerical_explosion_intercepted"
+        # 同样检查 combo 物种
+        for sp_name, sp_metrics in combo_dict.items():
+            _hl = sp_metrics.get("half_life")
+            if _hl is not None and abs(_hl) > _HALF_LIFE_MAX_H:
+                warnings.append(f"RC11 combo half_life explosion: {sp_name}, set to None")
+                sp_metrics["half_life"] = None
+            _fc = sp_metrics.get("fold_change")
+            if _fc is not None and abs(_fc) > _FOLD_CHANGE_MAX:
+                sp_metrics["fold_change"] = _FOLD_CHANGE_MAX
+                sp_metrics["fold_change_warning"] = "numerical_explosion_intercepted"
+
         # TASK 6: 瞬态级联系统禁用 half-life / steady-state，替换为 activation_duration / max_level
         if is_transient:
             for sp_name, sp_metrics in per_species_dict.items():
@@ -328,6 +350,12 @@ class ScientificFeatureExtractor:
                 )
                 # 新增 max_level（= peak，显式命名）
                 sp_metrics["max_level"] = sp_metrics.get("peak", 0.0)
+        else:
+            # [BM 修复] 非瞬态系统也填充 activation_duration / max_level 默认值，
+            # 避免 report_templates/standard.md.j2 在 StrictUndefined 下访问缺失 key 报错。
+            for sp_name, sp_metrics in per_species_dict.items():
+                sp_metrics.setdefault("activation_duration", None)
+                sp_metrics.setdefault("max_level", sp_metrics.get("peak", 0.0))
 
         # overall 汇总
         max_species = ""

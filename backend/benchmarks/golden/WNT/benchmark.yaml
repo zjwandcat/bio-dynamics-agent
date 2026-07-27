@@ -1,0 +1,16 @@
+# Golden Benchmark — WNT Pathway
+pathway: WNT
+question: "Wnt binding to Frizzled/LRP6 disrupts the destruction complex (Axin/APC/GSK3), stabilizing β-catenin within 15-30 min. AXIN2 forms negative feedback by promoting destruction complex activity. Explain the Wnt/β-catenin signaling dynamics and simulate expected behavior."
+ground_truth: "Wnt binds Frizzled and LRP6, recruiting Axin to the receptor and disrupting the destruction complex (Axin/APC/GSK3), which stabilizes β-catenin at 15-30 min [PMID:17081971]. Stabilized β-catenin accumulates in the nucleus at 30-60 min and drives TCF/LEF-dependent transcription [PMID:14551908]. TCF/LEF transcriptionally induces AXIN2 (1-2 h), which feeds back to activate Axin and restore destruction complex activity, forming negative feedback [PMID:17081971]. The Lee 2003 model (BIOMD0000000658) quantitatively describes the APC/Axin destruction complex and predicts AXIN2-mediated feedback regulates β-catenin accumulation [PMID:14551908]. The destruction complex is the central control module [PMID:23169527]."
+canonical_papers: ["PMID:17081971", "PMID:14551908", "PMID:23169527"]  # Clevers 2006; Lee 2003; Stamos & Weis 2013
+canonical_biomodels: ["BIOMD0000000658"]  # Lee 2003 Wnt pathway model，已验证
+expected_mechanism: [Wnt, Frizzled, LRP6, Axin, APC, GSK3, beta_catenin, TCF_LEF, Axin2]
+expected_time_scale:
+  dvl_activation: "5-15 min"
+  beta_catenin_stabilization: "15-30 min"
+  beta_catenin_nuclear_accumulation: "30-60 min"
+  axin2_induction: "1-2 h"
+expected_experiment: []  # 实验方案，待 Sprint 4 填充
+expected_discussion: {}  # Discussion 预期，待 Sprint 2 填充
+expected_validation: {}  # Validation 预期，待 Sprint 3 填充
+expected_confidence: 0.0  # 预期置信度，待 Sprint 3 填充

@@ -216,6 +216,12 @@ def build_conservation_groups(species_names: list[str]) -> dict[str, list[str]]:
 def _get_pool_name(name: str) -> str:
     """提取物种所属的蛋白池名。"""
     name_lower = name.lower().replace("-", "_")
+    # [CAL-06b] 排除聚合器节点（如 "MAPK cascade"）：这些是概念性聚合节点，
+    # 不是真实分子物种，不应参与质量守恒检查。它们从上游接收质量但不回流，
+    # 导致 ERK pool 出现虚假 drift（+12.6% from MAPK cascade gaining 0.294
+    # mass from pRaf cross-pool transfer）。
+    if any(kw in name_lower for kw in ("cascade", "signaling", "pathway")):
+        return ""
     # EGFR 池
     if "egfr" in name_lower or "erbb1" in name_lower:
         return "EGFR"

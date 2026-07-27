@@ -61,40 +61,87 @@ def _get_param(target_name, param_key, default):
     return eparams.get(param_key, default)
 
 
+# [RC25g] 去重预计算：对同一 (source, target) 对，若已有非 activation 机制，
+# 则跳过 activation 边，防止 LLM activation 边与 specialist phosphorylation 边重复创建产物
+_skip_edge_indices: set[int] = set()
+_pair_best_mech: dict[tuple[str, str], str] = {}
+_pair_best_idx: dict[tuple[str, str], int] = {}
+for _i, _e in enumerate(EDGES):
+    _pair = (_e.get("source", ""), _e.get("target", ""))
+    _mech = (_e.get("mechanism") or "activation").lower()
+    if _pair in _pair_best_mech:
+        _prev_mech = _pair_best_mech[_pair]
+        if _prev_mech != "activation" and _mech == "activation":
+            _skip_edge_indices.add(_i)
+        elif _prev_mech == "activation" and _mech != "activation":
+            _skip_edge_indices.add(_pair_best_idx[_pair])
+            _pair_best_mech[_pair] = _mech
+            _pair_best_idx[_pair] = _i
+    else:
+        _pair_best_mech[_pair] = _mech
+        _pair_best_idx[_pair] = _i
+if _skip_edge_indices:
+    print(f"[RC25g] 跳过 {len(_skip_edge_indices)} 条重复 activation 边")
+
+
 def _ode_rhs(t, y):
     """ODE 右端函数（双稳态开关）。"""
     dy = np.zeros(N_SP)
     y = np.maximum(y, 0.0)  # TD-001 修复：负浓度保护（防 Hill src**n 对负底数产生 NaN）
-    for edge in EDGES:
+    for _edge_idx, edge in enumerate(EDGES):
+        if _edge_idx in _skip_edge_indices:  # [RC25g] 跳过重复 activation 边
+            continue
         src_name = edge.get("source", "")
         tgt_name = edge.get("target", "")
         mechanism = edge.get("mechanism", "activation")
-        if src_name not in SP_IDX or tgt_name not in SP_IDX:
+        # [BENCHMARK CLOSURE / Gap 1] 修复：degradation 类机制（degradation /
+        # proteasomal_degradation）的 target 是 sink（∅ 或未注册的降解产物池）。
+        # 仅要求 source 在 SP_IDX；target 缺失时，不写入 dy[t_idx]，仅消耗 source。
+        # 旧逻辑：`if src_name not in SP_IDX or tgt_name not in SP_IDX: continue`
+        # 静默丢弃所有 target 未注册的 degradation 边 → 物种永不衰减 → 数值爆炸。
+        _mech_lower = (mechanism or "activation").lower()
+        _is_sink_mechanism = _mech_lower in ("degradation", "proteasomal_degradation")
+        if src_name not in SP_IDX:
+            continue
+        if not _is_sink_mechanism and tgt_name not in SP_IDX:
             continue
         s_idx = SP_IDX[src_name]
-        t_idx = SP_IDX[tgt_name]
+        t_idx = SP_IDX.get(tgt_name, -1)
         src = y[s_idx]
-        tgt = y[t_idx]
+        tgt = y[t_idx] if t_idx >= 0 else 0.0
 
         if mechanism == "cleavage":
             # 切割激活（Caspase3 切割 Bid/PARP）
+            # [v5 Recovery Sprint 1 / RC2] 修复 cleavage 净零通量 Bug
+            # 旧实现: dy[t_idx] -= _rate 后 dy[t_idx] += _rate → 净零, active 形式无法累积
+            # 修复: active 形式只增加(产物生成), 非 active 只减去(底物消耗)
+            # 参照 caspase_cascade.j2 TD-029 修复(pro→active 严格守恒)
             k_cleavage = _get_param(tgt_name, "k_cleavage", 0.1)
             _rate = k_cleavage * src * tgt
-            dy[t_idx] -= _rate  # 底物消耗
-            # 产物生成（active 形式）
             if tgt_name.endswith("_active") or tgt_name.startswith("Cleaved"):
-                dy[t_idx] += _rate  # 简化：active 形式
+                # 产物生成（active 形式累积, 双稳态正反馈核心, 不可减回）
+                dy[t_idx] += _rate
+            else:
+                # 底物消耗（非 active 形式被切割消耗）
+                dy[t_idx] -= _rate
 
         elif mechanism == "phosphorylation":
             # Michaelis-Menten（v4 恢复）
             k_cat = _get_param(tgt_name, "k_cat", 0.1)
             Km = _get_param(tgt_name, "Km", 0.1)
-            k_dephos = _get_param(tgt_name, "k_dephos", 0.001)
-            _Vmax = k_cat * src
+            # [RC25c] 0.001→0.05: 防止磷酸化形式质量爆炸（半衰期从 693min 降至 14min）
+            k_dephos = _get_param(tgt_name, "k_dephos", 0.05)
+            # [RC25h] 自磷酸化：使用固定激酶活性，避免自催化正反馈
+            _enzyme_conc = 0.1  # 等效外源激酶浓度（nM）
+            _Vmax = k_cat * _enzyme_conc
             _rate = _Vmax * src / (Km + src) if (Km + src) > 0 else 0.0
+            sub_idx = s_idx  # [RC25e] 记录底物索引用于去磷酸化回流
             dy[s_idx] -= _rate
             dy[t_idx] += _rate
-            dy[t_idx] -= k_dephos * tgt
+            # [RC25e] 修复质量泄漏：去磷酸化产物必须返回底物池
+            _dephos_rate = k_dephos * tgt
+            dy[t_idx] -= _dephos_rate
+            dy[sub_idx] += _dephos_rate  # 去磷酸化产物返回底物池
 
         elif mechanism == "transcription":
             # 转录（Hill 函数）
@@ -103,14 +150,18 @@ def _ode_rhs(t, y):
             K_d = _get_param(tgt_name, "K_d", 0.5)
             k_mRNA_deg = _get_param(tgt_name, "k_mRNA_deg", 0.01)
             _hill = (src ** n_hill) / (K_d ** n_hill + src ** n_hill) if (K_d ** n_hill + src ** n_hill) > 0 else 0.0
-            _rate = k_trans * _hill
+            # [RC25f] logistic 饱和：防止 mRNA 无限累积
+            _max_mRNA = max(Y0[t_idx] if t_idx < len(Y0) else 0.1, 0.1) * 5.0
+            _rate = k_trans * _hill * max(0.0, 1.0 - tgt / _max_mRNA)
             dy[t_idx] += _rate
             dy[t_idx] -= k_mRNA_deg * tgt
 
         elif mechanism == "translation":
             k_transl = _get_param(tgt_name, "k_transl", 0.05)
             k_prot_deg = _get_param(tgt_name, "k_prot_deg", 0.005)
-            _rate = k_transl * src
+            # [RC25f] logistic 饱和：防止蛋白无限累积
+            _max_prot = max(Y0[t_idx] if t_idx < len(Y0) else 0.1, 0.1) * 5.0
+            _rate = k_transl * src * max(0.0, 1.0 - tgt / _max_prot)
             dy[t_idx] += _rate
             dy[t_idx] -= k_prot_deg * tgt
 
@@ -127,6 +178,18 @@ def _ode_rhs(t, y):
             _rate = k_diss * src
             dy[s_idx] -= _rate
             dy[t_idx] += _rate
+
+        elif mechanism == "degradation":
+            # [BENCHMARK CLOSURE / Gap 1] 新增 degradation 分支
+            # 生物语义：source → ∅（一级 mass-action 衰减）。
+            # target 是 sink（∅ 或未注册的降解产物池），不写入 dy[t_idx]。
+            k_deg = _get_param(tgt_name, "k_deg", None)
+            if k_deg is None:
+                k_deg = _get_param(src_name, "k_deg", 0.05)
+            _rate = k_deg * src
+            dy[s_idx] -= _rate
+            if t_idx >= 0:
+                dy[t_idx] += _rate
 
         elif mechanism == "inhibition":
             # 抑制（hybrid）
@@ -226,6 +289,13 @@ def detect_bistability(t_arr, y_arr, threshold_ratio=0.5):
 # 主程序
 # =============================================================================
 if __name__ == "__main__":
+    # [BM 修复] Y0 全零保护：若无初始扰动则注入默认值，避免仿真输出全零
+    _y0_arr = np.asarray(Y0, dtype=float)
+    if np.all(_y0_arr == 0.0) and N_SP > 0:
+        print("[v4] WARNING: Y0 全零，注入默认扰动（Y0[0]=1.0）以驱动仿真")
+        Y0 = list(_y0_arr)
+        Y0[0] = 1.0
+
     t_eval = np.linspace(0, T_END, N_EVAL)
     # 多时间尺度选择 max_step
     max_step = MAX_STEP_SLOW if T_END > 1000 else MAX_STEP_MEDIUM
@@ -237,6 +307,34 @@ if __name__ == "__main__":
 
     t_arr = sol.t
     y_arr = sol.y.T
+
+    # [BM 修复] 生成 simulation.csv + simulation.png（sandbox.py 要求）
+    try:
+        header = "t," + ",".join(SPECIES_NAMES)
+        data = np.column_stack([t_arr, y_arr])
+        np.savetxt("simulation.csv", data, delimiter=",", header=header, comments="")
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for i, sp in enumerate(SPECIES_NAMES):
+            if i < y_arr.shape[1]:
+                ax.plot(t_arr, y_arr[:, i], label=sp, linewidth=1.5)
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Concentration")
+        ax.set_title("Simulation")
+        ax.legend(loc="upper right", fontsize=8)
+        ax.grid(alpha=0.3)
+        fig.tight_layout()
+        fig.savefig("simulation.png", dpi=120)
+        plt.close(fig)
+    except Exception as _e:
+        print(f"[v4] CSV/PNG 生成失败: {_e}")
+
+    # BIO_CHECK 终态输出（sandbox 生物学检查）
+    for i, sp in enumerate(SPECIES_NAMES):
+        if i < y_arr.shape[1]:
+            val = float(y_arr[-1, i])
+            safe_val = max(val, 0.0) if np.isfinite(val) else 0.0
+            print(f"BIO_CHECK: {sp} = {safe_val:.4f}")
 
     # BIO_CHECK: simulation_complete, n_species=N_SP, n_steps=len(t_eval)
     # BIO_CHECK: max_conc={max(y_arr[:,i]) for i in range(N_SP)}

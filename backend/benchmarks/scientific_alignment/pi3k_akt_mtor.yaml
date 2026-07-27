@@ -1,40 +1,174 @@
-# BioDynamics Scientific Alignment Gold Standard — PI3K-AKT-mTOR 通路
+# BioDynamics Scientific Alignment Benchmark — PI3K-AKT-mTOR 通路
+# Task 13: 对齐 Task 12 Canonical Answer，补全 acceptance_criteria / expected_curve_metrics / forbidden_patterns
 # 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
-# 参考：Manning & Cantley 2007 (PMID:17255734)
-# TODO: verify PMID — Sarbassov 2005、Hennessy 2005
-pathway: PI3K_AKT_mTOR
-name: "PI3K-AKT-mTOR Signaling"
+# 参考 Canonical: knowledge/canonical/pi3k_akt_mtor.yaml
+# Benchmark 05: PI3K vs MAPK Crosstalk — AKT 持续 vs ERK 适应性下降
+benchmark_id: pi3k_mapk_crosstalk
+pathway: pi3k_akt_mtor
+category: positive
+question: >
+  EGF 同时激活 MAPK 与 PI3K 通路；为何 AKT 持续激活而 ERK 适应性下降？
+  请解释两条通路反馈机制的差异，并仿真 120 min 动力学。
+
+expected_answer: >
+  EGF → EGFR 同时激活 MAPK（Ras-Raf-MEK-ERK）与 PI3K（PI3K-PIP3-AKT-mTOR）。
+  MAPK 表现为 adaptive（ERK 10-20 min 达峰后下降）：ERK 转录 DUSP，
+  DUSP 蛋白去磷酸化 ERK，形成负反馈导致 ERK 适应性下降。
+  AKT 表现为 sustained activation：PI3K-AKT 通路负反馈（S6K-IRS1）较弱，
+  不能有效抑制 AKT 上游信号，因此 AKT 持续激活。
+  禁止回答"两个一起下降"——这违反 crosstalk_assertions。
+  反馈机制不同是两条通路动力学差异的核心原因。
+
+# 从 knowledge/canonical/pi3k_akt_mtor.yaml.canonical_mechanism.required_nodes 复制
+canonical_mechanism_nodes:
+  - PI3K
+  - PIP3
+  - PDK1
+  - AKT
+  - TSC2
+  - mTORC1
+  - S6K
+
+# 从 knowledge/canonical/pi3k_akt_mtor.yaml.canonical_reviews 复制
+canonical_reviews:
+  - "PMID:17255734"         # Manning & Cantley 2007 Cell（AKT/PKB 信号）
+
+# 从 knowledge/canonical/pi3k_akt_mtor.yaml.canonical_models 复制（Canonical 中为空）
+canonical_models: []
+
+# 期望动力学（基于 crosstalk_assertions）
 expected_dynamics:
-  AKT_peak: "5-15 min after growth factor"
-  mTOR_S6K: "sustained activation"
-  TSC2_phosphorylation: "AKT-dependent, rapid"
-  PIP3: "transient accumulation"
-required_mechanisms:
-  - PI3K_activation
-  - PIP3_production
-  - PDK1_AKT_phosphorylation
-  - mTORC1_activation
-  - TSC2_inhibition
-  - feedback_to_PI3K
-required_biomodels:
-  - BIOMD0000000056   # mTOR pathway model
-required_reviews:
-  - PMID:17255734     # Manning & Cantley 2007 Cell (AKT/PKB) (confirmed)
-  - PMID:xxxxxxxx     # TODO: verify Sarbassov 2005 PMID
-  - PMID:xxxxxxxx     # TODO: verify Hennessy 2005 PMID
-required_experiments:
-  - pAKT Western blot
-  - pS6 Western blot
-  - mTOR inhibitor (Rapamycin) validation
-  - PI3K inhibitor (LY294002) validation
-  - time course 0-120 min
+  - molecule: pERK
+    peak_time: [10, 20]
+    behavior: "transient peak then decline (adaptive)"
+    must_decline: true
+  - molecule: pAKT
+    peak_time: [5, 15]
+    behavior: "sustained activation"
+    must_decline: false
+  - molecule: pS6K
+    peak_time: [30, 60]
+    behavior: "increasing then plateau"
+  - molecule: DUSP_protein
+    peak_time: [60, 120]
+    behavior: "持续增加（解释 ERK 下降）"
+
+# 8 项 Curve Metrics 期望值
+expected_curve_metrics:
+  - molecule: pERK
+    peak_time_min: [10, 20]
+    peak_amplitude: [0.8, 1.0]
+    rise_time_min: [4, 10]
+    half_decay_min: [20, 60]
+    adaptation_ratio: [0.1, 0.5]          # 必须 < 1.0，证明下降
+    steady_state: [0.1, 0.5]
+    oscillation: false
+    auc: [25, 80]
+  - molecule: pAKT
+    peak_time_min: [5, 15]
+    peak_amplitude: [0.7, 1.0]
+    rise_time_min: [2, 8]
+    half_decay_min: null                  # 持续激活，无衰减
+    adaptation_ratio: null
+    steady_state: [0.7, 1.0]              # 持续高位
+    oscillation: false
+    auc: [60, 150]
+  - molecule: pS6K
+    peak_time_min: [30, 60]
+    peak_amplitude: [0.6, 1.0]
+    rise_time_min: [10, 30]
+    half_decay_min: null
+    adaptation_ratio: null
+    steady_state: [0.6, 1.0]
+    oscillation: false
+    auc: [40, 120]
+  - molecule: DUSP_protein
+    peak_time_min: [60, 120]
+    peak_amplitude: [0.6, 1.0]
+    rise_time_min: [30, 60]
+    half_decay_min: null
+    adaptation_ratio: null
+    steady_state: [0.7, 1.0]
+    oscillation: false
+    auc: [50, 150]
+
+# 从 knowledge/canonical/pi3k_akt_mtor.yaml.expected_experiments 复制
+expected_experiments:
+  - name: "pAKT Western blot"
+    technique: "Western blot"
+    timepoints: [0, 5, 15, 30, 60, 120]
+    target: "pAKT"
+  - name: "pS6K Western blot"
+    technique: "Western blot"
+    timepoints: [0, 15, 30, 60, 120]
+    target: "pS6K"
+  - name: "pERK Western blot"
+    technique: "Western blot"
+    timepoints: [0, 5, 10, 15, 20, 30, 45, 60, 120]
+    target: "pERK"
+
+# 从 knowledge/canonical/pi3k_akt_mtor.yaml.forbidden_experiments 复制
+forbidden_experiments:
+  - "AKT qPCR"
+
+# 禁止出现的模式（regex + reason）
 forbidden_patterns:
-  - "No PubMed evidence"
-  - "No BioModels comparison"
-  - "AKT activation without PIP3 production"
-key_time_scales:
-  AKT_peak: "5-15 min"
-  mTOR_S6K_sustained: ">60 min"
-key_feedbacks:
-  - "S6K negative feedback on IRS1/PI3K"
-  - "mTORC1 feedback to AKT via Grb10/IRS1"
+  - pattern: "AKT.*ERK.*both.*decline"
+    reason: "违反 crosstalk_assertions：AKT 应持续激活，ERK 适应性下降，不能两个一起下降"
+  - pattern: "AKT.*transient.*decline"
+    reason: "AKT 应 sustained activation，不能 transient decline"
+  - pattern: "ERK.*sustained.*high"
+    reason: "ERK 应 adaptive decline，不能持续高位"
+  - pattern: "AKT qPCR"
+    reason: "AKT qPCR 不能反映磷酸化动力学"
+  - pattern: "no.*feedback.*difference"
+    reason: "必须解释 MAPK 与 PI3K 反馈机制差异"
+  - pattern: "no.*PubMed"
+    reason: "必须引用 PubMed 权威文献"
+  - pattern: "no.*BioModels"
+    reason: "必须引用 BioModels 模型比较"
+
+# 验收标准（对齐 spec acceptance_criteria）
+acceptance_criteria:
+  mechanism_nodes_required: true
+  mechanism_node_min_coverage: 0.8
+  pubmed_min_count: 1                    # PI3K canonical reviews 较少
+  biomodels_min_count: 0                 # Canonical 中 PI3K models 为空
+  experiment_min_count: 2
+  hallucination_tolerance: 0
+  curve_metric_pass_min: 6
+  forbidden_experiment_blocked: true
+  forbidden_pattern_absent: true
+  must_explain_feedback_difference: true  # 必须解释反馈机制差异
+  akt_must_be_sustained: true             # AKT 必须持续激活
+  erk_must_decline: true                  # ERK 必须下降
+  forbidden_answer_both_decline: true     # 禁止"两个一起下降"
+
+# 从 knowledge/canonical/pi3k_akt_mtor.yaml.crosstalk_assertions 复制
+crosstalk_assertions:
+  mapk_adaptive: true       # ERK 下降
+  akt_persistent: true      # AKT 持续激活
+  reason: "反馈不同"
+  forbidden_answer: "两个一起下降"
+
+# 从 knowledge/canonical/pi3k_akt_mtor.yaml.inhibitor_assertions 复制
+inhibitor_assertions:
+  trametinib:               # MEK 抑制剂
+    EGFR: "正常"
+    Ras: "正常"
+    MEK: "down"
+    ERK: "down"
+    DUSP: "down"
+    expected_experiment: "pERK WB (not EGFR qPCR)"
+  gefitinib:                # EGFR 抑制剂
+    EGFR: "down"
+    Ras: "down"
+    ERK: "down"
+    AKT: "down"
+    includes: ["Dose-response", "IC50"]
+
+# 参考 Canonical
+canonical_reference: "knowledge/canonical/pi3k_akt_mtor.yaml"
+known_negative_feedback:
+  - S6K-IRS1
+  - mTORC1-RTK

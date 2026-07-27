@@ -14,9 +14,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
-import uuid
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
@@ -210,7 +211,15 @@ class RagCollections:
             if vector is None:
                 continue
 
-            ids.append(str(uuid.uuid4()))
+            stable_key = json.dumps(
+                self._to_chroma_metadata(record),
+                ensure_ascii=True,
+                sort_keys=True,
+            )
+            digest = hashlib.sha256(
+                f"{role}\n{search_text}\n{stable_key}".encode("utf-8")
+            ).hexdigest()
+            ids.append(f"{role}_{digest[:32]}")
             embeddings.append(vector)
             documents.append(search_text)
             metadatas.append(self._to_chroma_metadata(record))

@@ -1,0 +1,42 @@
+# Sprint 4 — Experiment Rule Engine
+# 100% Rule 驱动，Mechanism-aware，无 LLM
+pathway: JAK_STAT
+name: "JAK-STAT cytokine signaling pathway"
+
+# 实验链（Mechanism-aware，非 Keyword）
+# canonical_timeline 参考 knowledge/canonical/jak_stat.yaml：
+#   JAK phosphorylation 1-5 min；STAT5 phosphorylation 5-15 min；STAT5 nuclear translocation 10-20 min；SOCS induction 30-60 min
+experiments:
+  - name: "Western blot pSTAT5 (Tyr694)"
+    technique: "Western blot"
+    target_node: "pSTAT5"
+    mechanism_step: "JAK → STAT5 phosphorylation"
+    time_course: [0, 2, 5, 10, 15, 20, 30, 60, 90]  # 分钟
+    cell_line: "HepG2"
+    expected_result: "pSTAT5 在 5-15 min 达峰"
+    justification: "pSTAT5(Tyr694) 是 JAK 激活的直接底物，标志细胞因子受体信号"
+
+  - name: "Western blot pSTAT3 (Tyr705)"
+    technique: "Western blot"
+    target_node: "pSTAT3"
+    mechanism_step: "JAK → STAT3 phosphorylation"
+    time_course: [0, 2, 5, 10, 15, 20, 30, 60, 90]  # 分钟
+    cell_line: "TF-1"
+    expected_result: "pSTAT3 在 5-15 min 达峰，伴随核转位"
+    justification: "pSTAT3(Tyr705) 是 IL-6/JAK 通路的核心效应子，验证 STAT 磷酸化激活"
+
+  - name: "Western blot pJAK2"
+    technique: "Western blot"
+    target_node: "pJAK2"
+    mechanism_step: "Cytokine receptor → JAK2 phosphorylation (activation)"
+    time_course: [0, 2, 5, 10, 15, 20, 30, 60, 90]  # 分钟
+    cell_line: "HepG2"
+    expected_result: "pJAK2 在 1-5 min 达峰，早于 pSTAT5/pSTAT3"
+    justification: "pJAK2 是细胞因子→JAK→STAT 级联的最上游节点，验证信号起源时序"
+
+# 禁止的实验（Mechanism-aware 禁止）
+forbidden:
+  - name: "STAT5 qPCR"
+    technique: "qPCR"
+    target_node: "STAT5"
+    reason: "STAT5 激活依赖 Tyr694 磷酸化及二聚化核转位，需用 Western blot 检测 pSTAT5；qPCR 仅测 STAT5 mRNA，不能反映磷酸化或核转位激活状态"

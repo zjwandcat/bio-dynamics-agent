@@ -1,42 +1,157 @@
-# BioDynamics Scientific Alignment Gold Standard — Apoptosis 通路
+# BioDynamics Scientific Alignment Benchmark — Apoptosis 通路
+# Task 13: 对齐 Task 12 Canonical Answer，补全 acceptance_criteria / expected_curve_metrics / forbidden_patterns
 # 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
-# 参考：Taylor 2008 Nature Reviews MCB / Danial 2004 / Green 2004
-# TODO: verify PMID — Taylor 2008、Danial 2004、Green 2004、Bhatt 2019
-pathway: APOPTOSIS
-name: "Extrinsic & Intrinsic Apoptosis Signaling"
+# 参考 Canonical: knowledge/canonical/apoptosis.yaml
+# Benchmark 08: Apoptosis — TRAIL 刺激后 Caspase-3 阈值激活
+benchmark_id: apoptosis_trail_caspase3_threshold
+pathway: apoptosis
+category: positive
+question: >
+  仿真 TRAIL 刺激后 Caspase-3 激活动力学。Caspase-3 激活是线性增加还是阈值/开关式？
+  请解释 MOMP 不可逆承诺与 bistable switch 机制，并仿真 4 h 动力学。
+
+expected_answer: >
+  TRAIL → Fas/DR4/DR5 → Caspase-8 激活 → tBID → BAX/BAK → MOMP（线粒体外膜通透化）→
+  Cytochrome c 释放 → Apoptosome → Caspase-9 → Caspase-3 激活（1-2 h）。
+  Caspase-3 激活表现为 threshold / switch-like（双稳态开关），而非线性增加：
+  在刺激低于阈值时几乎不激活，超过阈值后快速全激活（all-or-none）。
+  MOMP 是不可逆承诺点（irreversible commitment），一旦发生细胞必然走向死亡。
+  tBID 放大环路（extrinsic → intrinsic crosstalk）增强开关特性。
+  XIAP 抑制 Caspase-3 但被 MOMP 释放的 SMAC 拮抗。
+  禁止回答"Caspase-3 线性增加"——这违反 threshold/switch 机制。
+
+# 从 knowledge/canonical/apoptosis.yaml.canonical_mechanism.required_nodes 复制
+canonical_mechanism_nodes:
+  - Fas
+  - Caspase8
+  - Caspase3
+  - BAX
+  - BAK
+  - tBID
+  - XIAP
+
+# 从 knowledge/canonical/apoptosis.yaml.canonical_reviews 复制
+canonical_reviews:
+  - "PMID:18073771"         # Taylor 2008 Nat Rev MCB（凋亡控制性拆除）
+  - "PMID:14744432"         # Danial & Korsmeyer 2004 Cell（细胞死亡关键控制点）
+  - "PMID:15286356"         # Green & Kroemer 2004 Science（线粒体细胞死亡病理生理学）
+
+# 从 knowledge/canonical/apoptosis.yaml.canonical_models 复制（Canonical 中为空）
+canonical_models: []
+
+# 期望动力学（基于 trail_assertions）
 expected_dynamics:
-  Caspase_activation: "rapid, bistable switch"
-  MOMP: "mitochondrial outer membrane permeabilization"
-  BAX_translocation: "pore formation on mitochondria"
-  bistable_switch: "all-or-none commitment"
-  tBID_amplification: "crosstalk extrinsic->intrinsic"
-required_mechanisms:
-  - Death_receptor_Fas
-  - Caspase_8_initiator
-  - Caspase_3_effector
-  - BAX_BAK_MOMP
-  - tBID_BAX_amplification
-  - XIAP_inhibition
-required_biomodels:
-  - BIOMD0000000205   # caspase cascade model
-required_reviews:
-  - PMID:xxxxxxxx     # TODO: verify Taylor 2008 Nature Reviews MCB PMID
-  - PMID:xxxxxxxx     # TODO: verify Danial 2004 PMID
-  - PMID:xxxxxxxx     # TODO: verify Green 2004 PMID
-  - PMID:xxxxxxxx     # TODO: verify Bhatt 2019 PMID
-required_experiments:
-  - Caspase-3/7 activity assay
-  - Annexin V flow cytometry
-  - BAX translocation immunofluorescence
-  - MOMP JC-1 assay
-  - cytochrome c release Western blot
+  - molecule: Caspase3
+    peak_time: [60, 120]
+    behavior: "threshold / switch-like"
+    switch_like: true
+    irreversible: true
+  - molecule: MOMP
+    peak_time: [30, 60]
+    behavior: "all-or-none commitment"
+  - molecule: Cytochrome_C_release
+    peak_time: [30, 60]
+    behavior: "rapid release after MOMP"
+  - molecule: Caspase8
+    peak_time: [10, 30]
+    behavior: "rapid activation (initiator)"
+
+# 8 项 Curve Metrics 期望值
+expected_curve_metrics:
+  - molecule: Caspase3
+    peak_time_min: [60, 120]
+    peak_amplitude: [0.8, 1.0]
+    rise_time_min: [10, 30]               # 开关式快速上升
+    half_decay_min: null                  # 不可逆，不下降
+    adaptation_ratio: null
+    steady_state: [0.9, 1.0]              # 持续高位（不可逆）
+    oscillation: false
+    auc: [80, 250]
+  - molecule: MOMP
+    peak_time_min: [30, 60]
+    peak_amplitude: [0.8, 1.0]
+    rise_time_min: [5, 20]
+    half_decay_min: null                  # 不可逆
+    adaptation_ratio: null
+    steady_state: [0.9, 1.0]
+    oscillation: false
+    auc: [60, 200]
+  - molecule: Cytochrome_C_release
+    peak_time_min: [30, 60]
+    peak_amplitude: [0.7, 1.0]
+    rise_time_min: [5, 20]
+    half_decay_min: null
+    adaptation_ratio: null
+    steady_state: [0.8, 1.0]
+    oscillation: false
+    auc: [50, 180]
+  - molecule: Caspase8
+    peak_time_min: [10, 30]
+    peak_amplitude: [0.6, 1.0]
+    rise_time_min: [2, 10]
+    half_decay_min: [60, 180]
+    adaptation_ratio: [0.3, 0.7]
+    steady_state: [0.2, 0.6]
+    oscillation: false
+    auc: [30, 120]
+
+# 从 knowledge/canonical/apoptosis.yaml.expected_experiments 复制
+expected_experiments:
+  - name: "Caspase-3 activity assay (DEVD-AFC)"
+    technique: "activity assay"
+    timepoints: [0, 30, 60, 90, 120, 180]
+    target: "Caspase3_activity"
+  - name: "Cytochrome c release Western blot"
+    technique: "Western blot"
+    timepoints: [0, 30, 60, 120]
+    target: "Cytochrome_C"
+  - name: "PARP cleavage Western blot"
+    technique: "Western blot"
+    timepoints: [0, 60, 120, 180]
+    target: "PARP_cleaved"
+
+# 从 knowledge/canonical/apoptosis.yaml.forbidden_experiments 复制
+forbidden_experiments:
+  - "Caspase-3 qPCR (蛋白活性需要 activity assay)"
+
+# 禁止出现的模式（regex + reason）
 forbidden_patterns:
-  - "No PubMed evidence"
-  - "No BioModels comparison"
-  - "apoptosis without MOMP/caspase commitment"
-key_time_scales:
-  Caspase_cascade: "minutes after MOMP"
-  MOMP_commitment: "irreversible within ~30 min"
-key_feedbacks:
-  - "tBID amplification loop (extrinsic -> intrinsic)"
-  - "XIAP inhibition of caspase-3/9"
+  - pattern: "Caspase.?3.*linear.*increase"
+    reason: "Caspase-3 应 threshold/switch 激活，不能线性增加"
+  - pattern: "Caspase.?3.*gradual.*accumulation"
+    reason: "违反 bistable switch / MOMP 不可逆承诺机制"
+  - pattern: "MOMP.*reversible"
+    reason: "MOMP 是不可逆承诺点（irreversible commitment）"
+  - pattern: "Caspase.?3 qPCR"
+    reason: "Caspase-3 qPCR 不能反映蛋白活性，需用 activity assay"
+  - pattern: "no.*MOMP.*commitment"
+    reason: "必须解释 MOMP 不可逆承诺机制"
+  - pattern: "no.*PubMed"
+    reason: "必须引用 PubMed 权威文献"
+  - pattern: "no.*BioModels"
+    reason: "必须引用 BioModels 模型比较"
+
+# 验收标准（对齐 spec acceptance_criteria）
+acceptance_criteria:
+  mechanism_nodes_required: true
+  mechanism_node_min_coverage: 0.8
+  pubmed_min_count: 2                    # Apoptosis canonical reviews 较多
+  biomodels_min_count: 0                 # Canonical 中 apoptosis models 为空
+  experiment_min_count: 2
+  hallucination_tolerance: 0
+  curve_metric_pass_min: 6
+  forbidden_experiment_blocked: true
+  forbidden_pattern_absent: true
+  must_explain_momp_commitment: true      # 必须解释 MOMP 不可逆承诺
+  caspase3_must_be_switch_like: true      # Caspase-3 必须开关式激活
+  momp_must_be_irreversible: true         # MOMP 必须不可逆
+
+# 从 knowledge/canonical/apoptosis.yaml.trail_assertions 复制
+trail_assertions:
+  caspase3_activation: "Threshold / Switch-like / irreversible"
+  behavior: "non-linear (not linear increase)"
+
+# 参考 Canonical
+canonical_reference: "knowledge/canonical/apoptosis.yaml"
+known_negative_feedback:
+  - XIAP-Caspase3

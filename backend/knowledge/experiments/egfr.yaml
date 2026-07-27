@@ -1,0 +1,42 @@
+# Sprint 4 — Experiment Rule Engine
+# 100% Rule 驱动，Mechanism-aware，无 LLM
+pathway: EGFR
+name: "EGFR signaling pathway"
+
+# 实验链（Mechanism-aware，非 Keyword）
+# canonical_timeline 参考 knowledge/canonical/egfr.yaml：
+#   EGFR phosphorylation 1-5 min；Ras activation 2-8 min；ERK peak 10-20 min；DUSP induction 30-90 min
+experiments:
+  - name: "Western blot pEGFR"
+    technique: "Western blot"
+    target_node: "pEGFR"
+    mechanism_step: "EGF → EGFR phosphorylation"
+    time_course: [0, 2, 5, 10, 15, 20, 30, 60]  # 分钟
+    cell_line: "A431"
+    expected_result: "pEGFR 在 1-5 min 达峰"
+    justification: "pEGFR 是 EGFR 激活的直接标志物"
+
+  - name: "Western blot ppERK"
+    technique: "Western blot"
+    target_node: "ppERK"
+    mechanism_step: "MEK → ERK phosphorylation"
+    time_course: [0, 2, 5, 10, 15, 20, 30, 60]  # 分钟
+    cell_line: "HaCaT"
+    expected_result: "ppERK 在 10-20 min 达峰"
+    justification: "ppERK 是 MAPK 级联的输出节点"
+
+  - name: "Western blot pMEK"
+    technique: "Western blot"
+    target_node: "pMEK"
+    mechanism_step: "RAF → MEK phosphorylation"
+    time_course: [0, 2, 5, 10, 15, 20, 30, 60]  # 分钟
+    cell_line: "A431"
+    expected_result: "pMEK 在 2-8 min 达峰，早于 ppERK"
+    justification: "pMEK 是 RAF→MEK→ERK 级联的中间节点，用于验证信号时序"
+
+# 禁止的实验（Mechanism-aware 禁止）
+forbidden:
+  - name: "EGFR qPCR"
+    technique: "qPCR"
+    target_node: "EGFR"
+    reason: "EGFR 是受体蛋白，磷酸化激活需 Western blot 而非 qPCR；qPCR 仅测 mRNA 不能反映磷酸化状态"

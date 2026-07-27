@@ -8,7 +8,12 @@ canonical_reviews:          # 权威综述 PMID 列表
   - "PMID:16246870"         # Orton 2005 Computational Biology and Chemistry（MAPK 级联数学建模）
 
 canonical_models:           # 权威 BioModels ID 列表
-  - "BIOMD0000000012"       # Levchenko 2000 scaffold model
+  # [BENCHMARK CLOSURE / Gap 6] 与 EGFR 共享 Kholodenko 2000 MAPK cascade 子集
+  # （PMID:10712587, Eur J Biochem 267:1583-8）。BIOMD0000000010 仅覆盖
+  # MKKK→MKK→MAPK 8 species 子集，不含 receptor module；与 EGFR canonical_models 同源。
+  - "BIOMD0000000010"       # Kholodenko2000 MAPK cascade (负反馈+超敏感性振荡)
+  # 注：BIOMD0000000012 实为 Elowitz2000 Repressilator（PMID:10659856），非 MAPK scaffold 模型，已移除
+  # Levchenko 2000 scaffold 模型 BioModels ID 待人工核实
 
 canonical_mechanism:
   required_nodes:           # 机制节点链（大写蛋白名）
@@ -39,6 +44,22 @@ expected_behavior:          # 动力学行为预期
   signal_amplification: "10-100x"
   ultrasensitivity: true
 
+canonical_timeline:
+  - event: "RAF activation"
+    time_window: "1-5 min"
+  - event: "MEK phosphorylation"
+    time_window: "2-8 min"
+  - event: "ERK phosphorylation"
+    time_window: "5-15 min"
+  - event: "ERK peak"
+    time_window: "10-20 min"
+    reference: "PMID:8663050"
+  - event: "DUSP induction"
+    time_window: "30-90 min"
+  - event: "Negative feedback"
+    present: true
+    mediator: "DUSP"
+
 known_negative_feedback:    # 已知负反馈
   - DUSP
 
@@ -52,3 +73,45 @@ consistency_rules:          # 供 Consistency Checker 加载的自洽规则
   - rule: "DUSP 表达不能早于 ERK Peak"
     assertion: "dusp_expression_time > erk_peak_time"
     violation_label: "feedback_before_target_peak"
+
+# ============================================================================
+# Task 12: Spec 补全字段（10 通路 Canonical 对齐）
+# ============================================================================
+expected_dynamics:          # 期望动力学（基于权威文献汇总）
+  ERK:
+    peak_time: "10-20 min"
+    behavior: "transient peak then decline (adaptive)"
+    must_decline: true
+  DUSP_mRNA:
+    peak_time: "30-60 min"
+    behavior: "increasing"
+  DUSP_protein:
+    peak_time: "60-120 min"
+    behavior: "持续增加"
+
+curve_requirements:         # 曲线必须满足的硬约束
+  pERK: "必须下降（不能持续高位）"
+  DUSP: "持续增加"
+
+expected_experiments:       # 验证机制所需实验
+  - name: "pERK Western blot"
+    timepoints: [0, 5, 10, 15, 20, 30, 45, 60, 120]
+    mechanism_target: "ERK activation dynamics"
+  - name: "DUSP1 qPCR"
+    timepoints: [15, 30, 60, 120]
+    mechanism_target: "DUSP transcription feedback"
+  - name: "DUSP protein Western blot"
+    mechanism_target: "DUSP protein accumulation"
+
+forbidden_experiments:      # 不能验证 adaptive dynamics 的实验
+  - "ERK qPCR"
+  - "EGF ELISA"
+
+# Task 12 Spec: Benchmark 02 DUSP Knockout Canonical Assertion
+dusp_knockout_assertions:
+  erk_peak: "higher than wild-type"
+  erk_duration: "longer"
+  adaptation: "weakened"
+  auc: "increased"
+  mechanism: "loss of ERK phosphatase (DUSP1)"
+  curve_requirement: "ERK 持续高位（不下降）"

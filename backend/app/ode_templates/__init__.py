@@ -12,8 +12,12 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 _TEMPLATE_DIR = Path(__file__).parent
+# [v5 Recovery Sprint 4 / RC17] 添加 ode_templates_v2 作为二级搜索路径，
+# 使 v1 主模板（如 Signaling_Cascade_Phos.j2）能 include v2 子模块（如 _mechanism_phosphorylation_mm.j2）。
+# list_templates 仍只列出 _TEMPLATE_DIR 下的模板，v2 模板不污染 v1 模板列表。
+_TEMPLATE_DIR_V2 = _TEMPLATE_DIR.parent / "ode_templates_v2"
 _ENV = Environment(
-    loader=FileSystemLoader(str(_TEMPLATE_DIR)),
+    loader=FileSystemLoader([str(_TEMPLATE_DIR), str(_TEMPLATE_DIR_V2)]),
     undefined=StrictUndefined,
     trim_blocks=True,
     lstrip_blocks=True,

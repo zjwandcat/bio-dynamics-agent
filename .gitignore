@@ -82,6 +82,25 @@ backend/test_bigmodel_keys.py
 # --- Markdown reports (keep only README.md) ---
 *.md
 !README.md
+!AGENTS.md
+!docs/CODEX_MAINTENANCE_GUIDE.md
+!docs/00_PROJECT_OVERVIEW.md
+!docs/01_ARCHITECTURE.md
+!docs/02_CODE_STRUCTURE.md
+!docs/03_DATA_FLOW.md
+!docs/04_RAG_PIPELINE.md
+!docs/05_SIMULATION_PIPELINE.md
+!docs/06_VALIDATION_SYSTEM.md
+!docs/07_BENCHMARK_SYSTEM.md
+!docs/08_KNOWN_PROBLEMS.md
+!docs/09_TECH_DEBT.md
+!docs/10_DEVELOPMENT_RULES.md
+!docs/11_NEXT_STEPS.md
+!docs/CONFIG_REFERENCE.md
+!docs/PROMPT_INDEX.md
+!docs/DEPENDENCY_GRAPH.md
+!docs/DESIGN_DECISIONS.md
+!docs/PROJECT_PHILOSOPHY.md
 
 # --- Generated JSON reports ---
 audit_report_*.json

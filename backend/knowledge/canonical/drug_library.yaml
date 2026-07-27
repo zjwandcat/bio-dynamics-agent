@@ -1,0 +1,148 @@
+# BioDynamics Canonical Drug-Target Library
+# N6 缺口 1 修复：跨通路 drug library 补全（canonical 知识库驱动，非 per-case 硬编码）
+#
+# 每个药物含：
+#   primary_target   : 主要药理学靶点（HGNC/复合物名）
+#   pathway          : 所属通路标签（与 pathway_registry 对齐）
+#   mechanism        : 抑制机制类别
+#   ic50_nM          : 半数抑制浓度（nM，抗体类为 null）
+#   ki_nM            : 抑制常数（nM 占位字段，部分药物与 IC50 等价）
+#   atc_code         : ATC 分类代码（占位）
+#   source_pmid      : 文献来源 PMID
+#   fda_approved     : 是否 FDA 批准上市
+#
+# 覆盖 spec 要求的 10 个跨通路抑制剂（Gefitinib + 9 新增）：
+#   Gefitinib→EGFR, Trametinib→MEK, Rapamycin→mTOR, ABT-199→Bcl-2,
+#   Palbociclib→CDK4/6, Bortezomib→Proteasome, XAV939→TNKS,
+#   SB431542→ALK5, Ruxolitinib→JAK, Nutlin-3→MDM2
+#
+# 额外保留 2 个 EGFR 抑制剂（Erlotinib/Cetuximab）供同通路共享机制图复用。
+# ============================================================================
+drugs:
+  # === EGFR 通路（3 个：1 spec + 2 保留） ===
+  Gefitinib:
+    primary_target: EGFR
+    pathway: EGFR_RTK
+    mechanism: reversible_ATP_competitive
+    ic50_nM: 23
+    ki_nM: 23
+    atc_code: L01EH01
+    source_pmid: 10866300
+    fda_approved: true
+  Erlotinib:
+    primary_target: EGFR
+    pathway: EGFR_RTK
+    mechanism: reversible_ATP_competitive
+    ic50_nM: 2
+    ki_nM: 2
+    atc_code: L01EH02
+    source_pmid: 11986288
+    fda_approved: true
+  Cetuximab:
+    primary_target: EGFR
+    pathway: EGFR_RTK
+    mechanism: antibody_external_domain
+    ic50_nM: null
+    ki_nM: null
+    atc_code: L01XC06
+    source_pmid: 12093907
+    fda_approved: true
+
+  # === MAPK 通路 ===
+  Trametinib:
+    primary_target: MEK1_MEK2
+    pathway: MAPK_ERK
+    mechanism: allosteric_non_ATP_competitive
+    ic50_nM: 0.92
+    ki_nM: 0.92
+    atc_code: L01EE01
+    source_pmid: 22246630
+    fda_approved: true
+
+  # === PI3K 通路 ===
+  Rapamycin:
+    primary_target: mTORC1
+    pathway: PI3K_AKT_mTOR
+    mechanism: allosteric_FKBP12_complex
+    ic50_nM: 50
+    ki_nM: 50
+    atc_code: L01AA10
+    source_pmid: 8413626
+    fda_approved: true
+
+  # === Apoptosis 通路 ===
+  ABT_199:
+    primary_target: BCL2
+    pathway: APOPTOSIS
+    mechanism: BH3_mimetic
+    ic50_nM: 1
+    ki_nM: 1
+    atc_code: L01XX48
+    source_pmid: 23921123
+    fda_approved: true
+
+  # === Cell Cycle 通路 ===
+  Palbociclib:
+    primary_target: CDK4_CDK6
+    pathway: CELL_CYCLE
+    mechanism: ATP_competitive
+    ic50_nM: 11
+    ki_nM: 11
+    atc_code: L01EE03
+    source_pmid: 24141446
+    fda_approved: true
+
+  # === NF-κB 通路（通过稳定 IκB 抑制 NF-κB） ===
+  Bortezomib:
+    primary_target: proteasome
+    pathway: NF_KB
+    mechanism: boronate_reversible
+    ic50_nM: 0.62
+    ki_nM: 0.62
+    atc_code: L01XX32
+    source_pmid: 12626833
+    fda_approved: true
+
+  # === Wnt 通路 ===
+  XAV939:
+    primary_target: TNKS1_TNKS2
+    pathway: WNT
+    mechanism: PARP_domain_inhibitor
+    ic50_nM: 11
+    ki_nM: 11
+    atc_code: L01XX79
+    source_pmid: 19516276
+    fda_approved: false
+
+  # === TGF-β 通路 ===
+  SB431542:
+    primary_target: ALK5
+    pathway: TGF_BETA
+    mechanism: ATP_competitive
+    ic50_nM: 94
+    ki_nM: 94
+    atc_code: L01XX79
+    source_pmid: 15546018
+    fda_approved: false
+
+  # === JAK-STAT 通路 ===
+  Ruxolitinib:
+    primary_target: JAK1_JAK2
+    pathway: JAK_STAT
+    mechanism: ATP_competitive
+    ic50_nM: 3
+    ki_nM: 3
+    atc_code: L01EE02
+    source_pmid: 20385775
+    fda_approved: true
+
+  # === p53 通路 ===
+  Nutlin_3:
+    primary_target: MDM2
+    pathway: P53
+    mechanism: MDM2_p53_interaction_disruptor
+    ic50_nM: 90
+    ki_nM: 90
+    atc_code: L01XX79
+    source_pmid: 15143221
+    fda_approved: false

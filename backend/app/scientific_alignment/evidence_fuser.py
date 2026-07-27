@@ -68,6 +68,30 @@ class EvidenceSource(str, Enum):
 
 
 # =============================================================================
+# 常量：source_role / source_tag 映射（依赖 EvidenceSource，故置于枚举之后）
+# =============================================================================
+# EvidenceSource → source_role 字符串（用于 RAG 输出标注与 EvidenceFuser 自动归类）
+# 注意：[D] 在 EvidenceSource 枚举中名为 INFERENCE，但 Spec/Task 统一称 [D] Mechanism
+#       （与 evidence_graph.EvidenceType.MECHANISM = "[D]Mechanism" 对齐）
+_SOURCE_ROLE_MAP: dict[EvidenceSource, str] = {
+    EvidenceSource.PUBMED: "PubMed",
+    EvidenceSource.BIOMODELS: "BioModels",
+    EvidenceSource.SIMULATION: "Simulation",
+    EvidenceSource.INFERENCE: "Mechanism",
+    EvidenceSource.HYPOTHESIS: "Hypothesis",
+}
+
+# EvidenceSource → source_tag 字符串（带方括号，如 "[A]"）
+_SOURCE_TAG_MAP: dict[EvidenceSource, str] = {
+    EvidenceSource.PUBMED: "[A]",
+    EvidenceSource.BIOMODELS: "[B]",
+    EvidenceSource.SIMULATION: "[C]",
+    EvidenceSource.INFERENCE: "[D]",
+    EvidenceSource.HYPOTHESIS: "[E]",
+}
+
+
+# =============================================================================
 # EvidenceItem 数据类
 # =============================================================================
 @dataclass
@@ -82,12 +106,26 @@ class EvidenceItem:
         confidence: 该证据项的可信度（0.0-1.0）；[A] 来源用归一化
             base_score 编码文献类型，供 fuse_evidence 区分 Review 与
             Mechanism Paper。
+        source_role: 来源角色字符串（"PubMed"/"BioModels"/"Simulation"/
+            "Mechanism"/"Hypothesis"），用于 RAG 输出标注与 EvidenceFuser
+            自动归类证据源。未显式传入时由 `source` 派生。
+        source_tag: 来源标签字符串（"[A]"/"[B]"/"[C]"/"[D]"/"[E]"），
+            用于 Discussion 渲染单源标签。未显式传入时由 `source` 派生。
     """
 
     source: EvidenceSource
     reference: str
     snippet: str = ""
     confidence: float = 1.0
+    source_role: str = ""
+    source_tag: str = ""
+
+    def __post_init__(self) -> None:
+        """未显式传入 source_role / source_tag 时，从 source 派生默认值。"""
+        if not self.source_role:
+            self.source_role = _SOURCE_ROLE_MAP.get(self.source, "")
+        if not self.source_tag:
+            self.source_tag = _SOURCE_TAG_MAP.get(self.source, "")
 
 
 # =============================================================================
@@ -454,6 +492,218 @@ def evidence_docs_to_items(evidence_docs: list) -> list[EvidenceItem]:
     return items
 
 
+# =============================================================================
+# 缺口 1+2：source_role 推断 + [A]-[E] 多源结构化转换器
+# =============================================================================
+def _infer_source_role(evidence: dict) -> tuple[str, EvidenceSource]:
+    """从证据 dict 内容推断 source_role 与 EvidenceSource 枚举。
+
+    推断规则（按优先级，匹配即返回）：
+      1. source 含 "PubMed" 或 dict 含 `pmid`        → ("PubMed",     PUBMED)      [A]
+      2. source 含 "BioModels" 或 dict 含 `biomd_id` → ("BioModels",  BIOMODELS)   [B]
+      3. source 含 "simulation" 或 dict 含 `sim_id`  → ("Simulation", SIMULATION)  [C]
+      4. source/type 含 "canonical"/"mechanism"，
+         或 dict 含 `pathway` 字段                   → ("Mechanism",  INFERENCE)   [D]
+      5. 其他                                        → ("Hypothesis", HYPOTHESIS)  [E]
+
+    Args:
+        evidence: 证据 dict（可能含 source / pmid / biomd_id / sim_id /
+            pathway / type 等键）。
+
+    Returns:
+        (source_role, source_enum) 元组。
+    """
+    source_str = str(evidence.get("source", "") or "").lower()
+    type_str = str(evidence.get("type", "") or "").lower()
+
+    # [A] PubMed
+    if "pubmed" in source_str or evidence.get("pmid"):
+        return ("PubMed", EvidenceSource.PUBMED)
+    # [B] BioModels
+    if "biomodels" in source_str or evidence.get("biomd_id"):
+        return ("BioModels", EvidenceSource.BIOMODELS)
+    # [C] Simulation
+    if "simulation" in source_str or evidence.get("sim_id"):
+        return ("Simulation", EvidenceSource.SIMULATION)
+    # [D] Mechanism（canonical / mechanism 关键词，或含 pathway 字段）
+    if (
+        "canonical" in source_str
+        or "mechanism" in source_str
+        or "canonical" in type_str
+        or "mechanism" in type_str
+        or evidence.get("pathway")
+    ):
+        return ("Mechanism", EvidenceSource.INFERENCE)
+    # [E] Hypothesis 兜底
+    return ("Hypothesis", EvidenceSource.HYPOTHESIS)
+
+
+def evidence_to_item(
+    evidence: dict,
+    default_role: str | None = None,
+) -> EvidenceItem:
+    """统一接口：将五源证据 dict 转换为 EvidenceItem。
+
+    支持的结构化输入：
+      - [A] PubMed:     {source, pmid, parameter, value, ...}
+      - [B] BioModels:  {biomd_id, reaction, parameter, value, unit}
+      - [C] Simulation: {sim_id, metric, value, expected, fold_change}
+      - [D] Mechanism:  {pathway, reaction, type}
+      - [E] Hypothesis: {text}
+
+    推断逻辑：
+      1. 若 `default_role` 显式指定（"PubMed"/"BioModels"/"Simulation"/
+         "Mechanism"/"Hypothesis"），优先采用；
+      2. 否则按 `_infer_source_role` 从 dict 内容推断。
+
+    输出 EvidenceItem 字段映射：
+      - source_role / source_tag: 由推断结果填充
+      - reference:                各源的引用标识（PMID / BIOMD:{id} / sim:{id} /
+                                  canonical:{pathway} / ""）
+      - snippet:                  各源的可读文本（PubMed 用 title/parameter 组装）
+      - confidence:               各源默认置信度（[D]=1.0, [E]=0.5, 其余 0.7-0.8）
+
+    Args:
+        evidence: 证据 dict。
+        default_role: 可选，显式指定 source_role（覆盖自动推断）。
+
+    Returns:
+        EvidenceItem 实例（含 source_role / source_tag 字段）。
+    """
+    if not isinstance(evidence, dict):
+        raise TypeError(f"evidence 必须为 dict，收到 {type(evidence).__name__}")
+
+    # 1) 确定 source_role 与 EvidenceSource
+    role_to_enum: dict[str, EvidenceSource] = {
+        "PubMed": EvidenceSource.PUBMED,
+        "BioModels": EvidenceSource.BIOMODELS,
+        "Simulation": EvidenceSource.SIMULATION,
+        "Mechanism": EvidenceSource.INFERENCE,
+        "Hypothesis": EvidenceSource.HYPOTHESIS,
+    }
+    if default_role and default_role in role_to_enum:
+        role = default_role
+        source_enum = role_to_enum[default_role]
+    else:
+        role, source_enum = _infer_source_role(evidence)
+
+    # 2) 按源构造 reference / snippet / confidence
+    if source_enum == EvidenceSource.PUBMED:
+        # [A] PubMed
+        pmid = str(evidence.get("pmid", "") or "").strip()
+        reference = f"PMID:{pmid}" if pmid else ""
+        title = str(evidence.get("title", "") or evidence.get("text", "") or "").strip()
+        parameter = evidence.get("parameter", "")
+        value = evidence.get("value", "")
+        if title:
+            snippet = title
+        elif parameter and value:
+            snippet = f"{parameter}={value}"
+        else:
+            snippet = str(evidence.get("text", "") or "").strip()
+        confidence = float(evidence.get("confidence", 0.8) or 0.8)
+
+    elif source_enum == EvidenceSource.BIOMODELS:
+        # [B] BioModels
+        biomd_id = str(evidence.get("biomd_id", "") or "").strip()
+        reference = f"BIOMD:{biomd_id}" if biomd_id else ""
+        reaction = evidence.get("reaction", "")
+        parameter = evidence.get("parameter", "")
+        value = evidence.get("value", "")
+        unit = evidence.get("unit", "")
+        parts: list[str] = []
+        if biomd_id:
+            parts.append(f"BioModels {biomd_id}")
+        if reaction:
+            parts.append(f"报告 {reaction}")
+        if parameter and value:
+            parts.append(f"{parameter}={value}{unit}")
+        snippet = " ".join(parts) if parts else str(evidence.get("text", "") or "").strip()
+        confidence = float(evidence.get("confidence", 0.75) or 0.75)
+
+    elif source_enum == EvidenceSource.SIMULATION:
+        # [C] Simulation
+        sim_id = str(evidence.get("sim_id", "") or "").strip()
+        reference = f"sim:{sim_id}" if sim_id else ""
+        metric = evidence.get("metric", "")
+        value = evidence.get("value", "")
+        expected = evidence.get("expected", "")
+        fold_change = evidence.get("fold_change", "")
+        parts_sim: list[str] = []
+        if metric:
+            parts_sim.append(f"仿真结果显示 {metric}={value}")
+            if expected:
+                parts_sim.append(f"(期望 {expected}")
+                if fold_change:
+                    parts_sim.append(f", fold {fold_change}")
+                parts_sim.append(")")
+        snippet = "".join(parts_sim) if parts_sim else str(evidence.get("text", "") or "").strip()
+        confidence = float(evidence.get("confidence", 0.7) or 0.7)
+
+    elif source_enum == EvidenceSource.INFERENCE:
+        # [D] Mechanism（canonical pathway 引用）
+        pathway = str(evidence.get("pathway", "") or "").strip()
+        reference = f"canonical:{pathway}" if pathway else ""
+        reaction = evidence.get("reaction", "")
+        mtype = evidence.get("type", "")
+        parts_m: list[str] = []
+        if pathway:
+            parts_m.append(f"Canonical {pathway} 通路")
+        if reaction:
+            parts_m.append(str(reaction))
+        if mtype:
+            parts_m.append(f"({mtype})")
+        snippet = " ".join(parts_m) if parts_m else str(evidence.get("text", "") or "").strip()
+        confidence = float(evidence.get("confidence", 1.0) or 1.0)
+
+    else:
+        # [E] Hypothesis（无引用支撑的假设）
+        reference = ""
+        snippet = str(evidence.get("text", "") or "").strip()
+        confidence = float(evidence.get("confidence", 0.5) or 0.5)
+
+    # 3) 构造 EvidenceItem（source_role / source_tag 由 __post_init__ 自动派生）
+    return EvidenceItem(
+        source=source_enum,
+        reference=reference,
+        snippet=snippet,
+        confidence=confidence,
+        source_role=role,
+        source_tag=_SOURCE_TAG_MAP.get(source_enum, ""),
+    )
+
+
+def evidence_docs_to_items_multi_source(
+    evidence_docs: list,
+    default_role: str | None = None,
+) -> list[EvidenceItem]:
+    """从多源证据 dict 列表构造 EvidenceItem 列表（支持 [A]-[E] 五源）。
+
+    与 `evidence_docs_to_items`（仅处理 [A] PubMed EvidenceDoc 对象）互补，
+    本函数接受 list[dict] 输入，按 dict 内容自动归类证据源，调用
+    `evidence_to_item` 转换。
+
+    Args:
+        evidence_docs: 证据 dict 列表（每个 dict 含源标识字段，详见
+            `evidence_to_item` 文档）。
+        default_role: 可选，显式覆盖所有项的 source_role。
+
+    Returns:
+        EvidenceItem 列表（每项含 source_role / source_tag）。
+    """
+    if not evidence_docs:
+        return []
+
+    items: list[EvidenceItem] = []
+    for doc in evidence_docs:
+        if isinstance(doc, dict):
+            items.append(evidence_to_item(doc, default_role=default_role))
+        else:
+            # 非 dict 输入（如 EvidenceDoc 对象）兜底走旧 [A] PubMed 路径
+            items.extend(evidence_docs_to_items([doc]))
+    return items
+
+
 __all__ = [
     "EvidenceSource",
     "EvidenceItem",
@@ -461,4 +711,6 @@ __all__ = [
     "EvidenceFusionReport",
     "fuse_evidence",
     "evidence_docs_to_items",
+    "evidence_docs_to_items_multi_source",
+    "evidence_to_item",
 ]

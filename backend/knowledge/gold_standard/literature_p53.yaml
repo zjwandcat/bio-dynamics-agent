@@ -4,7 +4,7 @@
 pathway: p53
 
 classical_reviews:        # 经典综述（最高优先级，score 5）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:11099028"
     title: "Surfing the p53 network"
     authors: "Vogelstein B, Lane D, Levine AJ"
     year: 2000
@@ -16,49 +16,36 @@ classical_reviews:        # 经典综述（最高优先级，score 5）
     year: 2004
     journal: "Nature Genetics"
     reason: "p53-Mdm2 反馈环路单细胞动力学经典综述/实验，揭示脉冲式振荡"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Generation of oscillations by the p53-Mdm2 feedback loop"
+  - pmid: "PMID:11016968"
+    title: "Generation of oscillations by the p53-Mdm2 feedback loop: a theoretical and experimental study"
     authors: "Lev Bar-Or R et al"
     year: 2000
     journal: "Proceedings of the National Academy of Sciences"
     reason: "p53-Mdm2 反馈振荡机制理论奠基，首次预测并实验证实振荡"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:UNVERIFIED"  # PMID verification failed — needs manual check
     title: "Recovering circadian oscillations by using p53-Mdm2 dynamics"
     authors: "Batchelor E et al"
     year: 2008
     journal: "Molecular Systems Biology"
     reason: "p53-Mdm2 振荡恢复机制综述，量化脉冲振幅与频率调控"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "P53, the cellular gatekeeper for growth and division"
+  - pmid: "PMID:9039259"
+    title: "p53, the cellular gatekeeper for growth and division"
     authors: "Levine AJ"
     year: 1997
     journal: "Cell"
     reason: "p53 细胞周期检查点综述经典，定义 p53 作为'守门人'的功能范式"
 
 mechanism_papers:         # 机制论文（score 4）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:UNVERIFIED"  # PMID verification failed — needs manual check
     title: "Pulsed stimulation of p53-Mdm2 interaction by ATM kinase"
     authors: "Batchelor E et al"
     year: 2011
     journal: "Molecular Cell"
     reason: "ATM 激酶对 p53-Mdm2 脉冲刺激机制，定义 DNA 损伤响应动力学"
 
-biomodels_source_papers:  # BioModels 来源论文（score 3）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    biomodels_id: "BIOMD0000000048"
-    title: "p53-Mdm2 feedback loop oscillation model"
-    authors: "p53 BioModels source"
-    year: 2004
-    journal: "Nature Genetics"
-    reason: "p53-Mdm2 振荡 BioModels 来源模型（具体 PMID 待核实）"
+biomodels_source_papers: []  # BioModels 来源论文（score 3）— placeholder removed (BIOMD0000000048 is Kholodenko EGFR, not p53)
 
-recent_applications:      # 近期应用论文（score 2，仅补充）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "p53 dynamics in cancer therapy and drug resistance"
-    authors: "Recent p53 application study"
-    year: 2021
-    journal: "Nature Reviews Cancer"
-    reason: "p53 治疗耐药动力学近期应用（PubMed 补充）"
+recent_applications: []      # 近期应用论文（score 2，仅补充）— placeholder removed
 
 case_reports: []          # 案例报告（score 1，一般不用）
 

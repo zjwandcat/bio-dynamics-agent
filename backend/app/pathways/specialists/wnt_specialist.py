@@ -45,6 +45,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.biomodels_registry import get_biomodels_id
+from app.pathways.drug_library import (
+    build_drug_species,
+    build_inhibitor_edge,
+    get_drug_entry,
+)
 from app.pathways.pathway_modules.core.template import CoreModuleData
 from app.pathways.pathway_modules.crosstalk.template import CrosstalkModuleData
 from app.pathways.pathway_modules.feedback.template import FeedbackModuleData
@@ -71,7 +77,7 @@ logger = logging.getLogger(__name__)
 PATHWAY_TAG: str = "WNT"
 
 # SBML BioModels ID（Lee 2003 Wnt model）
-SOURCE_SBML: str = "BIOMD0000000008"
+SOURCE_SBML: str = get_biomodels_id(PATHWAY_TAG)
 
 # Validation benchmark PMID 引用（Polakis 2002 Wnt signaling）
 _PMID_POLAKIS_2002: str = "PMID:12064617"
@@ -94,101 +100,154 @@ _WNT_BCAT_AXIN2_DELAY_MINUTES: float = 30.0
 # GSK3b 物种标记 shared=True（与 PI3K-AKT Specialist 的 pAKT→GSK3β 路径共享，
 # pAKT 抑制 GSK3β 阻止 β-catenin 降解，cross-talk edge 由 Coordinator 管理）
 _WNT_CORE_SPECIES: list[dict[str, Any]] = [
+    # [C4 fix] initial_concentration aligned to BIOMD0000000658 (Lee2003, PMID:14551908).
+    #   SBML models Wnt/β-catenin destruction complex (APC/Axin/GSK3/B_catenin/TCF/Dsh).
+    #   SBML species mapping: Wnt→W, Dvl→Dsh_i, pDvl→Dsh_a, APC→APC, Axin→Axin,
+    #   GSK3b→GSK3, bCatenin→B_catenin, TCF_LEF→TCF, Axin_APC→APC_axin,
+    #   Axin_APC_GSK3b→APC_axin_GSK3, Axin_APC_GSK3b_bcat→B_catenin_APC__axin__GSK3,
+    #   TCF_LEF_bcat_complex→B_catenin_TCF.
+    #   Species not in SBML (Frizzled/LRP5_6/Wnt_Fz_LRP_complex/pLRP6/Axin_recruited/CK1/
+    #   p_bcat/ub_bcat/bcat_degraded/destruction_complex_*/bCatenin_nuclear/
+    #   Axin2_mRNA/Axin2/Cyclin_D1_mRNA/cMyc_mRNA) kept original.
     # ---- 配体 + 受体 ----
     # Wnt（Wnt 配体，分泌型糖蛋白，结合 Frizzled 受体启动 Wnt 信号）
+    # [C4 fix] SBML mapping: Wnt→W (boundary, initial_concentration=0.0, no Wnt at baseline)
     {"name": "Wnt", "species_type": "ligand",
-     "compartment": "extracellular"},
+     "compartment": "extracellular",
+     "initial_concentration": 0.0},  # Source: BIOMD0000000658 Lee2003 (PMID:14551908) species W (boundary, no Wnt at baseline)
     # Frizzled（Fz，Wnt 七次跨膜受体，与 LRP5/6 形成复合物）
+    # [C4 fix] No SBML match in BIOMD0000000658 (Lee2003 doesn't model Frizzled explicitly). Kept original.
     {"name": "Frizzled", "species_type": "protein",
      "compartment": "membrane"},
     # LRP5_6（LDL receptor-related protein 5/6，Wnt 共受体，被 Dvl 磷酸化）
+    # [C4 fix] No SBML match in BIOMD0000000658 (Lee2003 doesn't model LRP5/6 explicitly). Kept original.
     {"name": "LRP5_6", "species_type": "protein",
      "compartment": "membrane"},
     # Wnt_Fz_LRP_complex（Wnt+Frizzled+LRP5/6 三元复合物，受体激活启动下游）
+    # [C4 fix] No SBML match in BIOMD0000000658. Kept original.
     {"name": "Wnt_Fz_LRP_complex", "species_type": "complex",
      "compartment": "membrane"},
     # ---- Dvl 信号 ----
     # Dvl（Dishevelled，胞质信号转导蛋白，被 Wnt_Fz_LRP_complex 磷酸化激活）
+    # [C4 fix] SBML mapping: Dvl→Dsh_i (inactive Dishevelled, initial_concentration=100.0)
     {"name": "Dvl", "species_type": "protein",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 100.0},  # Source: BIOMD0000000658 Lee2003 (PMID:14551908) species Dsh_i (inactive Dsh)
     # pDvl（磷酸化激活的 Dvl，催化 LRP6 磷酸化）
+    # [C4 fix] SBML mapping: pDvl→Dsh_a (active Dishevelled, initial_concentration=0.0)
     {"name": "pDvl", "species_type": "protein",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 0.0},  # Source: BIOMD0000000658 Lee2003 (PMID:14551908) species Dsh_a (active Dsh)
     # pLRP6（磷酸化 LRP6，pDvl 异磷酸化 LRP6 PPPSP motifs，招募 Axin）
+    # [C4 fix] No SBML match in BIOMD0000000658 (Lee2003 doesn't model LRP6 phosphorylation). Kept original.
     {"name": "pLRP6", "species_type": "protein",
      "compartment": "membrane"},
     # ---- Destruction Complex 组分（Off 状态） ----
     # Axin（scaffold 蛋白，destruction complex 核心 scaffold，与 APC/GSK3β/CK1 结合）
+    # [C4 fix] SBML mapping: Axin→Axin (initial_concentration=0.000493)
     {"name": "Axin", "species_type": "protein",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 0.000493},  # Source: BIOMD0000000658 Lee2003 (PMID:14551908) species Axin
     # Axin_recruited（被招募到膜的 Axin，从 destruction complex 解离）
+    # [C4 fix] No SBML match in BIOMD0000000658. Kept original.
     {"name": "Axin_recruited", "species_type": "protein",
      "compartment": "membrane"},
     # APC（Adenomatous Polyposis Coli，tumor suppressor，destruction complex 组分）
+    # [C4 fix] SBML mapping: APC→APC (initial_concentration=98.0)
     {"name": "APC", "species_type": "protein",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 98.0},  # Source: BIOMD0000000658 Lee2003 (PMID:14551908) species APC
     # GSK3b（GSK3β，serine/threonine kinase，destruction complex 组分，shared）
     # pAKT 抑制 GSK3β Ser9 阻止 β-catenin 降解（PI3K-AKT→Wnt cross-talk）
+    # [C4 fix] SBML mapping: GSK3b→GSK3 (initial_concentration=50.0)
     {"name": "GSK3b", "species_type": "protein",
-     "compartment": "cytoplasm", "shared": True},
+     "compartment": "cytoplasm", "shared": True,
+     "initial_concentration": 50.0},  # Source: BIOMD0000000658 Lee2003 (PMID:14551908) species GSK3
     # CK1（Casein Kinase 1，destruction complex 组分，β-catenin Thr41 priming）
+    # [C4 fix] No SBML match in BIOMD0000000658 (Lee2003 doesn't model CK1 separately). Kept original.
     {"name": "CK1", "species_type": "protein",
      "compartment": "cytoplasm"},
     # ---- Destruction Complex 中间产物 ----
     # Axin_APC（Axin-APC 二元复合物，destruction complex 第 1 步组装产物）
+    # [C4 fix] SBML mapping: Axin_APC→APC_axin (initial_concentration=0.00098065)
     {"name": "Axin_APC", "species_type": "complex",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 0.00098065},  # Source: BIOMD0000000658 Lee2003 (PMID:14551908) species APC_axin
     # Axin_APC_GSK3b（Axin-APC-GSK3β 三元复合物，destruction complex 第 2 步组装产物）
+    # [C4 fix] SBML mapping: Axin_APC_GSK3b→APC_axin_GSK3 (initial_concentration=0.00483)
     {"name": "Axin_APC_GSK3b", "species_type": "complex",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 0.00483},  # Source: BIOMD0000000658 Lee2003 (PMID:14551908) species APC_axin_GSK3
     # Axin_APC_GSK3b_bcat（destruction complex-β-catenin 复合物，招募 β-catenin）
+    # [C4 fix] SBML mapping: Axin_APC_GSK3b_bcat→B_catenin_APC__axin__GSK3 (initial_concentration=0.00202)
     {"name": "Axin_APC_GSK3b_bcat", "species_type": "complex",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 0.00202},  # Source: BIOMD0000000658 Lee2003 (PMID:14551908) species B_catenin_APC__axin__GSK3
     # ---- β-catenin 五步降解中间产物 ----
     # bCatenin（β-catenin，cytoplasmic pool，shared：与 Cell Cycle Specialist
     # Cyclin D1 路径共享，β-catenin 转录 Cyclin D1 推动细胞周期）
+    # [C4 fix] SBML mapping: bCatenin→B_catenin (free/active β-catenin, initial_concentration=1.0)
     {"name": "bCatenin", "species_type": "protein",
-     "compartment": "cytoplasm", "shared": True},
+     "compartment": "cytoplasm", "shared": True,
+     "initial_concentration": 1.0},  # Source: BIOMD0000000658 Lee2003 (PMID:14551908) species B_catenin (free β-catenin)
     # p_bcat（磷酸化 β-catenin，Ser33/37/Thr41，五步降解第 3 步产物）
+    # [C4 fix] No SBML match in BIOMD0000000658 (Lee2003 doesn't model phosphorylated β-catenin separately). Kept original.
     {"name": "p_bcat", "species_type": "protein",
      "compartment": "cytoplasm"},
     # ub_bcat（泛素化 β-catenin，五步降解第 4 步产物，被 β-TrCP E3 ligase 标记）
+    # [C4 fix] No SBML match in BIOMD0000000658. Kept original.
     {"name": "ub_bcat", "species_type": "protein",
      "compartment": "cytoplasm"},
     # bcat_degraded（蛋白酶体降解后的 β-catenin 残余，五步降解第 5 步产物）
+    # [C4 fix] No SBML match in BIOMD0000000658. Kept original.
     {"name": "bcat_degraded", "species_type": "protein",
      "compartment": "cytoplasm"},
     # ---- Destruction Complex 状态 ----
     # destruction_complex_disrupted（解离状态的 destruction complex，Wnt On 时由 Axin 招募触发）
+    # [C4 fix] No SBML match in BIOMD0000000658. Kept original.
     {"name": "destruction_complex_disrupted", "species_type": "complex",
      "compartment": "cytoplasm"},
     # destruction_complex_reformed（重建状态的 destruction complex，Axin2 重建执行负反馈）
+    # [C4 fix] No SBML match in BIOMD0000000658. Kept original.
     {"name": "destruction_complex_reformed", "species_type": "complex",
      "compartment": "cytoplasm"},
     # ---- β-catenin 入核 + 转录 ----
     # bCatenin_nuclear（核内 β-catenin，累积后与 TCF/LEF 形成转录复合物）
+    # [C4 fix] No SBML match in BIOMD0000000658 (Lee2003 doesn't model nuclear β-catenin separately). Kept original.
     {"name": "bCatenin_nuclear", "species_type": "protein",
      "compartment": "nucleus"},
     # TCF_LEF（T-cell factor/Lymphoid enhancer factor，转录因子，与 β-catenin 形成复合物）
+    # [C4 fix] SBML mapping: TCF_LEF→TCF (initial_concentration=8.17)
     {"name": "TCF_LEF", "species_type": "protein",
-     "compartment": "nucleus"},
+     "compartment": "nucleus",
+     "initial_concentration": 8.17},  # Source: BIOMD0000000658 Lee2003 (PMID:14551908) species TCF
     # TCF_LEF_bcat_complex（β-catenin-TCF/LEF 转录激活复合物，激活下游靶基因）
+    # [C4 fix] SBML mapping: TCF_LEF_bcat_complex→B_catenin_TCF (initial_concentration=6.83)
     {"name": "TCF_LEF_bcat_complex", "species_type": "complex",
-     "compartment": "nucleus"},
+     "compartment": "nucleus",
+     "initial_concentration": 6.83},  # Source: BIOMD0000000658 Lee2003 (PMID:14551908) species B_catenin_TCF
     # ---- Axin2 负反馈 ----
     # Axin2_mRNA（Axin2 mRNA，β-catenin 转录激活，含 30 min 转录延迟，负反馈）
+    # [C4 fix] No SBML match in BIOMD0000000658 (Lee2003 doesn't model Axin2 transcription). Kept original.
     {"name": "Axin2_mRNA", "species_type": "mrna",
      "compartment": "nucleus"},
     # Axin2（Axin2 蛋白，重新合成促进 destruction complex 形成降解 β-catenin）
+    # [C4 fix] No SBML match in BIOMD0000000658. Kept original.
     {"name": "Axin2", "species_type": "protein",
      "compartment": "cytoplasm"},
     # ---- Cyclin D1 / cMyc 转录（cross-talk 到 Cell Cycle，下游由 Cell Cycle 处理）----
     # Cyclin_D1_mRNA（Cyclin D1 mRNA，β-catenin 转录激活推动细胞周期）
+    # [C4 fix] No SBML match in BIOMD0000000658. Kept original.
     {"name": "Cyclin_D1_mRNA", "species_type": "mrna",
      "compartment": "nucleus"},
     # cMyc_mRNA（c-Myc mRNA，β-catenin 转录激活促增殖）
+    # [C4 fix] No SBML match in BIOMD0000000658. Kept original.
     {"name": "cMyc_mRNA", "species_type": "mrna",
      "compartment": "nucleus"},
+    # [N6 缺口 1] 药物物种（species_type="drug"）— 由 drug_library 驱动
+    # XAV939 是 TNKS1/2 PARP 域抑制剂（IC50=11 nM, PMID:19516276）
+    # 抑制 TNKS 稳定 Axin，增强 destruction complex 活性促进 β-catenin 降解
+    build_drug_species("XAV939"),
 ]
 
 
@@ -493,6 +552,15 @@ _WNT_CORE_REACTIONS: list[dict[str, Any]] = [
         "hill_coefficient": 2,
         "description": "TCF_LEF_bcat_complex → cMyc_mRNA（transcription, Hill n=2, β-catenin 转录激活 c-Myc 促增殖, 下游 c-Myc→Cyclin D 由 Cell Cycle Specialist 处理）",
     },
+    # ===== [N6 缺口 1] 药物-靶点显式 inhibitor edge（canonical drug_library 驱动） =====
+    # 18. XAV939 → Axin（PARP_domain_inhibitor, IC50=11 nM, PMID:19516276）
+    # XAV939 抑制 tankyrase TNKS1/2 的 PARP 域，阻止 Axin 泛素化降解，
+    # 稳定 Axin 蛋白增强 destruction complex 活性，促进 β-catenin 降解。
+    # 此处 target="Axin" 与 specialist 现有物种命名对齐（XAV939 功能性靶点是 Axin 稳定性）。
+    {
+        **build_inhibitor_edge("XAV939", "Axin"),
+        "pathway_tag": PATHWAY_TAG,
+    },
 ]
 
 
@@ -724,12 +792,15 @@ _WNT_PERTURBATIONS: list[dict[str, Any]] = [
     # 2. XAV939（tankyrase inhibitor, 稳定 Axin 促进 β-catenin 降解）
     #    XAV939 是 tankyrase (TNKS) 抑制剂，稳定 Axin1/2 蛋白，
     #    增强 destruction complex 活性，促进 β-catenin 降解
+    # [N6 缺口 1] 注入 canonical drug_library 字段（ic50_nM/ki_nM/source_pmid/...）
     {
         "target": "Axin",
         "drug": "XAV939",
         "mechanism": "inhibition",
         "ko_target": None,
         "description": "XAV939（tankyrase TNKS 抑制剂, 小分子, 稳定 Axin1/2 蛋白, 增强 destruction complex 活性, 促进 β-catenin 降解）",
+        **{k: v for k, v in get_drug_entry("XAV939").items()
+           if k not in ("description",)},
     },
     # 3. LGK974（PORCN inhibitor, 阻止 Wnt 分泌）
     #    LGK974 是 porcupine (PORCN) 抑制剂，阻止 Wnt 配体棕榈酰化与分泌
@@ -1004,6 +1075,12 @@ class WntSpecialist(PathwaySpecialistBase):
                 "composite_reactions": list(_WNT_COMPOSITE_REACTIONS),
                 "pathway_tag": PATHWAY_TAG,
                 "source_sbml": SOURCE_SBML,
+                # [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+                # 修复 C1 Peak Time：原 KINETIC_PARAMETERS 是死代码，现通过此字段
+                # 经 specialist_hook → graph_v3._ode_template_v2_hook → renderer.render(params=...)
+                # 注入 ODE 模板，使 _get_param(tgt_name, key, default) 能查到文献参数。
+                # 数值爆炸防护：通过文献 k_cat/Km 稳定 destruction complex 与 β-catenin 动力学。
+                "kinetics_overrides": dict(_KINETICS_BY_TARGET),
             }
         except Exception as exc:
             logger.warning(
@@ -1247,9 +1324,100 @@ KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
 }
 
 
+# =============================================================================
+# [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+# =============================================================================
+# 用途：apply_core() 返回 kinetics_overrides 字段 → specialist_hook 提取 →
+#       graph_v3._ode_template_v2_hook 合并 → ODERendererV2.render(params=...) →
+#       ODE 模板 _get_param(tgt_name, key, default) 查找文献参数。
+#
+# 单位转换：
+#   - KINETIC_PARAMETERS 的 Km 单位是 M（Molar），ODE 模型用 μM 单位
+#   - 转换规则：Km_μM = Km_M × 1e6（如 1e-7 M = 0.1 μM）
+#   - k_cat / k_off / k_degradation / k_import / k_translation / k_transcription
+#     是时间常数（min^-1），无需转换
+#   - k_on 参数单位为 M^-1 min^-1，与 ODE 模型 μM 单位冲突，统一 SKIP
+#
+# 映射依据（KINETIC_PARAMETERS 键名 → 反应 target 物种名）：
+#   "Wnt_Fz_LRP"                    → Wnt_Fz_LRP_complex（On 反应 7: Wnt+Fz+LRP→Wnt_Fz_LRP_complex 受体复合物, k_on SKIP）
+#   "Wnt_complex_pDvl"              → pDvl（On 反应 8: Wnt_Fz_LRP_complex→pDvl Dvl 磷酸化）
+#   "pDvl_pLRP6"                    → pLRP6（On 反应 9: pDvl→pLRP6 LRP6 磷酸化）
+#   "Axin_APC"                      → Axin_APC（Off 反应 1: Axin+APC→Axin_APC destruction complex step1, k_on SKIP）
+#   "Axin_APC_GSK3b"                → Axin_APC_GSK3b（Off 反应 2: Axin_APC+GSK3b→Axin_APC_GSK3b step2, k_on SKIP）
+#   "Axin_complex_p_bcat"           → p_bcat（Off 反应 4: Axin_APC_GSK3b_bcat→p_bcat β-catenin 磷酸化 step3）
+#   "p_bcat_ub_bcat"                → ub_bcat（Off 反应 5: p_bcat→ub_bcat 泛素化 step4）
+#   "ub_bcat_degradation"           → bcat_degraded（Off 反应 6: ub_bcat→bcat_degraded 蛋白酶体降解 step5）
+#   "bCatenin_nuclear_import"       → bCatenin_nuclear（On 反应 12: bCatenin→bCatenin_nuclear 入核）
+#   "bCatenin_TCF_LEF"              → TCF_LEF_bcat_complex（On 反应 13: bCatenin_nuclear+TCF_LEF→TCF_LEF_bcat_complex, k_on SKIP）
+#   "TCF_LEF_Axin2_transcription"   → Axin2_mRNA（On 反应 14: TCF_LEF_bcat→Axin2_mRNA 转录, DDE delay=30min 负反馈）
+#   "Axin2_translation"             → Axin2（On 反应 15: Axin2_mRNA→Axin2 翻译, 负反馈重建 destruction complex）
+#   "TCF_LEF_CyclinD1_transcription"→ Cyclin_D1_mRNA（On 反应 16: TCF_LEF_bcat→Cyclin_D1_mRNA 转录, cross-talk）
+#   "TCF_LEF_cMyc_transcription"    → cMyc_mRNA（On 反应 17: TCF_LEF_bcat→cMyc_mRNA 转录）
+_KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
+    "Wnt_Fz_LRP_complex": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (Wnt-Fz-LRP 复合物解离, Lee 2003)
+    },
+    # [RC29 校准对齐] pDvl k_cat 1.0→2.0 对齐 oscillatory_feedback.j2 磷酸化默认值
+    "pDvl": {
+        "k_cat": 2.0,                 # min^-1 (Wnt_complex 催化 Dvl 磷酸化, Lee 2003)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    # [RC29 校准对齐] pLRP6 k_cat 1.0→2.0 对齐 oscillatory_feedback.j2 磷酸化默认值
+    "pLRP6": {
+        "k_cat": 2.0,                 # min^-1 (pDvl 催化 LRP6 磷酸化, Lee 2003)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    "Axin_APC": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (Axin-APC 解离, Lee 2003, destruction complex step1)
+    },
+    "Axin_APC_GSK3b": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (Axin_APC-GSK3b 解离, Lee 2003, step2)
+    },
+    # [RC29 校准对齐] p_bcat k_cat 1.0→2.0 对齐 oscillatory_feedback.j2 磷酸化默认值
+    "p_bcat": {
+        "k_cat": 2.0,                 # min^-1 (Axin_APC_GSK3b 催化 β-catenin 磷酸化, Lee 2003, step3)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM, β-catenin Km ≈100 nM)
+    },
+    # [RC29 校准对齐] ub_bcat k_cat 1.0→2.0 对齐 oscillatory_feedback.j2 磷酸化默认值
+    "ub_bcat": {
+        "k_cat": 2.0,                 # min^-1 (E3 催化 p_bcat 泛素化, Lee 2003, step4)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    "bcat_degraded": {
+        "k_degradation": 0.5,         # min^-1 (蛋白酶体降解 ub_bcat, Lee 2003, step5)
+    },
+    "bCatenin_nuclear": {
+        "k_import": 0.1,              # min^-1 (bCatenin 入核, Lee 2003)
+    },
+    "TCF_LEF_bcat_complex": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (bCatenin-TCF_LEF 解离, Lee 2003)
+    },
+    "Axin2_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (TCF_LEF_bcat 转录激活 Axin2, Lee 2003, DDE delay=30min)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM, Hill n=2)
+    },
+    "Axin2": {
+        "k_translation": 0.1,         # min^-1 (Axin2_mRNA 翻译, Lee 2003, 负反馈重建)
+    },
+    "Cyclin_D1_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (TCF_LEF_bcat 转录激活 Cyclin D1, Polakis 2002, cross-talk)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    "cMyc_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (TCF_LEF_bcat 转录激活 cMyc, Polakis 2002)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+}
+
+
 __all__ = [
     "WntSpecialist",
     "PATHWAY_TAG",
     "SOURCE_SBML",
     "KINETIC_PARAMETERS",
+    "_KINETICS_BY_TARGET",
 ]

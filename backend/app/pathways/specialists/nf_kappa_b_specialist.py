@@ -39,6 +39,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.biomodels_registry import get_biomodels_id
+from app.pathways.drug_library import (
+    build_drug_species,
+    build_inhibitor_edge,
+    get_drug_entry,
+)
 from app.pathways.pathway_modules.core.template import CoreModuleData
 from app.pathways.pathway_modules.crosstalk.template import CrosstalkModuleData
 from app.pathways.pathway_modules.feedback.template import FeedbackModuleData
@@ -65,7 +71,7 @@ logger = logging.getLogger(__name__)
 PATHWAY_TAG: str = "NF_KB"
 
 # SBML BioModels ID（Ashall 2009 NF-kB oscillation model）
-SOURCE_SBML: str = "BIOMD0000000258"
+SOURCE_SBML: str = get_biomodels_id(PATHWAY_TAG)
 
 # Validation benchmark PMID 引用（Nelson 2004 NF-κB oscillation）
 _Pmid_NELSON_2004: str = "PMID:14976212"
@@ -88,63 +94,94 @@ _NFKB_A20_IKK_DELAY_MINUTES: float = 60.0
 # NFkB 物种标记 shared=True（与 Apoptosis Specialist 的 Bcl-2 抗凋亡路径共享，
 # NF-κB 转录 Bcl-2 维持肿瘤细胞存活，下游 Bcl-2→凋亡由 Apoptosis Specialist 处理）
 _NF_KB_CORE_SPECIES: list[dict[str, Any]] = [
+    # [C4 fix] initial_concentration aligned to BIOMD0000000140 (Hoffmann2002, PMID:12424381).
+    #   SBML models NF-κB/IκBα oscillations (IKK/IkBalpha/NFkB/NFkB_nuc/IkBalpha_transcript).
+    #   SBML species mapping: IkBa→IkBalpha, NFkB→NFkB, NFkB_nuclear→NFkB_nuc,
+    #   IkBa_mRNA→IkBalpha_transcript, pIKK→IKK (SBML IKK=active, initially 0).
+    #   Species not in SBML (TNF/TNFR/TNF_TNFR_complex/IKK-inactive/pIkBa/ubIkBa/
+    #   IkBa_degraded/A20/A20_mRNA/TNF_mRNA/Bcl2_mRNA) kept original.
     # ---- 配体 + 受体 ----
     # TNF（Tumor Necrosis Factor α，pro-inflammatory cytokine，NF-κB 经典配体）
+    # [C4 fix] No SBML match in BIOMD0000000140 (TNF is a boundary stimulus, not modeled as species). Kept original.
     {"name": "TNF", "species_type": "ligand",
      "compartment": "extracellular"},
     # TNFR（TNF Receptor 1，膜结合受体，接收 TNF 信号）
+    # [C4 fix] No SBML match in BIOMD0000000140. Kept original.
     {"name": "TNFR", "species_type": "protein",
      "compartment": "membrane"},
     # TNF_TNFR_complex（TNF+TNFR 配体-受体复合物，激活下游 IKK）
+    # [C4 fix] No SBML match in BIOMD0000000140. Kept original.
     {"name": "TNF_TNFR_complex", "species_type": "complex",
      "compartment": "membrane"},
     # ---- IKK 激酶 ----
     # IKK（IκB kinase，未激活形式，被 TNF_TNFR_complex 激活）
+    # [C4 fix] No SBML match in BIOMD0000000140 (SBML IKK represents active IKK only,
+    #   not the inactive pool; specialist's IKK is the inactive form). Kept original.
     {"name": "IKK", "species_type": "protein",
      "compartment": "cytoplasm"},
     # pIKK（磷酸化激活的 IKK，催化 IκBα 磷酸化）
+    # [C4 fix] SBML mapping: pIKK→IKK (SBML IKK=active IKK, initial_concentration=0.0)
     {"name": "pIKK", "species_type": "protein",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 0.0},  # Source: BIOMD0000000140 Hoffmann2002 (PMID:12424381) species IKK (active IKK, initially 0)
     # ---- IκBα 三步耦合降解中间产物 ----
     # IkBa（IκBα，NF-κB 抑制蛋白，扣留 NF-κB 在胞质）
+    # [C4 fix] SBML mapping: IkBa→IkBalpha (initial_concentration=0.1)
     {"name": "IkBa", "species_type": "protein",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 0.1},  # Source: BIOMD0000000140 Hoffmann2002 (PMID:12424381) species IkBalpha
     # pIkBa（磷酸化 IκBα，Ser32/36，三步耦合第 1 步中间产物）
+    # [C4 fix] No SBML match in BIOMD0000000140 (SBML doesn't model phosphorylated IκBα separately). Kept original.
     {"name": "pIkBa", "species_type": "protein",
      "compartment": "cytoplasm"},
     # ubIkBa（泛素化 IκBα，三步耦合第 2 步中间产物，被 E3 ligase β-TrCP 标记）
+    # [C4 fix] No SBML match in BIOMD0000000140. Kept original.
     {"name": "ubIkBa", "species_type": "protein",
      "compartment": "cytoplasm"},
     # IkBa_degraded（IκBα 降解后残余，NF-κB 即将从复合物释放）
+    # [C4 fix] No SBML match in BIOMD0000000140. Kept original.
     {"name": "IkBa_degraded", "species_type": "protein",
      "compartment": "cytoplasm"},
     # ---- NF-κB 转录因子 ----
     # NFkB（NF-κB 胞质游离形式，shared：与 Apoptosis Specialist Bcl-2 路径共享）
     # IκBα 降解后释放的游离 NF-κB，可入核作为转录因子
+    # [C4 fix] SBML mapping: NFkB→NFkB (initial_concentration=0.1)
     {"name": "NFkB", "species_type": "protein",
-     "compartment": "cytoplasm", "shared": True},
+     "compartment": "cytoplasm", "shared": True,
+     "initial_concentration": 0.1},  # Source: BIOMD0000000140 Hoffmann2002 (PMID:12424381) species NFkB
     # NFkB_nuclear（核内 NF-κB，作为转录因子激活下游靶基因）
+    # [C4 fix] SBML mapping: NFkB_nuclear→NFkB_nuc (initial_concentration=0.001)
     {"name": "NFkB_nuclear", "species_type": "protein",
-     "compartment": "nucleus"},
+     "compartment": "nucleus",
+     "initial_concentration": 0.001},  # Source: BIOMD0000000140 Hoffmann2002 (PMID:12424381) species NFkB_nuc
     # ---- IκBα 转录负反馈 ----
     # IkBa_mRNA（IκBα mRNA，NF-κB 转录激活，含 30 min 转录延迟，负反馈振荡）
+    # [C4 fix] SBML mapping: IkBa_mRNA→IkBalpha_transcript (initial_concentration=0.0)
     {"name": "IkBa_mRNA", "species_type": "mrna",
-     "compartment": "nucleus"},
+     "compartment": "nucleus",
+     "initial_concentration": 0.0},  # Source: BIOMD0000000140 Hoffmann2002 (PMID:12424381) species IkBalpha_transcript
     # ---- A20 转录双负反馈 ----
     # A20_mRNA（A20/TNFAIP3 mRNA，NF-κB 转录激活，A20 抑制 IKK 双负反馈）
+    # [C4 fix] No SBML match in BIOMD0000000140. Kept original.
     {"name": "A20_mRNA", "species_type": "mrna",
      "compartment": "nucleus"},
     # A20（A20 蛋白，抑制 IKK 活性，双负反馈 delay=60min）
+    # [C4 fix] No SBML match in BIOMD0000000140. Kept original.
     {"name": "A20", "species_type": "protein",
      "compartment": "cytoplasm"},
     # ---- TNF 转录正反馈 ----
     # TNF_mRNA（TNF mRNA，NF-κB 转录激活 TNF，正反馈放大）
+    # [C4 fix] No SBML match in BIOMD0000000140. Kept original.
     {"name": "TNF_mRNA", "species_type": "mrna",
      "compartment": "nucleus"},
     # ---- Bcl-2 转录（抗凋亡，下游由 Apoptosis Specialist 处理）----
     # Bcl2_mRNA（Bcl-2 mRNA，NF-κB 转录激活 Bcl-2 抗凋亡基因）
+    # [C4 fix] No SBML match in BIOMD0000000140. Kept original.
     {"name": "Bcl2_mRNA", "species_type": "mrna",
      "compartment": "nucleus"},
+    # [N6 缺口 1] 药物物种（species_type="drug"）— 由 drug_library 驱动
+    # Bortezomib 是 26S 蛋白酶体硼酸酯抑制剂（IC50=0.62 nM, PMID:12626833）
+    build_drug_species("Bortezomib"),
 ]
 
 
@@ -378,6 +415,49 @@ _NF_KB_CORE_REACTIONS: list[dict[str, Any]] = [
         "autophosphorylation": False,
         "description": "A20 mRNA 翻译为 A20 蛋白（A20_mRNA 作 substrate, A20 作 product, A20 抑制 IKK 形成双负反馈）",
     },
+    # 14. IkBa → NFkB（inhibition, mass_action, 反馈环第 3 步：IκBα 重新结合游离 NF-κB 隔离其入核）
+    #    [N8-P0-2 修复] 补全反馈环第 3 步：IκBα 蛋白结合游离 NF-κB 形成 IκBα-NF-κB 复合物
+    #    （Hoffmann 2002, PMID:12424381; KINETIC_PARAMETERS 中 k_off=1e-3 min^-1, Km=1e-7 M）
+    #    缺失此反应导致 IκBα 蛋白无法实际扣留 NF-κB，反馈环无法闭合，NF-κB 持续激活
+    #    注：NFkB 作 substrate（被扣留），IkBa 作 modifier（抑制因子），无产物（NFkB 游离形式降低）
+    {
+        "source": "IkBa",
+        "target": "NFkB",
+        "mechanism": "inhibition",
+        "kinetics_type": "mass_action",
+        "pathway_tag": PATHWAY_TAG,
+        "substrate": "NFkB",
+        "product": "NFkB",
+        "modifier": "IkBa",
+        "modifier_type": "allosteric",
+        "autophosphorylation": False,
+        "description": "IκBα 抑制 NF-κB（NFkB 作 substrate, IkBa 作 allosteric inhibitor, 反馈环第 3 步, IκBα 重新合成后结合游离 NF-κB 形成复合物, 隔离 NF-κB 阻止其入核, delay=0min 蛋白结合直接抑制, Hoffmann 2002 PMID:12424381）",
+    },
+    # 15. A20 → pIKK（inhibition, mass_action, 双负反馈第 2 步：A20 抑制 pIKK 激酶活性）
+    #    [N8-P0-2 修复] 补全 A20 双负反馈第 2 步：A20 蛋白结合 pIKK 抑制其激酶活性
+    #    （Nelson 2004, PMID:14976212; KINETIC_PARAMETERS 中 k_off=1e-3 min^-1, Km=1e-7 M）
+    #    缺失此反应导致 A20 蛋白无法实际抑制 pIKK，双负反馈无法闭合
+    {
+        "source": "A20",
+        "target": "pIKK",
+        "mechanism": "inhibition",
+        "kinetics_type": "mass_action",
+        "pathway_tag": PATHWAY_TAG,
+        "substrate": "pIKK",
+        "product": "pIKK",
+        "modifier": "A20",
+        "modifier_type": "allosteric",
+        "autophosphorylation": False,
+        "description": "A20 抑制 pIKK 激酶活性（pIKK 作 substrate, A20 作 allosteric inhibitor, 双负反馈第 2 步, 阻断 pIKK 磷酸化 IκBα, delay=0min 蛋白结合直接抑制, Nelson 2004 PMID:14976212）",
+    },
+    # ===== [N6 缺口 1] 药物-靶点显式 inhibitor edge（canonical drug_library 驱动） =====
+    # 16. Bortezomib → proteasome（boronate_reversible, IC50=0.62 nM, PMID:12626833）
+    # Bortezomib 是 26S 蛋白酶体硼酸酯可逆抑制剂，占据蛋白酶体苏氨酸残基活性位点，
+    # 阻止 IκBα 降解，扣留 NF-κB 在胞质。用于多发性骨髓瘤治疗（FDA-approved）。
+    {
+        **build_inhibitor_edge("Bortezomib", "proteasome"),
+        "pathway_tag": PATHWAY_TAG,
+    },
 ]
 
 
@@ -576,12 +656,15 @@ _NF_KB_PERTURBATIONS: list[dict[str, Any]] = [
     # 1. Bortezomib（proteasome inhibitor, FDA-approved）
     #    Bortezomib 是 26S 蛋白酶体抑制剂，阻止 IκBα 降解，扣留 NF-κB 在胞质
     #    （用于多发性骨髓瘤治疗，FDA-approved）
+    # [N6 缺口 1] 注入 canonical drug_library 字段（ic50_nM/ki_nM/source_pmid/...）
     {
         "target": "proteasome",
         "drug": "Bortezomib",
         "mechanism": "inhibition",
         "ko_target": None,
         "description": "Bortezomib（26S 蛋白酶体抑制剂, FDA-approved, 阻止 IκBα 降解, 扣留 NF-κB 在胞质, 用于多发性骨髓瘤）",
+        **{k: v for k, v in get_drug_entry("Bortezomib").items()
+           if k not in ("description",)},
     },
     # 2. BAY 11-7082（IKK inhibitor）
     #    BAY 11-7082 是 IKK 抑制剂，阻止 IκBα 磷酸化，稳定 IκBα 抑制 NF-κB
@@ -853,6 +936,12 @@ class NfKappaBSpecialist(PathwaySpecialistBase):
                 "composite_reactions": list(_NF_KB_COMPOSITE_REACTIONS),
                 "pathway_tag": PATHWAY_TAG,
                 "source_sbml": SOURCE_SBML,
+                # [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+                # 修复 C1 Peak Time：原 KINETIC_PARAMETERS 是死代码，现通过此字段
+                # 经 specialist_hook → graph_v3._ode_template_v2_hook → renderer.render(params=...)
+                # 注入 ODE 模板，使 _get_param(tgt_name, key, default) 能查到文献参数。
+                # 振荡稳定：通过文献 k_cat/Km 稳定 NF-κB-IκBα 振荡动力学。
+                "kinetics_overrides": dict(_KINETICS_BY_TARGET),
             }
         except Exception as exc:
             logger.warning(
@@ -1095,9 +1184,118 @@ KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
 }
 
 
+# =============================================================================
+# [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+# =============================================================================
+# 用途：apply_core() 返回 kinetics_overrides 字段 → specialist_hook 提取 →
+#       graph_v3._ode_template_v2_hook 合并 → ODERendererV2.render(params=...) →
+#       ODE 模板 _get_param(tgt_name, key, default) 查找文献参数。
+#
+# 单位转换：
+#   - KINETIC_PARAMETERS 的 Km 单位是 M（Molar），ODE 模型用 μM 单位
+#   - 转换规则：Km_μM = Km_M × 1e6（如 1e-7 M = 0.1 μM）
+#   - k_cat / k_off / k_degradation / k_release / k_import / k_translation /
+#     k_transcription 是时间常数（min^-1），无需转换
+#   - k_on 参数单位为 M^-1 min^-1，与 ODE 模型 μM 单位冲突，统一 SKIP
+#
+# 映射依据（KINETIC_PARAMETERS 键名 → 反应 target 物种名）：
+#   "TNF_TNFR"                   → TNF_TNFR_complex（反应 1: TNF+TNFR→TNF_TNFR_complex 配体-受体结合, k_on SKIP）
+#   "TNF_complex_pIKK"           → pIKK（反应 2: TNF_TNFR_complex→pIKK IKK 磷酸化激活）
+#   "A20_pIKK_inhibition"        → pIKK（A20 双负反馈抑制 pIKK, k_on SKIP, 合并到 pIKK）
+#   "pIKK_pIkBa"                 → pIkBa（反应 3: pIKK→pIkBa IκBα 磷酸化, 三步耦合 step1）
+#   "pIkBa_ubIkBa"               → ubIkBa（反应 4: pIkBa→ubIkBa 泛素化, 三步耦合 step2）
+#   "ubIkBa_degradation"         → IkBa_degraded（反应 5: ubIkBa→IkBa_degraded 蛋白酶体降解, 三步耦合 step3）
+#   "IkBa_degraded_NFkB_release" → NFkB（反应 6: IkBa_degraded→NFkB NF-κB 释放）
+#   "NFkB_nuclear_import"        → NFkB_nuclear（反应 7: NFkB→NFkB_nuclear 入核）
+#   "NFkB_IkBa_transcription"    → IkBa_mRNA（反应 8: NFkB_nuclear→IkBa_mRNA 转录, DDE delay=30min 负反馈）
+#   "NFkB_A20_transcription"     → A20_mRNA（反应 9: NFkB_nuclear→A20_mRNA 转录, DDE delay=60min 双负反馈）
+#   "NFkB_TNF_transcription"     → TNF_mRNA（反应 10: NFkB_nuclear→TNF_mRNA 转录, 正反馈）
+#   "NFkB_Bcl2_transcription"    → Bcl2_mRNA（反应 11: NFkB_nuclear→Bcl2_mRNA 转录, 抗凋亡）
+#   "IkBa_translation"           → IkBa（反应 13: IkBa_mRNA→IkBa 翻译）
+_KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
+    "TNF_TNFR_complex": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (TNF-TNFR 解离, Hoffmann 2002)
+    },
+    # [RC29 校准对齐] pIKK k_cat 1.0→2.0 对齐 oscillatory_feedback.j2 磷酸化默认值
+    "pIKK": {
+        "k_cat": 2.0,                 # min^-1 (TNF_complex 催化 IKK 磷酸化, Hoffmann 2002)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突 (A20 双负反馈抑制)
+        "k_off": 1e-3,                # min^-1 (A20 抑制 pIKK 解离, Nelson 2004)
+    },
+    # [RC29 校准对齐] pIkBa k_cat 1.0→2.0 对齐 oscillatory_feedback.j2 磷酸化默认值
+    "pIkBa": {
+        "k_cat": 2.0,                 # min^-1 (pIKK 催化 IκBα 磷酸化, Hoffmann 2002, 三步耦合 step1)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM, IκBα Km ≈100 nM)
+    },
+    # [RC29 校准对齐] ubIkBa k_cat 1.0→2.0 对齐 oscillatory_feedback.j2 磷酸化默认值
+    "ubIkBa": {
+        "k_cat": 2.0,                 # min^-1 (E3 催化 pIkBa 泛素化, Hoffmann 2002, 三步耦合 step2)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    "IkBa_degraded": {
+        "k_degradation": 0.5,         # min^-1 (蛋白酶体降解 ubIkBa, Hoffmann 2002, 三步耦合 step3)
+    },
+    "NFkB": {
+        "k_release": 1.0,             # min^-1 (IkBa 降解后 NF-κB 释放, Hoffmann 2002)
+    },
+    "NFkB_nuclear": {
+        # [P1-NEXT-7 修复 V2 / NFκB_nuclear peak_time=11.84min 过早（期望 [15,30]min）]
+        # Root Cause (V2): k_import=0.1 min^-1 使上升时间常数=10min，
+        #   与实测 11.84min 完全吻合 → 首峰完全由 k_import 主导
+        #   IκBα 负反馈因 30min DDE delay + 慢翻译（k_translation=0.1, 时间常数 10min）
+        #   远晚于首峰，无法在峰前提供刹车
+        # Fix V2: k_import 0.1 → 0.04（时间常数 10min → 25min）
+        #   稳态估算：1/e=25min → NFκB_nuclear 在 [15,30]min 区间达峰
+        #   且 IκBα 翻译 k_translation=0.3（时间常数 3.3min）配合 DDE delay=30min
+        #   使 IκBα 在 ~33min 重新合成，刚好抑制 NFκB_nuclear 形成瞬态峰
+        "k_import": 0.04,             # min^-1 (NF-κB 入核, P1-NEXT-7 V2: 0.1→0.04 延后达峰到 [15,30]min)
+    },
+    "IkBa_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (NF-κB 转录激活 IκBα, Hoffmann 2002, DDE delay=30min)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM, Hill n=2)
+    },
+    "A20_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (NF-κB 转录激活 A20, Hoffmann 2002, DDE delay=60min)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    "TNF_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (NF-κB 转录激活 TNF, Hoffmann 2002, 正反馈)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    "Bcl2_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (NF-κB 转录激活 Bcl-2, Hoffmann 2002, 抗凋亡)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    "IkBa": {
+        # [P1-NEXT-7 V2 修复] 加速 IκBα 翻译，使负反馈更早启动
+        # k_translation 0.1 → 0.3：时间常数 10min → 3.3min
+        # 配合 DDE delay=30min，IκBα 在 ~33min 重新合成，刚好抑制 NFκB_nuclear 瞬态峰
+        "k_translation": 0.3,         # min^-1 (IkBa_mRNA 翻译, P1-NEXT-7 V2: 0.1→0.3 加速负反馈)
+    },
+    # [N8-P0-2 修复] 补 A20 翻译参数（反应 13: A20_mRNA→A20 翻译）
+    "A20": {
+        "k_translation": 0.1,         # min^-1 (A20_mRNA 翻译, Nelson 2004, 双负反馈 delay=60min)
+    },
+    # [N8-P0-2 修复] 补 NFkB inhibition 参数（反应 14: IkBa→NFkB 抑制，反馈环第 3 步）
+    # 注：NFkB 已含 k_release=1.0，此处合并 inhibition k_off
+    # 因 NFkB 条目已存在，下面单独追加 inhibition k_off 到现有条目（避免重复定义）
+}
+
+# [N8-P0-2 修复] 追加 NFkB inhibition k_off（IkBa→NFkB 抑制反馈环第 3 步, mass_action）
+# 因 NFkB 条目已存在 k_release=1.0，此处追加 k_off_inhibition 字段（避免覆盖原参数）
+_KINETICS_BY_TARGET["NFkB"]["k_off"] = 1e-3  # min^-1 (IkBa 抑制 NFkB 解离, Hoffmann 2002)
+
+# 追加 pSTAT5_dimer inhibition k_off（PIAS→pSTAT5_dimer 抑制, JAK-STAT cross-species reference）
+# 注：JAK-STAT specialist 的 pSTAT5_dimer 已有 k_off=0.05 (二聚体解离)，本字段供 NF-κB cross-talk 引用
+
+
+
 __all__ = [
     "NfKappaBSpecialist",
     "PATHWAY_TAG",
     "SOURCE_SBML",
     "KINETIC_PARAMETERS",
+    "_KINETICS_BY_TARGET",
 ]

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.biomodels_registry import get_biomodels_id
+
 from .schema import (
     CrossTalkEdge,
     FeedbackLoop,
@@ -49,7 +51,7 @@ PATHWAY_INITIALIZERS: dict[str, dict[str, Any]] = {
     # =========================================================================
     "EGFR_RTK": {
         "display_name": "EGFR Receptor Tyrosine Kinase Signaling",
-        "source_sbml": "BIOMD0000000022",   # Levchenko2000 EGFR
+        "source_sbml": get_biomodels_id("EGFR_RTK"),
         "source_kegg": "hsa04012",
         "core_nodes": [
             ("EGF", "ligand", "extracellular", TimeScale.FAST),
@@ -61,8 +63,24 @@ PATHWAY_INITIALIZERS: dict[str, dict[str, Any]] = {
             ("SOS", "protein", "cytoplasm", TimeScale.FAST),
             ("Ras", "protein", "membrane", TimeScale.FAST),  # shared with MAPK
             ("RasGTP", "protein", "membrane", TimeScale.FAST),
+            # [BENCHMARK CLOSURE / Gap 1D] 补全 specialist 已声明但 initializer 缺失的物种，
+            # 避免 reaction_ir.species 由 initializer 派生时 EGFR_internalized 不在 SP_IDX
+            # 导致 degradation 边被静默丢弃（见 logs/f5_loop/20260720_004811/rca.md）。
+            ("RasGDP", "protein", "membrane", TimeScale.FAST),
+            ("RasGAP", "protein", "cytoplasm", TimeScale.FAST),
             ("Raf", "protein", "cytoplasm", TimeScale.FAST),
             ("pRaf", "protein", "cytoplasm", TimeScale.FAST),
+            ("MEK", "protein", "cytoplasm", TimeScale.FAST),
+            ("pMEK", "protein", "cytoplasm", TimeScale.FAST),
+            ("ppMEK", "protein", "cytoplasm", TimeScale.FAST),
+            ("ERK", "protein", "cytoplasm", TimeScale.FAST),
+            ("pERK", "protein", "cytoplasm", TimeScale.FAST),
+            ("ppERK", "protein", "cytoplasm", TimeScale.FAST),
+            ("ppERK_nuclear", "protein", "nucleus", TimeScale.FAST),
+            ("DUSP_mRNA", "mrna", "nucleus", TimeScale.MEDIUM),
+            ("DUSP", "protein", "cytoplasm", TimeScale.MEDIUM),
+            # EGFR 内吞后受体池（降解产物 sink，由 degradation 边写入）：
+            ("EGFR_internalized", "protein", "endosome", TimeScale.MEDIUM),
         ],
         "core_edges": [
             ("EGF", "EGFR", "binding", "mass_action"),
@@ -116,7 +134,7 @@ PATHWAY_INITIALIZERS: dict[str, dict[str, Any]] = {
     # =========================================================================
     "MAPK_ERK": {
         "display_name": "MAPK / ERK Signaling Cascade",
-        "source_sbml": "BIOMD0000000010",   # Schoeberl2001 MAPK
+        "source_sbml": get_biomodels_id("MAPK_ERK"),
         "source_kegg": "hsa04010",
         "core_nodes": [
             ("RasGTP", "protein", "membrane", TimeScale.FAST),  # shared
@@ -175,7 +193,7 @@ PATHWAY_INITIALIZERS: dict[str, dict[str, Any]] = {
     # =========================================================================
     "PI3K_AKT_mTOR": {
         "display_name": "PI3K / AKT / mTOR Signaling",
-        "source_sbml": "BIOMD0000000250",
+        "source_sbml": get_biomodels_id("PI3K_AKT_mTOR"),
         "source_kegg": "hsa04151",
         "core_nodes": [
             ("PI3K", "protein", "cytoplasm", TimeScale.FAST),
@@ -243,7 +261,7 @@ PATHWAY_INITIALIZERS: dict[str, dict[str, Any]] = {
     # =========================================================================
     "p53_signaling": {
         "display_name": "p53 Tumor Suppressor Signaling",
-        "source_sbml": "BIOMD0000000382",
+        "source_sbml": get_biomodels_id("p53"),
         "source_kegg": "hsa04115",
         "core_nodes": [
             ("p53", "protein", "nucleus", TimeScale.MEDIUM),     # shared
@@ -307,7 +325,7 @@ PATHWAY_INITIALIZERS: dict[str, dict[str, Any]] = {
     # =========================================================================
     "Apoptosis": {
         "display_name": "Apoptosis (Intrinsic + Extrinsic)",
-        "source_sbml": "BIOMD0000000332",
+        "source_sbml": get_biomodels_id("APOPTOSIS"),
         "source_kegg": "hsa04210",
         "core_nodes": [
             ("Bax", "protein", "mitochondria", TimeScale.MEDIUM),
@@ -370,7 +388,7 @@ PATHWAY_INITIALIZERS: dict[str, dict[str, Any]] = {
     # =========================================================================
     "Cell_Cycle": {
         "display_name": "Cell Cycle Regulation",
-        "source_sbml": "BIOMD0000000055",   # Tyson1991 cell cycle
+        "source_sbml": get_biomodels_id("CELL_CYCLE"),
         "source_kegg": "hsa04110",
         "core_nodes": [
             ("CyclinD", "protein", "nucleus", TimeScale.SLOW),
@@ -432,7 +450,7 @@ PATHWAY_INITIALIZERS: dict[str, dict[str, Any]] = {
     # =========================================================================
     "JAK_STAT": {
         "display_name": "JAK-STAT Signaling",
-        "source_sbml": "BIOMD0000000224",   # Swameye2003 JAK-STAT
+        "source_sbml": get_biomodels_id("JAK_STAT"),
         "source_kegg": "hsa04630",
         "core_nodes": [
             ("IL6", "ligand", "extracellular", TimeScale.FAST),
@@ -487,7 +505,7 @@ PATHWAY_INITIALIZERS: dict[str, dict[str, Any]] = {
     # =========================================================================
     "NF_kB": {
         "display_name": "NF-κB Signaling",
-        "source_sbml": "BIOMD0000000258",   # Ashall2009 NF-kB oscillation
+        "source_sbml": get_biomodels_id("NF_KB"),
         "source_kegg": "hsa04064",
         "core_nodes": [
             ("TNFa", "ligand", "extracellular", TimeScale.FAST),
@@ -541,7 +559,7 @@ PATHWAY_INITIALIZERS: dict[str, dict[str, Any]] = {
     # =========================================================================
     "Wnt": {
         "display_name": "Wnt / β-catenin Signaling",
-        "source_sbml": "BIOMD0000000008",   # Lee2003 Wnt
+        "source_sbml": get_biomodels_id("WNT"),
         "source_kegg": "hsa04310",
         "core_nodes": [
             ("Wnt", "ligand", "extracellular", TimeScale.FAST),
@@ -597,7 +615,7 @@ PATHWAY_INITIALIZERS: dict[str, dict[str, Any]] = {
     # =========================================================================
     "TGF_beta": {
         "display_name": "TGF-β / SMAD Signaling",
-        "source_sbml": "BIOMD0000000255",
+        "source_sbml": get_biomodels_id("TGF_BETA"),
         "source_kegg": "hsa04350",
         "core_nodes": [
             ("TGFB", "ligand", "extracellular", TimeScale.FAST),

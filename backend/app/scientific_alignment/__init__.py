@@ -85,6 +85,8 @@ from app.scientific_alignment.evidence_fuser import (
     EvidenceSource,
     FusedAssertion,
     evidence_docs_to_items,
+    evidence_docs_to_items_multi_source,
+    evidence_to_item,
     fuse_evidence,
 )
 from app.scientific_alignment.multi_dim_confidence import (
@@ -202,6 +204,8 @@ __all__ = [
     "EvidenceFusionReport",
     "fuse_evidence",
     "evidence_docs_to_items",
+    "evidence_docs_to_items_multi_source",
+    "evidence_to_item",
     # Task 25 Multi-dimensional Confidence
     "DimensionScore",
     "MultiDimConfidenceReport",

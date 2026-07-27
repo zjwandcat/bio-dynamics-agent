@@ -1,0 +1,42 @@
+# Sprint 4 — Experiment Rule Engine
+# 100% Rule 驱动，Mechanism-aware，无 LLM
+pathway: PI3K_AKT_MTOR
+name: "PI3K-AKT-mTOR signaling pathway"
+
+# 实验链（Mechanism-aware，非 Keyword）
+# canonical_timeline 参考 knowledge/canonical/pi3k_akt_mtor.yaml：
+#   PI3K activation 1-5 min；AKT phosphorylation 5-15 min；mTOR activation 15-30 min；S6K phosphorylation 30-60 min
+experiments:
+  - name: "Western blot pAKT (Ser473)"
+    technique: "Western blot"
+    target_node: "pAKT"
+    mechanism_step: "PIP3 → AKT phosphorylation"
+    time_course: [0, 5, 10, 15, 30, 45, 60, 90]  # 分钟
+    cell_line: "MCF7"
+    expected_result: "pAKT 在 5-15 min 达峰"
+    justification: "pAKT(Ser473) 是 PI3K 通路激活的核心标志物，标志 PIP3→PDK1/mTORC2 信号"
+
+  - name: "Western blot pS6K (Thr389)"
+    technique: "Western blot"
+    target_node: "pS6K"
+    mechanism_step: "mTORC1 → S6K phosphorylation"
+    time_course: [0, 5, 10, 15, 30, 45, 60, 90]  # 分钟
+    cell_line: "HEK293"
+    expected_result: "pS6K 在 30-60 min 达峰，晚于 pAKT"
+    justification: "pS6K 是 mTORC1 活性的下游输出节点，反映 AKT→TSC2→mTORC1 级联"
+
+  - name: "Western blot pTSC2"
+    technique: "Western blot"
+    target_node: "pTSC2"
+    mechanism_step: "AKT → TSC2 phosphorylation (inactivation)"
+    time_course: [0, 5, 10, 15, 30, 45, 60, 90]  # 分钟
+    cell_line: "MCF7"
+    expected_result: "pTSC2 在 10-20 min 达峰，介于 pAKT 与 pS6K 之间"
+    justification: "pTSC2 是 AKT→mTORC1 的中间抑制节点，验证负反馈解除机制"
+
+# 禁止的实验（Mechanism-aware 禁止）
+forbidden:
+  - name: "AKT qPCR"
+    technique: "qPCR"
+    target_node: "AKT"
+    reason: "AKT 激活依赖 Ser473/Thr308 磷酸化，需用 Western blot 检测 pAKT；qPCR 仅测 AKT mRNA 量，不能反映磷酸化激活状态"

@@ -7,7 +7,7 @@ canonical_reviews:          # 权威综述 PMID 列表
   - "PMID:12124261"         # Hoffmann 2002 Science（NF-κB 振荡）
 
 canonical_models:           # 权威 BioModels ID 列表
-  - "BIOMD0000000072"       # Hoffmann 2002 NF-κB model
+  - "BIOMD0000000140"       # Hoffmann2002 wild-type IkB/NF-kB (PMID:12424381)
 
 canonical_mechanism:
   required_nodes:           # 机制节点链（大写蛋白名）
@@ -47,6 +47,23 @@ expected_behavior:          # 动力学行为预期
   pulse_period: "2 hours"
   a20_feedback: "required"
 
+canonical_timeline:
+  - event: "IKK activation"
+    time_window: "5-15 min"
+  - event: "IkB degradation"
+    time_window: "10-20 min"
+  - event: "NF-kB nuclear translocation"
+    time_window: "15-30 min"
+  - event: "A20 induction"
+    time_window: "1-2 h"
+  - event: "IkBa resynthesis"
+    time_window: "1-2 h"
+  - event: "Oscillation period"
+    time_window: "1.5-3 h"
+  - event: "Negative feedback"
+    present: true
+    mediator: "IkBa, A20"
+
 known_negative_feedback:    # 已知负反馈
   - IkB_alpha
   - A20
@@ -58,3 +75,37 @@ consistency_rules:          # 供 Consistency Checker 加载的自洽规则
   - rule: "A20 表达晚于 NFkB Peak"
     assertion: "a20_expression_time > nfkb_peak_time"
     violation_label: "a20_before_nfkb_peak"
+
+# ============================================================================
+# Task 12: Spec 补全字段（10 通路 Canonical 对齐）
+# ============================================================================
+expected_dynamics:          # 期望动力学（基于权威文献汇总）
+  NFkB_nuclear:
+    peak_time: "15-30 min"
+    behavior: "transient activation with oscillation"
+  IkB_alpha:
+    peak_time: "10-20 min degradation, 1-2 h resynthesis"
+    behavior: "degradation then resynthesis"
+  A20:
+    peak_time: "1-2 h"
+    behavior: "induced (negative feedback)"
+
+curve_requirements:         # 曲线必须满足的硬约束
+  NFkB_nuclear: "瞬态激活（不能持续高位）"
+  IkB_alpha: "降解后再合成"
+
+expected_experiments:       # 验证机制所需实验
+  - name: "p65 NF-κB Western blot (nuclear/cytoplasmic fractionation)"
+    timepoints: [0, 15, 30, 60, 120, 240]
+    mechanism_target: "NF-κB nuclear translocation dynamics"
+  - name: "IκBα Western blot"
+    timepoints: [0, 10, 20, 30, 60, 120]
+    mechanism_target: "IκBα degradation/resynthesis feedback"
+
+forbidden_experiments:      # 不能验证 nuclear translocation 动力学的实验
+  - "NF-κB qPCR (不能反映 nuclear translocation 动力学)"
+
+# Task 12 Spec: Benchmark 07 NF-κB Canonical Assertion
+tnfa_assertions:
+  pathway: "IκBα → NF-κB → IκBα transcription → negative feedback"
+  behavior: "transient activation"

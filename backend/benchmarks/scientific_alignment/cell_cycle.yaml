@@ -1,42 +1,153 @@
-# BioDynamics Scientific Alignment Gold Standard — Cell Cycle 通路
+# BioDynamics Scientific Alignment Benchmark — Cell Cycle 通路
+# Task 13: 对齐 Task 12 Canonical Answer，补全 acceptance_criteria / expected_curve_metrics / forbidden_patterns
 # 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
-# 参考：Novak 2001 (PMID:11381155) / Tyson 2001 — Tyson-Novak cell cycle 模型
-# TODO: verify PMID — Tyson 2001、Morgan 2007、Malumbres 2009
-pathway: CELL_CYCLE
-name: "Eukaryotic Cell Cycle Control"
+# 参考 Canonical: knowledge/canonical/cell_cycle.yaml
+# Benchmark 09: Cell Cycle — Cyclin B/CDK1 mitotic entry 双稳态开关
+benchmark_id: cell_cycle_mitotic_entry_bistability
+pathway: cell_cycle
+category: positive
+question: >
+  解释 Cyclin B/CDK1 在 mitotic entry（M 期进入）的激活机制。
+  为何 Cyclin B/CDK1 激活表现为 bistability（双稳态）而非线性？
+  请解释双负反馈机制并仿真一个细胞周期（约 24 h）动力学。
+
+expected_answer: >
+  Cyclin B 在 G2 期积累 → 与 CDK1 结合 → CDK1 被 Wee1 磷酸化抑制（Tyr15）→
+  Cdc25 去磷酸化激活 CDK1 → 活性 CDK1 进一步激活 Cdc25（正反馈）并抑制 Wee1（双负反馈）→
+  形成 bistable switch：CDK1 在阈值处快速全激活（mitotic entry）。
+  双负反馈：CDK1 ┤ Wee1 ┤ CDK1（Wee1 抑制 CDK1，CDK1 反过来抑制 Wee1）。
+  APC/C-Cdc20 在 M 期后期降解 Cyclin B（负反馈），导致 CDK1 失活，退出 mitosis。
+  Cyclin B/CDK1 激活表现为 bistability（双稳态），不是线性激活。
+  G1/S 转换（CyclinE-CDK2 / RB-E2F）也是双稳态（double-negative feedback）。
+  禁止回答"CDK1 线性激活"——这违反双稳态开关机制。
+
+# 从 knowledge/canonical/cell_cycle.yaml.canonical_mechanism.required_nodes 复制
+canonical_mechanism_nodes:
+  - CyclinD-CDK4/6
+  - CyclinE-CDK2
+  - CyclinB-CDK1
+  - RB
+  - E2F
+  - APC_C
+  - Cdc20
+
+# 从 knowledge/canonical/cell_cycle.yaml.canonical_reviews 复制
+canonical_reviews:
+  - "PMID:15169868"         # Chen 2004 Mol Biol Cell（budding yeast cell cycle model）
+
+# 从 knowledge/canonical/cell_cycle.yaml.canonical_models 复制
+canonical_models:
+  - "BIOMD0000000056"       # Chen2004 Cell Cycle Regulation (budding yeast)
+
+# 期望动力学（基于 mitotic_entry_assertions）
 expected_dynamics:
-  Cyclin_CDK_oscillation: "periodic, phase-locked"
-  RB_phosphorylation: "bistable G1/S transition"
-  bistable_switch: "Start/Restriction point switch"
-  APC_C_destruction: "cyclin degradation, anaphase"
-required_mechanisms:
-  - Cyclin_D_CDK46
-  - Cyclin_E_CDK2
-  - Cyclin_B_CDK1
-  - RB_phosphorylation
-  - APC_C_Cdc20
-  - SAC_checkpoints
-required_biomodels:
-  - BIOMD0000000056   # Tyson-Novak 2001 cell cycle model
-required_reviews:
-  - PMID:11381155     # Novak 2001 (Tyson-Novak model) (confirmed)
-  - PMID:xxxxxxxx     # TODO: verify Tyson 2001 PMID
-  - PMID:xxxxxxxx     # TODO: verify Morgan 2007 PMID
-  - PMID:xxxxxxxx     # TODO: verify Malumbres 2009 PMID
-required_experiments:
-  - Flow cytometry cell cycle (PI/BrdU)
-  - Cyclin B1 Western blot
-  - CDK1 kinase assay
-  - Roscovitine treatment (CDK inhibitor)
-  - time course across cell cycle phases
+  - molecule: CyclinB_CDK1
+    peak_time: [720, 1200]                # G2/M 期（12-20 h）
+    behavior: "bistability (non-linear)"
+    switch_like: true
+  - molecule: CyclinE_CDK2
+    peak_time: [240, 480]                 # G1/S 转换（4-8 h）
+    behavior: "G1/S bistable switch"
+  - molecule: RB_E2F
+    peak_time: [240, 480]
+    behavior: "bistability (double-negative feedback)"
+  - molecule: APC_C
+    peak_time: [1200, 1440]               # M 期后期（20-24 h）
+    behavior: "activation for CyclinB degradation"
+
+# 8 项 Curve Metrics 期望值
+expected_curve_metrics:
+  - molecule: CyclinB_CDK1
+    peak_time_min: [720, 1200]
+    peak_amplitude: [0.8, 1.0]
+    rise_time_min: [30, 120]              # 双稳态快速切换
+    half_decay_min: [60, 180]             # APC/C 降解
+    adaptation_ratio: [0.0, 0.2]          # 降解后接近 0
+    steady_state: [0.0, 0.2]
+    oscillation: true                     # 细胞周期依赖性振荡
+    auc: [300, 800]
+  - molecule: CyclinE_CDK2
+    peak_time_min: [240, 480]
+    peak_amplitude: [0.7, 1.0]
+    rise_time_min: [30, 90]
+    half_decay_min: [60, 180]
+    adaptation_ratio: [0.1, 0.3]
+    steady_state: [0.05, 0.2]
+    oscillation: true
+    auc: [150, 500]
+  - molecule: RB_phosphorylation
+    peak_time_min: [240, 480]
+    peak_amplitude: [0.7, 1.0]
+    rise_time_min: [60, 180]
+    half_decay_min: [300, 600]
+    adaptation_ratio: [0.3, 0.6]
+    steady_state: [0.3, 0.6]
+    oscillation: true
+    auc: [200, 600]
+  - molecule: APC_C
+    peak_time_min: [1200, 1440]
+    peak_amplitude: [0.7, 1.0]
+    rise_time_min: [30, 120]
+    half_decay_min: [120, 300]
+    adaptation_ratio: [0.1, 0.4]
+    steady_state: [0.1, 0.4]
+    oscillation: true
+    auc: [200, 600]
+
+# 从 knowledge/canonical/cell_cycle.yaml.expected_experiments 复制
+expected_experiments:
+  - name: "Cyclin B1 / pCDK1 Western blot"
+    technique: "Western blot"
+    timepoints: [0, 4, 8, 12, 16, 20, 24]
+    target: "CyclinB1_pCDK1"
+  - name: "Cyclin E / pRb Western blot"
+    technique: "Western blot"
+    timepoints: [0, 4, 8, 12, 16]
+    target: "CyclinE_pRb"
+
+# 从 knowledge/canonical/cell_cycle.yaml.forbidden_experiments 复制
+forbidden_experiments:
+  - "CDK1 qPCR (蛋白活性需要 Western)"
+
+# 禁止出现的模式（regex + reason）
 forbidden_patterns:
-  - "No PubMed evidence"
-  - "No BioModels comparison"
-  - "cell cycle without APC/C degradation"
-key_time_scales:
-  G1_S_transition: "hours"
-  Mitotic_exit: "minutes (APC/C dependent)"
-key_feedbacks:
-  - "Cyclin-CDK positive feedback on RB phosphorylation"
-  - "APC/C-Cdc20 negative feedback on cyclin B"
-  - "SAC negative feedback on APC/C"
+  - pattern: "CDK1.*linear.*activation"
+    reason: "CDK1 应 bistability（双稳态），不能线性激活"
+  - pattern: "CyclinB.*CDK1.*linear"
+    reason: "违反双负反馈 / 双稳态开关机制"
+  - pattern: "no.*double.*negative.*feedback"
+    reason: "必须解释双负反馈（CDK1-Wee1 / RB-E2F）"
+  - pattern: "CDK1 qPCR"
+    reason: "CDK1 qPCR 不能反映蛋白活性，需用 Western blot"
+  - pattern: "no.*APC.*C.*degradation"
+    reason: "APC/C 降解 Cyclin B 是退出 mitosis 的关键，必须提及"
+  - pattern: "no.*PubMed"
+    reason: "必须引用 PubMed 权威文献"
+  - pattern: "no.*BioModels"
+    reason: "必须引用 BioModels 模型比较"
+
+# 验收标准（对齐 spec acceptance_criteria）
+acceptance_criteria:
+  mechanism_nodes_required: true
+  mechanism_node_min_coverage: 0.8
+  pubmed_min_count: 1                    # Cell Cycle canonical reviews 较少
+  biomodels_min_count: 1                 # Canonical 中有 BIOMD0000000056
+  experiment_min_count: 2
+  hallucination_tolerance: 0
+  curve_metric_pass_min: 6
+  forbidden_experiment_blocked: true
+  forbidden_pattern_absent: true
+  must_explain_double_negative_feedback: true  # 必须解释双负反馈
+  cdk1_must_be_bistable: true                  # CDK1 必须双稳态
+  apc_c_degradation_required: true             # APC/C 降解必须提及
+
+# 从 knowledge/canonical/cell_cycle.yaml.mitotic_entry_assertions 复制
+mitotic_entry_assertions:
+  cyclinB_cdk1: "double-negative feedback"
+  behavior: "Bistability (non-linear)"
+
+# 参考 Canonical
+canonical_reference: "knowledge/canonical/cell_cycle.yaml"
+known_negative_feedback:
+  - APC_C-CyclinB
+  - RB-E2F

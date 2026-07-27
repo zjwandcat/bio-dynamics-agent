@@ -39,6 +39,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.biomodels_registry import get_biomodels_id
+from app.pathways.drug_library import (
+    build_drug_species,
+    build_inhibitor_edge,
+    get_drug_entry,
+)
 from app.pathways.pathway_modules.core.template import CoreModuleData
 from app.pathways.pathway_modules.crosstalk.template import CrosstalkModuleData
 from app.pathways.pathway_modules.feedback.template import FeedbackModuleData
@@ -65,7 +71,7 @@ logger = logging.getLogger(__name__)
 PATHWAY_TAG: str = "JAK_STAT"
 
 # SBML BioModels ID（Swameye 2003 JAK-STAT model）
-SOURCE_SBML: str = "BIOMD0000000224"
+SOURCE_SBML: str = get_biomodels_id(PATHWAY_TAG)
 
 # Validation benchmark PMID 引用
 _Pmid_SCHWARTZ_2003: str = "PMID:15286703"   # Schwartz 2003 STAT5 dynamics
@@ -84,62 +90,95 @@ _STAT_SOCS_DELAY_MINUTES: float = 30.0
 # pSTAT5 物种标记 shared=True（与 Apoptosis Specialist 的 Bcl-xL 抗凋亡路径共享，
 # STAT5 转录 Bcl-xL 维持肿瘤细胞存活，下游 Bcl-xL→凋亡由 Apoptosis Specialist 处理）
 _JAK_STAT_CORE_SPECIES: list[dict[str, Any]] = [
+    # [C4 fix] initial_concentration aligned to BIOMD0000000347 (Bachmann2011, PMID:21772264).
+    #   SBML models the Epo/JAK2/STAT5 pathway (Epo/EpoRJAK2/STAT5/SOCS3/SHP1).
+    #   SBML species mapping: STAT5→STAT5 (exact), pSTAT5→pSTAT5 (exact),
+    #   JAK→EpoRJAK2 (receptor-JAK complex), pJAK→EpoRpJAK2 (phosphorylated JAK),
+    #   SOCS→SOCS3, SOCS_mRNA→SOCS3RNA.
+    #   Species not in SBML (IL6/IL6R/gp130/IL6_complex — SBML uses Epo not IL-6;
+    #   pSTAT5_dimer/pSTAT5_nuclear/STAT3/Bcl_xL_mRNA/IRF1_mRNA/PIAS) kept original.
     # ---- 配体 + 受体复合物 ----
     # IL-6（pro-inflammatory cytokine，JAK-STAT 通路经典配体）
+    # [C4 fix] No SBML match in BIOMD0000000347 (SBML uses Epo as ligand, not IL-6). Kept original.
     {"name": "IL6", "species_type": "ligand",
      "compartment": "extracellular"},
     # IL6R（IL-6 receptor α 链，膜结合受体）
+    # [C4 fix] No SBML match in BIOMD0000000347. Kept original.
     {"name": "IL6R", "species_type": "protein",
      "compartment": "membrane"},
     # gp130（IL6ST 信号转导链，IL-6 共受体，JAK 缔合处）
+    # [C4 fix] No SBML match in BIOMD0000000347. Kept original.
     {"name": "gp130", "species_type": "protein",
      "compartment": "membrane"},
     # IL6_complex（IL-6+IL6R+gp130 三元复合物，激活受体相关 JAK）
+    # [C4 fix] No SBML match in BIOMD0000000347. Kept original.
     {"name": "IL6_complex", "species_type": "complex",
      "compartment": "membrane"},
     # ---- JAK 激酶 ----
     # JAK（Janus kinase，受体相关酪氨酸激酶，与 gp130 缔合）
+    # [C4 fix] SBML mapping: JAK→EpoRJAK2 (receptor-JAK2 complex, initial_concentration=3.97622)
     {"name": "JAK", "species_type": "protein",
-     "compartment": "membrane"},
+     "compartment": "membrane",
+     "initial_concentration": 3.97622},  # Source: BIOMD0000000347 Bachmann2011 (PMID:21772264) species EpoRJAK2
     # pJAK（磷酸化 JAK，受体复合物诱导 JAK 自磷酸化激活）
+    # [C4 fix] SBML mapping: pJAK→EpoRpJAK2 (phosphorylated receptor-JAK2, initial=0.0)
     {"name": "pJAK", "species_type": "protein",
-     "compartment": "membrane"},
+     "compartment": "membrane",
+     "initial_concentration": 0.0},  # Source: BIOMD0000000347 Bachmann2011 (PMID:21772264) species EpoRpJAK2
     # ---- STAT5 状态机 4 状态 ----
     # STAT5（未磷酸化单体，cytoplasmic monomer，状态机初始状态）
+    # [C4 fix] SBML mapping: STAT5→STAT5 (exact match, initial_concentration=79.7535)
     {"name": "STAT5", "species_type": "protein",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 79.7535},  # Source: BIOMD0000000347 Bachmann2011 (PMID:21772264) species STAT5
     # pSTAT5（酪氨酸磷酸化 STAT5，shared：与 Apoptosis Bcl-xL 路径共享）
+    # [C4 fix] SBML mapping: pSTAT5→pSTAT5 (exact match, initial_concentration=0.0)
     {"name": "pSTAT5", "species_type": "protein",
-     "compartment": "cytoplasm", "shared": True},
+     "compartment": "cytoplasm", "shared": True,
+     "initial_concentration": 0.0},  # Source: BIOMD0000000347 Bachmann2011 (PMID:21772264) species pSTAT5
     # pSTAT5_dimer（磷酸化 STAT5 同源二聚体，通过 SH2-pTyr 相互作用）
+    # [C4 fix] No SBML match in BIOMD0000000347 (dimer not separately modeled). Kept original.
     {"name": "pSTAT5_dimer", "species_type": "complex",
      "compartment": "cytoplasm"},
     # pSTAT5_nuclear（入核的 STAT5 二聚体，作为转录因子激活靶基因）
+    # [C4 fix] No SBML match in BIOMD0000000347 (nuclear form not separately modeled). Kept original.
     {"name": "pSTAT5_nuclear", "species_type": "protein",
      "compartment": "nucleus"},
     # ---- STAT3（与 STAT5 平行的 JAK-STAT 转录因子，主要响应 IL-6 信号）----
     # STAT3 在 cross-talk 中作为本通路侧输出（pSTAT3→Bcl-xL/Bcl-2 转录片段）
+    # [C4 fix] No SBML match in BIOMD0000000347 (SBML models STAT5 only, not STAT3). Kept original.
     {"name": "STAT3", "species_type": "protein",
      "compartment": "cytoplasm"},
     # ---- SOCS 转录延迟负反馈 ----
     # SOCS_mRNA（SOCS1/3 转录产物，STAT5 转录因子激活，含 30 min 转录延迟）
+    # [C4 fix] SBML mapping: SOCS_mRNA→SOCS3RNA (initial_concentration=0.0)
     {"name": "SOCS_mRNA", "species_type": "mrna",
-     "compartment": "nucleus"},
+     "compartment": "nucleus",
+     "initial_concentration": 0.0},  # Source: BIOMD0000000347 Bachmann2011 (PMID:21772264) species SOCS3RNA
     # SOCS（SOCS 蛋白，结合 JAK 抑制其激酶活性，负反馈）
+    # [C4 fix] SBML mapping: SOCS→SOCS3 (initial_concentration=0.0)
     {"name": "SOCS", "species_type": "protein",
-     "compartment": "cytoplasm"},
+     "compartment": "cytoplasm",
+     "initial_concentration": 0.0},  # Source: BIOMD0000000347 Bachmann2011 (PMID:21772264) species SOCS3
     # ---- Bcl-xL 转录（STAT3/5 抗凋亡靶基因）----
     # Bcl_xL_mRNA（Bcl-xL mRNA，STAT3 转录激活抗凋亡基因）
+    # [C4 fix] No SBML match in BIOMD0000000347. Kept original.
     {"name": "Bcl_xL_mRNA", "species_type": "mrna",
      "compartment": "nucleus"},
     # ---- IRF1 转录（IFN-γ 信号靶基因）----
     # IRF1_mRNA（IRF1 mRNA，IFN-γ 通过 JAK-STAT 激活 IRF1 表达）
+    # [C4 fix] No SBML match in BIOMD0000000347. Kept original.
     {"name": "IRF1_mRNA", "species_type": "mrna",
      "compartment": "nucleus"},
     # ---- PIAS（STAT 抑制蛋白，核内抑制 STAT DNA 结合）----
     # PIAS（PIAS1/3，Protein Inhibitor of Activated STAT，核内抑制 STAT 活性）
+    # [C4 fix] No SBML match in BIOMD0000000347. Kept original.
     {"name": "PIAS", "species_type": "protein",
      "compartment": "nucleus"},
+    # [N6 缺口 1] 药物物种（species_type="drug"）— 由 drug_library 驱动
+    # Ruxolitinib 是 JAK1/2 ATP 竞争性抑制剂（IC50=3 nM, PMID:20385775）
+    # 占据 JAK ATP 结合口袋阻断激酶活性，临床用于骨髓纤维化（FDA-approved）
+    build_drug_species("Ruxolitinib"),
 ]
 
 
@@ -298,6 +337,48 @@ _JAK_STAT_CORE_REACTIONS: list[dict[str, Any]] = [
         "autophosphorylation": False,
         "hill_coefficient": 2,
         "description": "pSTAT5_nuclear 转录激活 IRF1 mRNA（STAT1/3 作转录因子, Hill n=2, IFN-γ 信号应答靶基因, 干扰素应答）",
+    },
+    # 10. SOCS → pJAK（inhibition, mass_action, 反馈环第 3 步：SOCS 抑制 pJAK 激酶活性）
+    #    [N8-P0-2 修复] 补全反馈环第 3 步：SOCS 蛋白结合 pJAK 抑制其激酶活性
+    #    （Swameye 2003, PMID:12615913; KINETIC_PARAMETERS 中 k_off=1e-3 min^-1, Km=1e-7 M）
+    #    缺失此反应导致 SOCS 蛋白无法实际抑制 pJAK，反馈环无法闭合
+    #    注：pJAK 作 substrate（被抑制），SOCS 作 modifier（抑制因子），无产物（pJAK 活性降低）
+    {
+        "source": "SOCS",
+        "target": "pJAK",
+        "mechanism": "inhibition",
+        "kinetics_type": "mass_action",
+        "pathway_tag": PATHWAY_TAG,
+        "substrate": "pJAK",
+        "product": "pJAK",
+        "modifier": "SOCS",
+        "modifier_type": "allosteric",
+        "autophosphorylation": False,
+        "description": "SOCS 抑制 pJAK 激酶活性（pJAK 作 substrate, SOCS 作 allosteric inhibitor, 反馈环第 3 步, 阻断 pJAK 磷酸化 STAT5, delay=0min 蛋白结合直接抑制, Swameye 2003 PMID:12615913）",
+    },
+    # 11. PIAS → pSTAT5_dimer（inhibition, mass_action, 核内 PIAS 抑制 STAT5 DNA 结合）
+    #    [N8-P0-2 修复] 补全 PIAS 反馈环：PIAS 在核内结合 pSTAT5_dimer 抑制其 DNA 结合活性
+    #    阻止 STAT5 靶基因转录（STAT→PIAS nuclear export, Schwartz 2003, PMID:15286703）
+    {
+        "source": "PIAS",
+        "target": "pSTAT5_dimer",
+        "mechanism": "inhibition",
+        "kinetics_type": "mass_action",
+        "pathway_tag": PATHWAY_TAG,
+        "substrate": "pSTAT5_dimer",
+        "product": "pSTAT5_dimer",
+        "modifier": "PIAS",
+        "modifier_type": "allosteric",
+        "autophosphorylation": False,
+        "description": "PIAS 抑制 pSTAT5_dimer DNA 结合活性（pSTAT5_dimer 作 substrate, PIAS 作 allosteric inhibitor, 核内 STAT→PIAS nuclear export, 阻止 STAT5 靶基因转录, Schwartz 2003 PMID:15286703）",
+    },
+    # ===== [N6 缺口 1] 药物-靶点显式 inhibitor edge（canonical drug_library 驱动） =====
+    # 12. Ruxolitinib → JAK（ATP_competitive, IC50=3 nM, PMID:20385775）
+    # Ruxolitinib 是 JAK1/2 ATP 竞争性抑制剂，占据 JAK ATP 结合口袋阻断激酶活性，
+    # 临床用于骨髓纤维化（FDA-approved）。此处 target="JAK" 与 specialist 现有物种命名对齐。
+    {
+        **build_inhibitor_edge("Ruxolitinib", "JAK"),
+        "pathway_tag": PATHWAY_TAG,
     },
 ]
 
@@ -479,12 +560,15 @@ _JAK_STAT_PERTURBATIONS: list[dict[str, Any]] = [
     },
     # 2. Ruxolitinib（JAK1/2 inhibitor, FDA-approved）
     #    Ruxolitinib 是 JAK1/2 选择性抑制剂，用于骨髓纤维化治疗（FDA-approved）
+    # [N6 缺口 1] 注入 canonical drug_library 字段（ic50_nM/ki_nM/source_pmid/...）
     {
         "target": "JAK",
         "drug": "Ruxolitinib",
         "mechanism": "inhibition",
         "ko_target": None,
         "description": "Ruxolitinib（JAK1/2 选择性抑制剂, 小分子, FDA-approved, 用于骨髓纤维化）",
+        **{k: v for k, v in get_drug_entry("Ruxolitinib").items()
+           if k not in ("description",)},
     },
     # 3. Baricitinib（JAK1/2 inhibitor, FDA-approved）
     #    Baricitinib 是 JAK1/2 选择性抑制剂，用于类风湿性关节炎治疗（FDA-approved）
@@ -737,6 +821,11 @@ class JakStatSpecialist(PathwaySpecialistBase):
                 "state_machine": dict(_STAT5_STATE_MACHINE),
                 "pathway_tag": PATHWAY_TAG,
                 "source_sbml": SOURCE_SBML,
+                # [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+                # 修复 C1 Peak Time：原 KINETIC_PARAMETERS 是死代码，现通过此字段
+                # 经 specialist_hook → graph_v3._ode_template_v2_hook → renderer.render(params=...)
+                # 注入 ODE 模板，使 _get_param(tgt_name, key, default) 能查到文献参数。
+                "kinetics_overrides": dict(_KINETICS_BY_TARGET),
             }
         except Exception as exc:
             logger.warning(
@@ -963,9 +1052,79 @@ KINETIC_PARAMETERS: dict[str, dict[str, float]] = {
 }
 
 
+# =============================================================================
+# [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
+# =============================================================================
+# 用途：apply_core() 返回 kinetics_overrides 字段 → specialist_hook 提取 →
+#       graph_v3._ode_template_v2_hook 合并 → ODERendererV2.render(params=...) →
+#       ODE 模板 _get_param(tgt_name, key, default) 查找文献参数。
+#
+# 单位转换：
+#   - KINETIC_PARAMETERS 的 Km 单位是 M（Molar），ODE 模型用 μM 单位
+#   - 转换规则：Km_μM = Km_M × 1e6（如 1e-7 M = 0.1 μM）
+#   - k_cat / k_off / k_import / k_translation / k_transcription 是时间常数（min^-1），无需转换
+#   - k_on 参数单位为 M^-1 min^-1，与 ODE 模型 μM 单位冲突，统一 SKIP
+#
+# 映射依据（KINETIC_PARAMETERS 键名 → 反应 target 物种名）：
+#   "IL6_IL6R"                     → IL6_complex（反应 1: IL6+IL6R→IL6_complex 配体-受体结合, k_on SKIP）
+#   "IL6_complex_pJAK"             → pJAK（反应 2: IL6_complex→pJAK JAK 磷酸化激活）
+#   "SOCS_pJAK_inhibition"         → pJAK（SOCS 负反馈抑制 pJAK, k_on SKIP, 合并到 pJAK）
+#   "pJAK_pSTAT5"                  → pSTAT5（反应 3: pJAK→pSTAT5 STAT5 磷酸化）
+#   "pSTAT5_dimer"                 → pSTAT5_dimer（反应 4: pSTAT5→pSTAT5_dimer 二聚化, k_on SKIP）
+#   "pSTAT5_nuclear_import"        → pSTAT5_nuclear（反应 5: pSTAT5_dimer→pSTAT5_nuclear 入核）
+#   "pSTAT5_SOCS_transcription"    → SOCS_mRNA（反应 6: pSTAT5_nuclear→SOCS_mRNA 转录, DDE delay=30min）
+#   "SOCS_translation"             → SOCS（反应 7: SOCS_mRNA→SOCS 翻译）
+#   "pSTAT5_BclxL_transcription"   → Bcl_xL_mRNA（反应 8: pSTAT5_nuclear→Bcl_xL_mRNA 转录）
+#   "pSTAT5_IRF1_transcription"    → IRF1_mRNA（反应 9: pSTAT5_nuclear→IRF1_mRNA 转录）
+_KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
+    "IL6_complex": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (IL6-IL6R 解离, Swameye 2003)
+    },
+    # [RC29 校准对齐] pJAK k_cat 1.0→2.0 对齐 oscillatory_feedback.j2 磷酸化默认值
+    "pJAK": {
+        "k_cat": 2.0,                 # min^-1 (IL6_complex 催化 JAK 磷酸化, Swameye 2003)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突 (SOCS 负反馈抑制)
+        "k_off": 1e-3,                # min^-1 (SOCS 抑制 pJAK 解离, Swameye 2003)
+    },
+    # [RC29 校准对齐] pSTAT5 k_cat 1.0→2.0 对齐 oscillatory_feedback.j2 磷酸化默认值
+    "pSTAT5": {
+        "k_cat": 2.0,                 # min^-1 (pJAK 催化 STAT5 磷酸化, Swameye 2003)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM, STAT5 Km ≈100 nM)
+    },
+    "pSTAT5_dimer": {
+        # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
+        "k_off": 0.05,                # min^-1 (pSTAT5 二聚体解离, Swameye 2003)
+        # [N8-P0-2 修复] 补 PIAS inhibition k_off_inhibition（反应 11: PIAS→pSTAT5_dimer 抑制）
+        # PIAS 在核内结合 pSTAT5_dimer 抑制其 DNA 结合活性（Schwartz 2003）
+        "k_off_inhibition": 1e-3,      # min^-1 (PIAS 抑制 pSTAT5_dimer 解离, Schwartz 2003)
+    },
+    "pSTAT5_nuclear": {
+        "k_import": 0.1,              # min^-1 (pSTAT5_dimer 入核, Swameye 2003)
+    },
+    "SOCS_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (pSTAT5_nuclear 转录激活 SOCS, Swameye 2003, DDE delay=30min)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    "SOCS": {
+        "k_translation": 0.1,         # min^-1 (SOCS_mRNA 翻译, Swameye 2003)
+    },
+    "Bcl_xL_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (pSTAT5_nuclear 转录激活 Bcl-xL, Schwartz 2003)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+    "IRF1_mRNA": {
+        "k_transcription": 1.0,       # min^-1 (pSTAT5_nuclear 转录激活 IRF1, Schwartz 2003)
+        "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+    },
+}
+
+
 __all__ = [
     "JakStatSpecialist",
     "PATHWAY_TAG",
     "SOURCE_SBML",
     "KINETIC_PARAMETERS",
+    "_KINETICS_BY_TARGET",
 ]

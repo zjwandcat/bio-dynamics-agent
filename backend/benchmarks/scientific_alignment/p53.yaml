@@ -1,42 +1,148 @@
-# BioDynamics Scientific Alignment Gold Standard — p53 通路
+# BioDynamics Scientific Alignment Benchmark — p53 通路
+# Task 13: 对齐 Task 12 Canonical Answer，补全 acceptance_criteria / expected_curve_metrics / forbidden_patterns
 # 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
-# 参考：Lahav 2004 (PMID:14977579) / Lev Bar-Or p53 振荡模型
-# TODO: verify PMID — Vogelstein 2000、Batchelor 2008、Levine 1997
+# 参考 Canonical: knowledge/canonical/p53.yaml
+# Benchmark 06: p53 DNA Damage — IR 后 p53 振荡
+benchmark_id: p53_dna_damage_oscillation
 pathway: p53
-name: "p53 DNA Damage Response Signaling"
+category: positive
+question: >
+  DNA 损伤（电离辐射 IR）诱导 p53 激活；为何 p53 在 IR 后表现为振荡（而非稳态上升）？
+  请解释 ATM-p53-MDM2 负反馈机制，并仿真 24 h 动力学。
+
+expected_answer: >
+  DNA 损伤 → ATM 激活 → 磷酸化 p53 → p53 转录 MDM2 → MDM2 蛋白积累（滞后 1-2 h）→
+  MDM2 介导 p53 泛素化降解 → p53 下降 → MDM2 下降 → p53 再次上升（重复振荡）。
+  这是 p53-MDM2 negative feedback loop 导致的振荡，周期约 5-6 小时。
+  p53 表现为振荡（oscillation），不是 steady increase（稳态单调上升）。
+  p21 在 p53 下游持续诱导（sustained induction），介导细胞周期阻滞。
+  MDM2 滞后于 p53 的脉冲（delayed pulse following p53）。
+
+# 从 knowledge/canonical/p53.yaml.canonical_mechanism.required_nodes 复制
+canonical_mechanism_nodes:
+  - ATM
+  - p53
+  - MDM2
+  - p21
+
+# 从 knowledge/canonical/p53.yaml.canonical_reviews 复制
+canonical_reviews:
+  - "PMID:14977579"         # Lahav 2004 Nature Genetics（p53-MDM2 动力学）
+
+# 从 knowledge/canonical/p53.yaml.canonical_models 复制（Canonical 中为空）
+canonical_models: []
+
+# 期望动力学（基于 dna_damage_assertions）
 expected_dynamics:
-  p53: "oscillatory pulses"
-  MDM2: "feedback oscillation, delayed"
-  pulse_period: "5-6 hours"
-  DNA_damage_response: "ATM-dependent"
-  p21: "cell cycle arrest, sustained induction"
-required_mechanisms:
-  - ATM_DNA_damage_sensing
-  - p53_phosphorylation
-  - MDM2_feedback_loop
-  - p53_oscillation
-  - p21_cell_cycle_arrest
-required_biomodels:
-  - BIOMD0000000028   # Lev Bar-Or p53 oscillation model
-required_reviews:
-  - PMID:14977579     # Lahav 2004 Nat Genet (p53-MDM2 dynamics) (confirmed)
-  - PMID:xxxxxxxx     # TODO: verify Vogelstein 2000 Nature PMID
-  - PMID:xxxxxxxx     # TODO: verify Batchelor 2008 PMID
-  - PMID:xxxxxxxx     # TODO: verify Levine 1997 PMID
-required_experiments:
-  - p53 Western blot time course
-  - MDM2 Western blot
-  - p21 qPCR
-  - Nutlin-3 treatment
-  - gamma irradiation
-  - single-cell live imaging (p53-Venus)
+  - molecule: p53
+    peak_time: [30, 60]
+    behavior: "oscillation (not steady increase)"
+    must_oscillate: true
+    period: [300, 360]                    # 5-6 小时（分钟）
+  - molecule: MDM2
+    peak_time: [60, 120]
+    behavior: "delayed pulse following p53"
+  - molecule: p21
+    peak_time: [120, 240]
+    behavior: "sustained induction"
+  - molecule: ATM
+    peak_time: [0, 30]
+    behavior: "rapid activation"
+
+# 8 项 Curve Metrics 期望值
+expected_curve_metrics:
+  - molecule: p53
+    peak_time_min: [30, 60]
+    peak_amplitude: [0.7, 1.0]
+    rise_time_min: [10, 30]
+    half_decay_min: [60, 120]
+    adaptation_ratio: null                # 振荡，不适用
+    steady_state: [0.2, 0.6]              # 振荡平均
+    oscillation: true                     # 必须振荡
+    auc: [100, 400]
+  - molecule: MDM2
+    peak_time_min: [60, 120]
+    peak_amplitude: [0.5, 1.0]
+    rise_time_min: [30, 60]
+    half_decay_min: [60, 120]
+    adaptation_ratio: null
+    steady_state: [0.1, 0.5]
+    oscillation: true                     # 与 p53 同相位振荡
+    auc: [80, 300]
+  - molecule: p21
+    peak_time_min: [120, 240]
+    peak_amplitude: [0.6, 1.0]
+    rise_time_min: [60, 120]
+    half_decay_min: null                  # 持续诱导
+    adaptation_ratio: null
+    steady_state: [0.7, 1.0]
+    oscillation: false
+    auc: [200, 600]
+  - molecule: ATM
+    peak_time_min: [0, 30]
+    peak_amplitude: [0.8, 1.0]
+    rise_time_min: [0, 10]
+    half_decay_min: [120, 360]
+    adaptation_ratio: [0.2, 0.6]
+    steady_state: [0.2, 0.6]
+    oscillation: false
+    auc: [50, 200]
+
+# 从 knowledge/canonical/p53.yaml.expected_experiments 复制
+expected_experiments:
+  - name: "p53 Western blot"
+    technique: "Western blot"
+    timepoints: [0, 30, 60, 120, 240, 360, 480]
+    target: "p53"
+  - name: "MDM2 Western blot"
+    technique: "Western blot"
+    timepoints: [0, 60, 120, 240, 360]
+    target: "MDM2"
+
+# 从 knowledge/canonical/p53.yaml.forbidden_experiments 复制
+forbidden_experiments:
+  - "p53 qPCR (不能反映振荡)"
+
+# 禁止出现的模式（regex + reason）
 forbidden_patterns:
-  - "No PubMed evidence"
-  - "No BioModels comparison"
-  - "monotonic p53 accumulation without MDM2 feedback"
-key_time_scales:
-  p53_pulse_period: "5-6 hours"
-  MDM2_delay: "1-2 hours"
-key_feedbacks:
-  - "MDM2 negative feedback on p53 (ubiquitination)"
-  - "ATM-p53 positive feedforward under DNA damage"
+  - pattern: "p53.*steady.*increase.*without.*oscillation"
+    reason: "p53 应振荡（5-6h 周期），不能稳态单调上升"
+  - pattern: "p53.*monotonic.*accumulation"
+    reason: "违反 p53-MDM2 negative feedback 导致振荡的机制"
+  - pattern: "MDM2.*does.*not.*degrade.*p53"
+    reason: "MDM2 必须介导 p53 降解（负反馈）"
+  - pattern: "p53 qPCR"
+    reason: "p53 qPCR 不能反映振荡动力学"
+  - pattern: "no.*MDM2.*feedback"
+    reason: "MDM2 负反馈是 p53 振荡的核心机制，必须提及"
+  - pattern: "no.*PubMed"
+    reason: "必须引用 PubMed 权威文献"
+  - pattern: "no.*BioModels"
+    reason: "必须引用 BioModels 模型比较"
+
+# 验收标准（对齐 spec acceptance_criteria）
+acceptance_criteria:
+  mechanism_nodes_required: true
+  mechanism_node_min_coverage: 0.8
+  pubmed_min_count: 1                    # p53 canonical reviews 较少
+  biomodels_min_count: 0                 # Canonical 中 p53 models 为空
+  experiment_min_count: 2
+  hallucination_tolerance: 0
+  curve_metric_pass_min: 6
+  forbidden_experiment_blocked: true
+  forbidden_pattern_absent: true
+  must_explain_mdm2_feedback: true        # 必须解释 MDM2 负反馈
+  p53_must_oscillate: true                # p53 必须振荡
+  oscillation_period_min_hours: 5         # 振荡周期下限
+  oscillation_period_max_hours: 6         # 振荡周期上限
+
+# 从 knowledge/canonical/p53.yaml.dna_damage_assertions 复制
+dna_damage_assertions:
+  pathway: "ATM → p53 → MDM2 → negative feedback"
+  behavior: "oscillation (not steady increase)"
+  mechanism: "MDM2-mediated negative feedback"
+
+# 参考 Canonical
+canonical_reference: "knowledge/canonical/p53.yaml"
+known_negative_feedback:
+  - MDM2-p53

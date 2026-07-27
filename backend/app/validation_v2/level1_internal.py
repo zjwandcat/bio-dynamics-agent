@@ -20,12 +20,14 @@
 from __future__ import annotations
 
 import csv
+import io
 import logging
 import math
 import re
 from typing import Any
 
 from app.config import settings
+from app.csv_io import decode_csv_text
 
 logger = logging.getLogger(__name__)
 
@@ -882,11 +884,14 @@ class Level1InternalValidator:
         """读取仿真 CSV 文件为 (times, species_values)（TD-014/TD-032 共用）。
 
         CSV 格式：第一行为列头，含 time/t/Time/T 列与各物种浓度列。
+        多编码兼容（UTF-8-SIG/GB18030/CP1252），委托 app.csv_io 统一解码边界。
         """
         try:
-            with open(csv_path, "r", encoding="utf-8", newline="") as f:
-                reader = csv.DictReader(f)
-                rows = list(reader)
+            decoded, _encoding = decode_csv_text(csv_path)
+            if not decoded:
+                return None
+            reader = csv.DictReader(io.StringIO(decoded, newline=""))
+            rows = list(reader)
         except (FileNotFoundError, OSError):
             return None
         if not rows:

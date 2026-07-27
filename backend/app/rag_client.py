@@ -6,8 +6,10 @@ import json
 import logging
 import math
 import re
+import time
 import uuid
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 import chromadb
@@ -18,7 +20,25 @@ from pydantic import BaseModel, Field
 from app.config import embedding_model, llm, rerank_manager, settings
 from app.prompts import QUERY_REWRITING_PROMPT
 
+# Task 19 SEC-1.4: 优先使用 defusedxml 防御 XXE/实体扩展攻击
+# 注意：logger 在下方定义，此处不调用 logging，避免循环引用
+try:
+    from defusedxml import ElementTree as _ET  # type: ignore
+    _ET_FALLBACK = False
+except ImportError:  # pragma: no cover - 离线场景降级
+    import xml.etree.ElementTree as _ET  # type: ignore
+    _ET_FALLBACK = True
+
 logger = logging.getLogger(__name__)
+if _ET_FALLBACK:
+    logger.warning("defusedxml 未安装，NCBI XML 解析降级到 xml.etree（有实体扩展风险）")
+
+
+# === V4 Enhancement: Sequential Retriever 延迟导入缓存 ===
+# 仅在 V4_SEQUENTIAL_RETRIEVER=true 且调用方提供 pathway 时实际加载，避免
+# 在 Flag=false 或无 pathway 调用时引入 scientific_alignment.sequential_retriever
+# 模块的额外启动开销。
+_sequential_retrieve_impl_lazy = None  # type: Any
 
 
 # -----------------------------------------------------------------------------
@@ -331,8 +351,13 @@ class RagClient:
 
     def __init__(self) -> None:
         self.collection_name = settings.CHROMA_COLLECTION_NAME
+        # [Round 5] v2 parameter collection（1607 records from 70 SBML files）
+        # legacy collection（biodynamics_params, 752 records）缺少 Apoptosis 等通路参数，
+        # 同时搜索 v2 collection 以覆盖全部 10 通路
+        self._v2_collection_name = settings.CHROMA_COLLECTION_PARAMETER
         self.persist_dir = settings.CHROMA_PERSIST_DIR
         self._collection: Any | None = None
+        self._v2_collection: Any | None = None
         self._available = False
 
         try:
@@ -364,6 +389,43 @@ class RagClient:
                 logger.warning("创建/获取 ChromaDB collection 失败：%s", exc)
                 return None
         return self._collection
+
+    def _get_v2_collection(self) -> Any:
+        """获取 v2 parameter collection（biodynamics_parameter，1607 records）。
+
+        [Round 5] legacy collection（biodynamics_params, 752 records）仅包含 5 个
+        BioModels 的参数，缺少 Apoptosis/CellCycle 等通路参数。v2 collection 包含
+        70 个 SBML 文件的参数，覆盖全部 10 通路。
+        """
+        if not self._available or self.client is None:
+            return None
+        if self._v2_collection is None:
+            try:
+                self._v2_collection = self.client.get_or_create_collection(
+                    name=self._v2_collection_name,
+                    metadata={"hnsw:space": "cosine"},
+                )
+            except Exception as exc:
+                logger.warning("创建/获取 v2 ChromaDB collection 失败：%s", exc)
+                return None
+        return self._v2_collection
+
+    def _get_evidence_collection(self) -> Any:
+        """获取 biomodels_evidence collection（存放 PubMed 文献证据）。
+
+        collection 名取自 settings.CHROMA_COLLECTION_EVIDENCE，与 RagCollections
+        四路 evidence collection 保持一致。用于 search_by_pmids / build_pmid_vector_db。
+        """
+        if not self._available or self.client is None:
+            return None
+        try:
+            return self.client.get_or_create_collection(
+                name=settings.CHROMA_COLLECTION_EVIDENCE,
+                metadata={"hnsw:space": "cosine", "role": "evidence"},
+            )
+        except Exception as exc:
+            logger.warning("创建/获取 evidence ChromaDB collection 失败：%s", exc)
+            return None
 
     def ensure_collection(self) -> bool:
         """确保 collection 存在。"""
@@ -482,6 +544,7 @@ class RagClient:
         top_k: int = 10,
         species_filter: str | None = None,
         type_filter: str | list[str] | None = None,
+        collection: Any | None = None,
     ) -> list[dict[str, Any]]:
         """纯语义向量检索，返回带 distance 的候选记录。
 
@@ -489,8 +552,11 @@ class RagClient:
             type_filter: 参数类型过滤。可为字符串（精确匹配）或列表（任一匹配）。
                          例如 "kinetic_rate" 或 ["kinetic_rate", "binding_affinity"]。
                          设为 "exclude:initial_concentration" 可排除某类型。
+            collection: [Round 5] 可选，指定搜索的 ChromaDB collection。
+                        默认 None 使用 legacy collection（biodynamics_params）。
         """
-        collection = self._get_collection()
+        if collection is None:
+            collection = self._get_collection()
         if collection is None:
             return []
 
@@ -552,13 +618,16 @@ class RagClient:
         query: str,
         top_k: int = 10,
         type_filter: str | list[str] | None = None,
+        collection: Any | None = None,
     ) -> list[dict[str, Any]]:
         """基于 BM25 的关键词检索，扫描 collection 全量文档并按词频打分。
 
         Args:
             type_filter: 参数类型过滤，同 semantic_search。
+            collection: [Round 5] 可选，指定搜索的 ChromaDB collection。
         """
-        collection = self._get_collection()
+        if collection is None:
+            collection = self._get_collection()
         if collection is None:
             return []
 
@@ -637,16 +706,36 @@ class RagClient:
     ) -> list[dict[str, Any]]:
         """混合检索：语义 + BM25 各取 top 10，按文档内容去重后合并。
 
+        [Round 5] 同时搜索 legacy collection（biodynamics_params, 752 records）
+        和 v2 collection（biodynamics_parameter, 1607 records），合并去重。
+        v2 collection 包含 70 个 SBML 文件的参数，覆盖全部 10 通路（含 Apoptosis）。
+
         Args:
             type_filter: 参数类型过滤，同 semantic_search。默认 None（不过滤）。
         """
+        # 1. Legacy collection 搜索
         semantic_results = self.semantic_search(
             query, top_k=top_k, species_filter=species_filter, type_filter=type_filter
         )
         bm25_results = self.bm25_search(query, top_k=top_k, type_filter=type_filter)
 
+        # 2. [Round 5] v2 collection 搜索（覆盖 Apoptosis 等缺失通路）
+        v2_collection = self._get_v2_collection()
+        if v2_collection is not None:
+            v2_semantic = self.semantic_search(
+                query, top_k=top_k, species_filter=species_filter,
+                type_filter=type_filter, collection=v2_collection,
+            )
+            v2_bm25 = self.bm25_search(
+                query, top_k=top_k, type_filter=type_filter, collection=v2_collection,
+            )
+        else:
+            v2_semantic = []
+            v2_bm25 = []
+
+        # 3. 合并去重（按 _document 内容键去重，同时命中取较高语义分）
         merged: dict[str, dict[str, Any]] = {}
-        for record in semantic_results + bm25_results:
+        for record in semantic_results + bm25_results + v2_semantic + v2_bm25:
             doc_key = record.get("_document", "") or json.dumps(
                 {k: v for k, v in record.items() if not k.startswith("_")},
                 sort_keys=True,
@@ -775,16 +864,49 @@ class RagClient:
         species_context: str = "Human",
         top_k: int = 5,
         type_filter: str | list[str] | None = "exclude:initial_concentration",
+        pathway: str | None = None,
+        prefer_biomd_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """高阶 RAG 检索入口：查询重写 → 混合检索 → 重排序。
 
         Args:
             type_filter: 参数类型过滤，默认排除 initial_concentration（强制 type system）。
                          可设为 None 关闭过滤，或设为 ["kinetic_rate", "binding_affinity"] 精确过滤。
+            pathway: V4 Enhancement 专用——通路标识（如 "egfr"）。提供此参数且
+                     V4_SEQUENTIAL_RETRIEVER=true 时优先走顺序优先级检索
+                     （canonical → BioModels → PubMed → Reactome/KEGG）；
+                     未提供或 Flag=false 时走原并行混合检索（不影响 v3/v4 行为）。
+            prefer_biomd_id: N7 缺口 3——同源优先。提供 BioModels ID（如
+                     ``"BIOMD0000000048"``）时，rerank 后对 biomd_id 匹配的候选
+                     加权 ×2.0 并重排序，使同源参数优先返回，避免跨模型混用。
+                     None 时关闭同源优先（保持原行为）。
 
         返回 (重排序后的 top_k 结果, RAG 洞察数据)。
         洞察数据包含 rewritten_query / rewrites / source_distribution / total_candidates。
         """
+        # === V4 Enhancement: Feature Flag 分支（默认 OFF，不影响 v3/v4）===
+        # V4_SEQUENTIAL_RETRIEVER=true 且调用方提供 pathway 时，优先走顺序检索
+        # （canonical.yaml → BioModels → PubMed → Reactome/KEGG）。
+        # RAG_LEGACY_PARALLEL=true 或 V4_SEQUENTIAL_RETRIEVER=false 时回退到
+        # 原并行混合检索路径（保持 v3/v4 行为）。
+        # 铁律：pathway=None 时本分支不触发，与 v3/v4 完全一致。
+        if (
+            pathway is not None
+            and settings.V4_SEQUENTIAL_RETRIEVER
+            and not settings.RAG_LEGACY_PARALLEL
+        ):
+            reranked, insights = self._search_via_sequential_retriever(
+                pathway=pathway,
+                query=query,
+                species_context=species_context,
+                top_k=top_k,
+            )
+            # N7 缺口 3：同源优先（顺序检索分支同样适用）
+            if prefer_biomd_id and reranked:
+                reranked = self._apply_same_source_boost(reranked, prefer_biomd_id)
+                insights["same_source_preferred"] = prefer_biomd_id
+            return reranked, insights
+
         if not self._available:
             return [], {
                 "rewritten_query": query,
@@ -810,6 +932,10 @@ class RagClient:
             top_k=top_k,
             query=rewritten_query,
         )
+
+        # N7 缺口 3：同源优先——biomd_id 匹配的候选加权 ×2.0 并重排序
+        if prefer_biomd_id and reranked:
+            reranked = self._apply_same_source_boost(reranked, prefer_biomd_id)
 
         # 4. 构建洞察数据
         source_counter: Counter[str] = Counter()
@@ -842,8 +968,67 @@ class RagClient:
             "total_candidates": len(candidates),
             "top_selections": top_selections,
         }
+        if prefer_biomd_id:
+            insights["same_source_preferred"] = prefer_biomd_id
 
         return reranked, insights
+
+    # -------------------------------------------------------------------------
+    # N7 缺口 3：同源优先加权（确定性，无 LLM）
+    # -------------------------------------------------------------------------
+    _BIOMD_ID_RE = re.compile(r"\b(BIOMD\d{10}|MODEL\d{10})\b", re.IGNORECASE)
+
+    @classmethod
+    def _record_biomd_id(cls, record: dict[str, Any]) -> str | None:
+        """从检索记录提取 BioModels ID（biomd_id / source_model / source 正则）。"""
+        explicit = record.get("biomd_id")
+        if explicit and str(explicit).strip():
+            return str(explicit).strip().upper()
+        source_model = record.get("source_model")
+        if source_model and str(source_model).strip():
+            sm = str(source_model).strip()
+            match = cls._BIOMD_ID_RE.search(sm)
+            if match:
+                return match.group(1).upper()
+            if sm.upper().startswith(("BIOMD", "MODEL")):
+                return sm.upper()
+            return sm
+        for field_name in ("source", "origin"):
+            value = record.get(field_name)
+            if not value:
+                continue
+            match = cls._BIOMD_ID_RE.search(str(value))
+            if match:
+                return match.group(1).upper()
+        return None
+
+    def _apply_same_source_boost(
+        self,
+        reranked: list[dict[str, Any]],
+        prefer_biomd_id: str,
+    ) -> list[dict[str, Any]]:
+        """对 biomd_id 匹配 prefer_biomd_id 的候选加权 ×2.0 并重排序。
+
+        确定性操作：仅调整 _rerank_score 与顺序，不改变候选内容。
+        匹配判定（大小写不敏感）：record.biomd_id / source_model / source/origin
+        正则提取任一等于 prefer_biomd_id 即视为同源。
+        """
+        target = str(prefer_biomd_id).strip().upper()
+        if not target or not reranked:
+            return reranked
+        for rec in reranked:
+            base_score = float(rec.get("_rerank_score", 0.0))
+            rec_biomd = self._record_biomd_id(rec)
+            is_same_source = rec_biomd is not None and rec_biomd.upper() == target
+            if is_same_source:
+                # 同源加权 ×2.0，截断到 1.0
+                rec["_rerank_score"] = min(1.0, base_score * 2.0)
+                rec["_same_source_boosted"] = True
+            else:
+                rec["_same_source_boosted"] = False
+        # 按 _rerank_score 降序重排（确定性，无随机）
+        reranked.sort(key=lambda r: float(r.get("_rerank_score", 0.0)), reverse=True)
+        return reranked
 
     # -------------------------------------------------------------------------
     # 4-collection 上下文富化（修复提示词1.md §5.1.1）
@@ -963,6 +1148,333 @@ class RagClient:
                 k: v for k, v in rec.items() if not k.startswith("_")
             })
         return clean
+
+    # -------------------------------------------------------------------------
+    # PubMed E-utilities: 按 PMID 拉取元数据（缺口 3）
+    # 原逻辑来自 nodes_v2.py:_fetch_pubmed_evidence_sync，迁出为可复用私有方法。
+    # 既能按 PMID 直接 efetch，也能按 query esearch+efetch。
+    # 失败返回空 list，不抛异常。
+    # -------------------------------------------------------------------------
+    def _fetch_pubmed_by_pmids(
+        self,
+        pmids: list[str],
+        *,
+        query: str | None = None,
+        top_k: int = 10,
+    ) -> list[dict[str, Any]]:
+        """按 PMID 列表调用 NCBI E-utilities efetch 获取文献元数据。
+
+        Args:
+            pmids: PMID 列表（已知的 PMID，直接走 efetch）。
+            query: 可选——若提供且 pmids 为空，则走 esearch 检索 top_k 个 PMID。
+                   兼容原 _fetch_pubmed_evidence_sync 的 query-based 调用语义。
+            top_k: esearch 返回的 PMID 数量上限（默认 10）。
+
+        Returns:
+            list[dict]，每个 dict 字段: pmid / title / abstract / source /
+            figure_ref / cell_line / authors / journal / pub_year / mesh_terms /
+            source_role="PubMed"。失败返回空 list。
+        """
+        if not pmids and not query:
+            return []
+
+        # 读取 NCBI 凭据（容错，settings 缺字段时降级为空串）
+        try:
+            ncbi_email = getattr(settings, "NCBI_EMAIL", "") or ""
+            ncbi_api_key = getattr(settings, "NCBI_API_KEY", "") or ""
+        except Exception:
+            ncbi_email = ""
+            ncbi_api_key = ""
+
+        # === 步骤 1: 确定 PMID 列表 ===
+        id_list: list[str] = [str(p).strip() for p in pmids if p]
+        if not id_list and query:
+            # esearch 获取 PMID 列表
+            esearch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+            esearch_params: dict[str, Any] = {
+                "db": "pubmed",
+                "term": query[:200],
+                "retmax": str(top_k),
+                "retmode": "json",
+                "sort": "relevance",
+            }
+            if ncbi_email:
+                esearch_params["email"] = ncbi_email
+                esearch_params["tool"] = "BioDynamicsAgent"
+            if ncbi_api_key:
+                esearch_params["api_key"] = ncbi_api_key
+            try:
+                resp = requests.get(esearch_url, params=esearch_params, timeout=10)
+                resp.raise_for_status()
+                id_list = (
+                    resp.json().get("esearchresult", {}).get("idlist", []) or []
+                )
+                logger.info(
+                    "PubMed esearch 成功: query=%s idlist=%d",
+                    query[:80], len(id_list),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "PubMed esearch 失败：%s (query=%s)", exc, query[:80]
+                )
+                return []
+
+        if not id_list:
+            return []
+
+        # === 步骤 2: efetch 获取文献详情（最多 2 次重试，间隔 1s） ===
+        efetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+        efetch_params: dict[str, Any] = {
+            "db": "pubmed",
+            "id": ",".join(id_list),
+            "retmode": "xml",
+        }
+        if ncbi_email:
+            efetch_params["email"] = ncbi_email
+            efetch_params["tool"] = "BioDynamicsAgent"
+        if ncbi_api_key:
+            efetch_params["api_key"] = ncbi_api_key
+
+        resp = None
+        for attempt in range(3):
+            try:
+                resp = requests.get(efetch_url, params=efetch_params, timeout=30)
+                resp.raise_for_status()
+                break
+            except Exception as exc:
+                if attempt < 2:
+                    logger.warning(
+                        "PubMed efetch 第 %d 次失败（共 3 次）：%s，1s 后重试",
+                        attempt + 1, exc,
+                    )
+                    time.sleep(1.0)
+                else:
+                    logger.warning("PubMed efetch 3 次重试均失败：%s", exc)
+                    return []
+        if resp is None:
+            return []
+
+        # === 步骤 3: 解析 XML（保留原有解析逻辑 + 扩展 authors/journal/year/mesh） ===
+        articles: list[dict[str, Any]] = []
+        try:
+            root = _ET.fromstring(resp.text)
+        except _ET.ParseError as exc:
+            logger.warning("PubMed XML 解析失败：%s", exc)
+            return []
+
+        for article_elem in root.findall(".//PubmedArticle"):
+            pmid_elem = article_elem.find(".//PMID")
+            pmid = pmid_elem.text if pmid_elem is not None and pmid_elem.text else ""
+            title_elem = article_elem.find(".//ArticleTitle")
+            title = (
+                "".join(title_elem.itertext()).strip()
+                if title_elem is not None else ""
+            )
+            abstract_parts = article_elem.findall(".//AbstractText")
+            abstract = " ".join(
+                "".join(p.itertext()) for p in abstract_parts
+            )[:2000]
+
+            # 扩展字段：authors / journal / pub_year / mesh_terms
+            authors: list[str] = []
+            for au in article_elem.findall(".//Author"):
+                last = au.findtext("LastName") or ""
+                fore = au.findtext("ForeName") or ""
+                full = (fore + " " + last).strip() or (au.findtext("CollectiveName") or "")
+                if full:
+                    authors.append(full)
+            journal = (
+                article_elem.findtext(".//Journal/Title") or ""
+            )
+            pub_year = (
+                article_elem.findtext(".//PubDate/Year")
+                or article_elem.findtext(".//PubDate/MedlineDate") or ""
+            )[:4]
+            mesh_terms: list[str] = []
+            for mh in article_elem.findall(".//MeshHeading/DescriptorName"):
+                if mh.text:
+                    mesh_terms.append(mh.text)
+
+            if pmid:
+                articles.append({
+                    "pmid": pmid,
+                    "title": title or "",
+                    "abstract": abstract,
+                    "source": f"PMID:{pmid}",
+                    "figure_ref": "",
+                    "cell_line": "",
+                    "authors": authors,
+                    "journal": journal,
+                    "pub_year": pub_year,
+                    "mesh_terms": mesh_terms,
+                    "source_role": "PubMed",
+                })
+
+        if articles:
+            logger.info(
+                "PubMed efetch 命中 %d 篇文献 (requested=%d)",
+                len(articles), len(id_list),
+            )
+        return articles[:top_k] if query and not pmids else articles
+
+    # -------------------------------------------------------------------------
+    # 按 PMID 强制查询（缺口 1）
+    # 先查 ChromaDB evidence collection，未命中再调 PubMed E-utilities 在线拉取。
+    # 网络失败时返回 degraded 状态，不抛异常。
+    # -------------------------------------------------------------------------
+    def search_by_pmids(
+        self,
+        pmids: list[str],
+        top_k: int = 10,
+    ) -> dict[str, Any]:
+        """按 PMID 列表强制查询文献证据。
+
+        检索顺序:
+          1. ChromaDB biomodels_evidence collection 按 metadata.pmid 过滤
+          2. 向量库未命中的 PMID 调用 PubMed E-utilities 在线 efetch
+
+        Args:
+            pmids: PMID 列表（如 ["10959078", "11239472"]）。
+            top_k: 在线 fallback 时每个 PMID 拉取的文献数上限（默认 10）。
+
+        Returns:
+            dict 结构:
+              {
+                "results": [
+                    {"pmid", "title", "abstract", "source_role",
+                     "snippet", "found_in_vector_db": bool,
+                     "fetched_online": bool (optional)},
+                    ...
+                ],
+                "degraded_stages": ["vector_db", "pubmed_online"],  # 退化的 stage
+                "errors": [{"pmid": str, "error": str}, ...]
+              }
+            网络失败时返回 {results: [], degraded_stages: [...], errors: [...]}，
+            不抛异常。
+        """
+        results: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
+        degraded_stages: list[str] = []
+
+        if not pmids:
+            return {
+                "results": [],
+                "degraded_stages": [],
+                "errors": [],
+            }
+
+        normalized_pmids: list[str] = [str(p).strip() for p in pmids if p]
+
+        # === Step 1: ChromaDB 向量库过滤查询 ===
+        vector_hits: dict[str, dict[str, Any]] = {}
+        evidence_coll = self._get_evidence_collection()
+        if evidence_coll is None:
+            degraded_stages.append("vector_db")
+        else:
+            try:
+                got = evidence_coll.get(
+                    where={"pmid": {"$in": normalized_pmids}},
+                    include=["metadatas", "documents"],
+                )
+                metas = got.get("metadatas", []) or []
+                docs = got.get("documents", []) or []
+                for idx, meta in enumerate(metas):
+                    if not meta:
+                        continue
+                    pmid = str(meta.get("pmid", "")).strip()
+                    if not pmid:
+                        continue
+                    # 多条同 PMID 时保留第一条（去重）
+                    if pmid in vector_hits:
+                        continue
+                    doc = docs[idx] if idx < len(docs) else ""
+                    title = str(meta.get("title", ""))
+                    abstract = str(meta.get("abstract", ""))
+                    snippet = (doc or abstract or title)[:500]
+                    # source_role 规范化：任务规范要求值为 PubMed / BioModels / Reactome 之一。
+                    # metadata 中可能有非标准值（如 classical_reviews / mechanism_papers），
+                    # 统一映射到三个标准值之一。
+                    source_role_raw = str(meta.get("source_role", "")).strip()
+                    source_raw = str(meta.get("source", "")).upper()
+                    if "BIOMODELS" in source_raw or "BIOMD" in source_raw:
+                        source_role = "BioModels"
+                    elif "REACTOME" in source_raw:
+                        source_role = "Reactome"
+                    elif source_role_raw in ("PubMed", "BioModels", "Reactome"):
+                        source_role = source_role_raw
+                    else:
+                        # 非标准值或空 → 默认 PubMed（PMID 来源都是 PubMed 文献）
+                        source_role = "PubMed"
+                    vector_hits[pmid] = {
+                        "pmid": pmid,
+                        "title": title,
+                        "abstract": abstract,
+                        "source_role": source_role,
+                        "snippet": snippet,
+                        "found_in_vector_db": True,
+                        "fetched_online": False,
+                    }
+            except Exception as exc:
+                logger.warning(
+                    "search_by_pmids ChromaDB 过滤查询失败：%s", exc
+                )
+                degraded_stages.append("vector_db")
+
+        results.extend(vector_hits.values())
+
+        # === Step 2: 未命中的 PMID 走 PubMed E-utilities 在线拉取 ===
+        missing_pmids = [p for p in normalized_pmids if p not in vector_hits]
+        if missing_pmids:
+            try:
+                # 总超时 30s 由 efetch 内部 timeout=30 保证；这里对单 PMID
+                # 不再额外切片（efetch 支持批量）。把 missing_pmids 一次性传入。
+                online_articles = self._fetch_pubmed_by_pmids(
+                    missing_pmids, top_k=top_k
+                )
+            except Exception as exc:
+                logger.warning(
+                    "search_by_pmids PubMed 在线拉取失败：%s", exc
+                )
+                online_articles = []
+                degraded_stages.append("pubmed_online")
+                for p in missing_pmids:
+                    errors.append({"pmid": p, "error": str(exc)})
+
+            for art in online_articles:
+                pmid = str(art.get("pmid", "")).strip()
+                if not pmid or pmid in vector_hits:
+                    continue
+                title = str(art.get("title", ""))
+                abstract = str(art.get("abstract", ""))
+                snippet = (abstract or title)[:500]
+                results.append({
+                    "pmid": pmid,
+                    "title": title,
+                    "abstract": abstract,
+                    "source_role": "PubMed",
+                    "snippet": snippet,
+                    "found_in_vector_db": False,
+                    "fetched_online": True,
+                })
+
+            # 在线拉取后仍缺失的 PMID 记录为 error
+            online_found_pmids = {
+                str(a.get("pmid", "")).strip() for a in online_articles
+            }
+            for p in missing_pmids:
+                if p not in online_found_pmids and not any(
+                    e.get("pmid") == p for e in errors
+                ):
+                    errors.append({
+                        "pmid": p,
+                        "error": "PubMed efetch returned no record",
+                    })
+
+        return {
+            "results": results,
+            "degraded_stages": degraded_stages,
+            "errors": errors,
+        }
 
     # -------------------------------------------------------------------------
     # 药物特定检索（Drug-specific Retriever）
@@ -1102,3 +1614,203 @@ class RagClient:
         except Exception as exc:
             logger.warning("获取 embedding 维度失败，使用默认值 1536：%s", exc)
             return 1536
+
+    # -------------------------------------------------------------------------
+    # V4 Enhancement: Sequential Retriever 入口（Task 11 集成）
+    # -------------------------------------------------------------------------
+    def sequential_retrieve(
+        self,
+        pathway: str,
+        query: str,
+        *,
+        top_k: int = 10,
+        canonical_dir: str | Path | None = None,
+        biomodels_client: Any = None,
+    ) -> Any:
+        """实例方法入口：执行顺序优先级检索。
+
+        委托给模块级 ``sequential_retrieve()``，自动传入 ``self`` 作为
+        ``rag_client`` 参数（供 PubMed stage 检索使用）。
+
+        Feature Flag:
+            V4_SEQUENTIAL_RETRIEVER=true 时启用顺序检索
+            （canonical.yaml → BioModels → PubMed → Reactome/KEGG）。
+            RAG_LEGACY_PARALLEL=true 或 V4_SEQUENTIAL_RETRIEVER=false 时
+            调用方应回退到 ``search_params_hybrid`` 旧并行检索。
+
+        Args:
+            pathway: 通路名称（如 ``"egfr"``）。
+            query: 检索查询语句（用于 PubMed stage）。
+            top_k: 返回 Top-K 结果（默认 10）。
+            canonical_dir: Canonical YAML 目录。None 时使用默认目录。
+            biomodels_client: BioModels API 客户端。None 时由底层默认创建。
+
+        Returns:
+            ``RetrievalResult``，含 ``staged_evidence`` / ``final_ranked``
+            / ``logs`` / ``canonical_hit_rate`` 字段。
+        """
+        return sequential_retrieve(
+            pathway=pathway,
+            query=query,
+            top_k=top_k,
+            canonical_dir=canonical_dir,
+            rag_client=self,
+            biomodels_client=biomodels_client,
+        )
+
+    def _search_via_sequential_retriever(
+        self,
+        *,
+        pathway: str,
+        query: str,
+        species_context: str,
+        top_k: int,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """通过 sequential_retrieve 执行检索并适配为 search_params_hybrid 返回格式。
+
+        将 ``RetrievalResult.final_ranked`` 中的 ``Evidence`` 对象转换为
+        ``search_params_hybrid`` 期望的 ``list[dict]`` 格式，并构建包含
+        sequential retriever 日志与命中率的 insights dict。
+
+        失败时记录 warning 并返回空结果（保持与 ``search_params_hybrid``
+        在 ``self._available=False`` 时的相同降级行为）。
+
+        Args:
+            pathway: 通路标识。
+            query: 检索查询语句。
+            species_context: 物种上下文（用于 top_selections 字段）。
+            top_k: 返回 Top-K 结果数。
+
+        Returns:
+            ``(reranked 参数列表, insights dict)``，insights 多出
+            ``sequential_retriever_logs`` 与 ``canonical_hit_rate`` 字段。
+        """
+        try:
+            result = sequential_retrieve(
+                pathway=pathway,
+                query=query,
+                top_k=top_k,
+                rag_client=self,
+            )
+        except Exception as exc:  # noqa: BLE001 —— 顺序检索失败时降级为空结果
+            logger.warning(
+                "sequential_retrieve 调用失败，返回空结果（pathway=%s）：%s",
+                pathway,
+                exc,
+            )
+            return [], {
+                "rewritten_query": query,
+                "rewrites": [],
+                "source_distribution": {},
+                "total_candidates": 0,
+                "top_selections": [],
+                "sequential_retriever_error": str(exc),
+            }
+
+        # 将 Evidence 列表转换为 search_params_hybrid 兼容的 dict 列表
+        reranked: list[dict[str, Any]] = []
+        for ev in result.final_ranked:
+            record: dict[str, Any] = dict(ev.raw) if ev.raw else {}
+            record["param_name"] = ev.title
+            record["source"] = ev.source
+            if ev.pmid:
+                record["pmid"] = ev.pmid
+                record["source_pmid"] = ev.pmid
+            if ev.biomd_id:
+                record["biomd_id"] = ev.biomd_id
+            record["_semantic_score"] = float(ev.relevance_score)
+            record["_rerank_score"] = float(ev.relevance_score)
+            record["_retrieval_method"] = "sequential"
+            record["_evidence_type"] = ev.evidence_type
+            reranked.append(record)
+
+        # 构建 insights（含 sequential retriever 专属字段）
+        source_counter: Counter[str] = Counter(
+            ev.source for ev in result.final_ranked
+        )
+        top_selections: list[dict[str, Any]] = [
+            {
+                "parameter": ev.title,
+                "value": "",
+                "source": ev.source,
+                "pmid": ev.pmid or "",
+                "confidence_score": round(float(ev.relevance_score), 2),
+                "species": species_context,
+                "context": "",
+            }
+            for ev in result.final_ranked
+        ]
+
+        insights: dict[str, Any] = {
+            "rewritten_query": query,
+            "rewrites": [],
+            "source_distribution": dict(source_counter),
+            "total_candidates": len(result.final_ranked),
+            "top_selections": top_selections,
+            "sequential_retriever_logs": [
+                {
+                    "stage": log.stage,
+                    "query": log.query,
+                    "returned": log.returned,
+                    "selected": log.selected,
+                    "deduplicated": log.deduplicated,
+                }
+                for log in result.logs
+            ],
+            "canonical_hit_rate": float(result.canonical_hit_rate),
+        }
+
+        return reranked, insights
+
+
+# -----------------------------------------------------------------------------
+# V4 Enhancement: 模块级 Sequential Retriever 入口（Task 11 集成）
+# -----------------------------------------------------------------------------
+def sequential_retrieve(
+    pathway: str,
+    query: str,
+    *,
+    top_k: int = 10,
+    canonical_dir: str | Path | None = None,
+    rag_client: Any = None,
+    biomodels_client: Any = None,
+) -> Any:
+    """顺序优先级检索模块级入口（委托给 scientific_alignment.sequential_retriever）。
+
+    对应 Spec Requirement "Sequential Retriever（顺序优先级检索）"。
+    四级顺序检索：canonical.yaml → BioModels → PubMed → Reactome/KEGG。
+    前一级命中足量证据时，后一级不执行（或仅补充）。
+
+    Feature Flag:
+        V4_SEQUENTIAL_RETRIEVER=true 时启用顺序检索。
+        RAG_LEGACY_PARALLEL=true 时由调用方决定是否回退到旧并行检索
+        （本函数本身不检查 RAG_LEGACY_PARALLEL，由 search_params_hybrid
+        统一控制路由）。
+
+    Args:
+        pathway: 通路名称（如 ``"egfr"``），用于加载 canonical.yaml。
+        query: 检索查询语句（用于 PubMed stage）。
+        top_k: 返回 Top-K 结果（默认 10）。
+        canonical_dir: Canonical YAML 目录。None 时使用默认目录。
+        rag_client: PubMed 检索客户端。None 时底层创建默认客户端；
+            传入 ``RagClient`` 实例可复用 ChromaDB 连接。
+        biomodels_client: BioModels API 客户端。None 时使用底层默认。
+
+    Returns:
+        ``RetrievalResult``，含 ``staged_evidence`` / ``final_ranked``
+        / ``logs`` / ``canonical_hit_rate`` 字段。
+    """
+    global _sequential_retrieve_impl_lazy
+    if _sequential_retrieve_impl_lazy is None:
+        from app.scientific_alignment.sequential_retriever import (
+            sequential_retrieve as _sequential_retrieve_impl,
+        )
+        _sequential_retrieve_impl_lazy = _sequential_retrieve_impl
+    return _sequential_retrieve_impl_lazy(
+        pathway=pathway,
+        query=query,
+        top_k=top_k,
+        canonical_dir=canonical_dir,
+        rag_client=rag_client,
+        biomodels_client=biomodels_client,
+    )

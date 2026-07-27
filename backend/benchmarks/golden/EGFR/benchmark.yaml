@@ -1,0 +1,16 @@
+# Golden Benchmark — EGFR Pathway
+# 预填内容基于 SCIENTIFIC_PIPELINE_AUDIT.md 与 knowledge/canonical/egfr.yaml 已知事实
+pathway: EGFR
+question: "EGF stimulation induces rapid EGFR phosphorylation. ERK activation peaks within approximately 10–20 minutes and then gradually declines despite continuous EGF stimulation. Explain the mechanism and simulate expected dynamics."
+ground_truth: "EGF binds EGFR, triggering receptor autophosphorylation within 1-5 min [PMID:11743495]. Phosphorylated EGFR recruits Shc-Grb2-SOS complex, activating Ras (2-8 min) [PMID:7657691]. Ras-GTP activates the Raf-MEK-ERK kinase cascade, with ERK phosphorylation peaking at 10-20 min [PMID:10712587]. Despite continuous EGF stimulation, ERK activation declines due to: (1) receptor internalization and degradation (10-30 min) [PMID:12451180], (2) DUSP induction forming negative feedback (30-90 min) [PMID:16246870], and (3) SPRY induction (30-90 min). The Kholodenko2000 model (BIOMD0000000010) demonstrates that negative feedback combined with MAPK cascade ultrasensitivity can produce sustained oscillations under certain conditions [PMID:10712587]."
+canonical_papers: ["PMID:7657691", "PMID:11743495", "PMID:12451180", "PMID:16246870", "PMID:10712587"]
+canonical_biomodels: ["BIOMD0000000048"]  # Kholodenko1999 EGFR signaling (PMID:10514507)，已验证
+expected_mechanism: [EGF, EGFR, SHC, GRB2, SOS, RAS, RAF, MEK, ERK, DUSP]
+expected_time_scale:
+  egfr_peak: "<5 min"
+  erk_peak: "10-20 min"
+  dusp_induction: "30-90 min"
+expected_experiment: []  # 实验方案，待 Sprint 4 填充
+expected_discussion: {}  # Discussion 预期，待 Sprint 2 填充
+expected_validation: {}  # Validation 预期，待 Sprint 3 填充
+expected_confidence: 0.0  # 预期置信度，待 Sprint 3 填充

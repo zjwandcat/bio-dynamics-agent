@@ -4,10 +4,10 @@ pathway: CELL_CYCLE
 name: "Eukaryotic Cell Cycle Control"
 
 canonical_reviews:          # 权威综述 PMID 列表
-  - "PMID:11381155"         # Novak 2001（Tyson-Novak cell cycle 模型）
+  - "PMID:15169868"         # Chen 2004 Mol Biol Cell（budding yeast cell cycle model，与 BIOMD0000000056 对应）
 
 canonical_models:           # 权威 BioModels ID 列表
-  - "BIOMD0000000056"       # Tyson-Novak 2001 cell cycle model
+  - "BIOMD0000000056"       # Chen2004 Cell Cycle Regulation (budding yeast)，已验证
 
 canonical_mechanism:
   required_nodes:           # 机制节点链（大写蛋白名）
@@ -43,6 +43,24 @@ expected_behavior:          # 动力学行为预期
   bistable_switch: true
   apc_c_destruction: true
 
+canonical_timeline:
+  - event: "Cyclin D accumulation"
+    time_window: "1-4 h (G1 early)"
+  - event: "CDK4/6 activation"
+    time_window: "2-6 h"
+  - event: "Rb phosphorylation"
+    time_window: "4-8 h"
+  - event: "Cyclin E peak"
+    time_window: "G1/S transition"
+  - event: "Cyclin B peak"
+    time_window: "G2/M"
+  - event: "Oscillation"
+    present: true
+    note: "Cell cycle dependent"
+  - event: "Negative feedback"
+    present: true
+    mediator: "APC/C-Cdh1"
+
 known_negative_feedback:    # 已知负反馈
   - APC_C-CyclinB
   - RB-E2F
@@ -54,3 +72,35 @@ consistency_rules:          # 供 Consistency Checker 加载的自洽规则
   - rule: "APC_C 活化晚于 CyclinB Peak"
     assertion: "apc_c_activation_time > cyclinb_peak_time"
     violation_label: "apc_c_before_cyclinb_peak"
+
+# ============================================================================
+# Task 12: Spec 补全字段（10 通路 Canonical 对齐）
+# ============================================================================
+expected_dynamics:          # 期望动力学（基于权威文献汇总）
+  CyclinB_CDK1:
+    behavior: "bistability (non-linear)"
+    switch_like: true
+  CyclinE_CDK2:
+    behavior: "G1/S bistable switch"
+  RB_E2F:
+    behavior: "bistability (double-negative feedback)"
+
+curve_requirements:         # 曲线必须满足的硬约束
+  CyclinB_CDK1: "双稳态开关（非线性）"
+  CyclinE_CDK2: "G1/S 双稳态"
+
+expected_experiments:       # 验证机制所需实验
+  - name: "Cyclin B1 / pCDK1 Western blot"
+    timepoints: [0, 4, 8, 12, 16, 20, 24]
+    mechanism_target: "CyclinB-CDK1 mitotic entry switch"
+  - name: "Cyclin E / pRb Western blot"
+    timepoints: [0, 4, 8, 12, 16]
+    mechanism_target: "G1/S transition bistability"
+
+forbidden_experiments:      # 不能验证 CDK 活性的实验
+  - "CDK1 qPCR (蛋白活性需要 Western)"
+
+# Task 12 Spec: Benchmark 09 Cell Cycle Canonical Assertion
+mitotic_entry_assertions:
+  cyclinB_cdk1: "double-negative feedback"
+  behavior: "Bistability (non-linear)"

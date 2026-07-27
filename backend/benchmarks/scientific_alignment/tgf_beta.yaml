@@ -1,41 +1,152 @@
-# BioDynamics Scientific Alignment Gold Standard — TGF-β 通路
+# BioDynamics Scientific Alignment Benchmark — TGF-β 通路
+# Task 13: 对齐 Task 12 Canonical Answer，补全 acceptance_criteria / expected_curve_metrics / forbidden_patterns
 # 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
-# 参考：Massague 2000 (PMID:10854325) / Clark 2012 SMAD 模型
-# TODO: verify PMID — Shi 2003、Schmierer 2008、Wrighton 2009、Clark 2012
-pathway: TGF_BETA
-name: "TGF-β/SMAD Signaling"
+# 参考 Canonical: knowledge/canonical/tgf_beta.yaml
+# Benchmark 10: TGFβ — SMAD2 磷酸化达峰后下降
+benchmark_id: tgf_beta_smad2_adaptive_decline
+pathway: tgf_beta
+category: positive
+question: >
+  解释 TGFβ 刺激后 SMAD2 磷酸化达峰后下降的机制。
+  为何 pSMAD2 表现为 transient（适应性下降）而非持续？
+  请解释 SMAD7 负反馈与受体周转机制，并仿真 4 h 动力学。
+
+expected_answer: >
+  TGFβ → TGFBR1/TGFBR2 结合 → TGFBR1 磷酸化 SMAD2/3（5-15 min 达峰）→
+  SMAD2/3 与 SMAD4 异源二聚化 → 核转位（15-30 min）→ 转录 SMAD7 与 SnoN →
+  SMAD7 蛋白积累（1-2 h）→ SMAD7 结合 TGFBR1 抑制其激酶活性 → SMAD2/3 磷酸化下降。
+  受体周转（receptor turnover）：活化受体被内吞降解，减少信号输入。
+  因此 pSMAD2 表现为 peaks and declines（适应性下降），而非持续高位。
+  SMAD7 negative feedback 与 Receptor turnover 是 pSMAD2 下降的两大机制。
+  禁止回答"SMAD2 持续磷酸化不下降"——这违反 SMAD7 负反馈。
+
+# 从 knowledge/canonical/tgf_beta.yaml.canonical_mechanism.required_nodes 复制
+canonical_mechanism_nodes:
+  - TGFbeta
+  - TGFBR1
+  - TGFBR2
+  - SMAD2
+  - SMAD3
+  - SMAD4
+  - SMAD7
+  - SnoN
+
+# 从 knowledge/canonical/tgf_beta.yaml.canonical_reviews 复制
+canonical_reviews:
+  - "PMID:10854325"         # Massague 2000 Nature Cell Biology（SMAD 信号）
+
+# 从 knowledge/canonical/tgf_beta.yaml.canonical_models 复制（Canonical 中为空）
+canonical_models: []
+
+# 期望动力学（基于 tgfb_assertions）
 expected_dynamics:
-  SMAD_nuclear_translocation: "15-60 min after TGF-β"
-  SMAD_inhibitory_feedback: "SMAD7 induced, negative"
-  sustained_signal: "sustained adosis under ligand"
-  SMAD_phosphorylation: "rapid, within minutes"
-required_mechanisms:
-  - TGFbeta_receptor_TGFBRI_II
-  - SMAD2_3_phosphorylation
-  - SMAD4_heterodimer
-  - nuclear_translocation
-  - SMAD7_negative_feedback
-  - SnoN_inhibition
-required_biomodels:
-  - BIOMD0000000252   # Clark 2012 SMAD model
-required_reviews:
-  - PMID:10854325     # Massague 2000 Nat Cell Biol (SMAD) (confirmed)
-  - PMID:xxxxxxxx     # TODO: verify Shi 2003 PMID
-  - PMID:xxxxxxxx     # TODO: verify Schmierer 2008 PMID
-  - PMID:xxxxxxxx     # TODO: verify Wrighton 2009 PMID
-required_experiments:
-  - pSMAD2 Western blot
-  - SMAD nuclear translocation immunofluorescence
-  - SMAD7 qPCR
-  - SB431542 inhibitor validation
-  - TGF-beta time course 0-4 hours
+  - molecule: SMAD2_phosphorylation
+    peak_time: [5, 15]
+    behavior: "peaks and declines"
+    must_decline: true
+  - molecule: SMAD_nuclear
+    peak_time: [15, 30]
+    behavior: "transient nuclear accumulation"
+  - molecule: SMAD7
+    peak_time: [60, 120]
+    behavior: "increasing (feedback)"
+  - molecule: TGFBR1_active
+    peak_time: [1, 5]
+    behavior: "rapid activation then turnover"
+
+# 8 项 Curve Metrics 期望值
+expected_curve_metrics:
+  - molecule: pSMAD2
+    peak_time_min: [5, 15]
+    peak_amplitude: [0.8, 1.0]
+    rise_time_min: [2, 8]
+    half_decay_min: [30, 90]
+    adaptation_ratio: [0.1, 0.5]          # 必须 < 1.0，证明下降
+    steady_state: [0.1, 0.5]
+    oscillation: false
+    auc: [20, 80]
+  - molecule: SMAD_nuclear
+    peak_time_min: [15, 30]
+    peak_amplitude: [0.7, 1.0]
+    rise_time_min: [5, 15]
+    half_decay_min: [30, 90]
+    adaptation_ratio: [0.2, 0.5]
+    steady_state: [0.2, 0.5]
+    oscillation: false
+    auc: [30, 100]
+  - molecule: SMAD7
+    peak_time_min: [60, 120]
+    peak_amplitude: [0.6, 1.0]
+    rise_time_min: [20, 60]
+    half_decay_min: null                  # 持续增加（反馈）
+    adaptation_ratio: null
+    steady_state: [0.7, 1.0]
+    oscillation: false
+    auc: [50, 150]
+  - molecule: TGFBR1_active
+    peak_time_min: [1, 5]
+    peak_amplitude: [0.8, 1.0]
+    rise_time_min: [0, 3]
+    half_decay_min: [15, 60]              # receptor turnover
+    adaptation_ratio: [0.1, 0.4]
+    steady_state: [0.1, 0.4]
+    oscillation: false
+    auc: [10, 50]
+
+# 从 knowledge/canonical/tgf_beta.yaml.expected_experiments 复制
+expected_experiments:
+  - name: "pSMAD2 Western blot"
+    technique: "Western blot"
+    timepoints: [0, 5, 15, 30, 60, 120, 240]
+    target: "pSMAD2"
+  - name: "SMAD7 qPCR"
+    technique: "qPCR"
+    timepoints: [15, 30, 60, 120, 240]
+    target: "SMAD7"
+
+# 从 knowledge/canonical/tgf_beta.yaml.forbidden_experiments 复制
+forbidden_experiments:
+  - "SMAD2 qPCR (不能反映磷酸化动力学)"
+
+# 禁止出现的模式（regex + reason）
 forbidden_patterns:
-  - "No PubMed evidence"
-  - "No BioModels comparison"
-  - "SMAD activation without receptor phosphorylation"
-key_time_scales:
-  SMAD_nuclear_translocation: "15-60 min"
-  SMAD7_induction: "1-2 hours"
-key_feedbacks:
-  - "SMAD7 negative feedback on TGF-β receptor"
-  - "SnoN inhibition of SMAD transcriptional activity"
+  - pattern: "pSMAD2.*sustained.*high"
+    reason: "pSMAD2 应 peaks and declines（SMAD7 负反馈），不能持续高位"
+  - pattern: "SMAD2.*monotonic.*phosphorylation"
+    reason: "违反 SMAD7 negative feedback / Receptor turnover 机制"
+  - pattern: "no.*SMAD7.*feedback"
+    reason: "SMAD7 负反馈是 pSMAD2 下降的核心机制，必须提及"
+  - pattern: "no.*receptor.*turnover"
+    reason: "受体周转是 pSMAD2 下降的另一机制，必须提及"
+  - pattern: "SMAD2 qPCR"
+    reason: "SMAD2 qPCR 不能反映磷酸化动力学"
+  - pattern: "no.*PubMed"
+    reason: "必须引用 PubMed 权威文献"
+  - pattern: "no.*BioModels"
+    reason: "必须引用 BioModels 模型比较"
+
+# 验收标准（对齐 spec acceptance_criteria）
+acceptance_criteria:
+  mechanism_nodes_required: true
+  mechanism_node_min_coverage: 0.8
+  pubmed_min_count: 1                    # TGFβ canonical reviews 较少
+  biomodels_min_count: 0                 # Canonical 中 TGFβ models 为空
+  experiment_min_count: 2
+  hallucination_tolerance: 0
+  curve_metric_pass_min: 6
+  forbidden_experiment_blocked: true
+  forbidden_pattern_absent: true
+  must_explain_smad7_feedback: true       # 必须解释 SMAD7 负反馈
+  must_explain_receptor_turnover: true    # 必须解释受体周转
+  psmad2_must_decline: true               # pSMAD2 必须下降
+
+# 从 knowledge/canonical/tgf_beta.yaml.tgfb_assertions 复制
+tgfb_assertions:
+  smad2_phosphorylation: "peaks and declines"
+  mechanism: ["SMAD7 negative feedback", "Receptor turnover"]
+
+# 参考 Canonical
+canonical_reference: "knowledge/canonical/tgf_beta.yaml"
+known_negative_feedback:
+  - SMAD7
+  - SnoN

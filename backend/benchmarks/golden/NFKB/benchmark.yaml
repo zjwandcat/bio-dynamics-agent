@@ -1,0 +1,18 @@
+# Golden Benchmark — NFKB Pathway
+pathway: NFKB
+question: "TNF stimulation activates IKK within 5-15 min, leading to IκBα degradation and NF-κB nuclear translocation. IκBα and A20 form negative feedback loops producing oscillatory NF-κB dynamics with a period of approximately 1.5-3 hours. Explain the NF-κB oscillation mechanism and simulate expected dynamics."
+ground_truth: "TNF activates IKK within 5-15 min, which degrades IκBα at 10-20 min, releasing NF-κB (p65) for nuclear translocation at 15-30 min [PMID:12124261]. NF-κB transcriptionally induces IκBα and A20 (1-2 h), which form negative feedback: IκBα re-sequesters NF-κB in cytoplasm (nuclear export) and A20 inhibits IKK [PMID:12124261]. This double negative feedback (IκBα, A20) produces oscillatory NF-κB nuclear localization with a period of 1.5-3 h [PMID:12124261]."
+canonical_papers: ["PMID:12124261"]  # Hoffmann 2002 Science（NF-κB 振荡）
+canonical_biomodels: ["BIOMD0000000140"]  # Hoffmann2002 wild-type IkB/NF-kB
+expected_mechanism: [IKK, IkB_alpha, NFkB_p65, A20]
+expected_time_scale:
+  ikk_activation: "5-15 min"
+  ikb_degradation: "10-20 min"
+  nfkb_nuclear_translocation: "15-30 min"
+  a20_induction: "1-2 h"
+  ikba_resynthesis: "1-2 h"
+  oscillation_period: "1.5-3 h"
+expected_experiment: []  # 实验方案，待 Sprint 4 填充
+expected_discussion: {}  # Discussion 预期，待 Sprint 2 填充
+expected_validation: {}  # Validation 预期，待 Sprint 3 填充
+expected_confidence: 0.0  # 预期置信度，待 Sprint 3 填充

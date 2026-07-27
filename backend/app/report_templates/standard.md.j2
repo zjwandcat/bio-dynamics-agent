@@ -1,12 +1,15 @@
 # 仿真预测报告
 
-## 1. 机制分析
+> **证据等级标注（Evidence Level）**：
+> **[A]** 文献证据（PubMed PMID）｜**[B]** BioModels 参考模型（ curated SBML）｜**[C]** 仿真结果（ODE/DDE 求解）｜**[D]** 机制推理（LLM 基于通路知识）｜**[E]** 假设（无直接证据，待验证）
+
+## 1. 机制分析 [D]
 {{ llm.mechanism_analysis }}
 
-## 2. 仿真结果解读
+## 2. 仿真结果解读 [C]
 {{ llm.simulation_interpretation }}
 
-### 物种指标
+### 物种指标 [C]
 
 > 所有时间单位为 **{{ time_unit | default("min") }}**；浓度单位为 nM。
 
@@ -17,7 +20,7 @@
 {% endfor %}
 
 {% if metrics.combo %}
-### 联合用药指标
+### 联合用药指标 [C]
 
 | 列名 | 峰值 (nM) | 倍数变化 | AUC (nM·{{ time_unit | default("min") }}) |
 |------|----------|----------|-------------------------------------------|
@@ -26,29 +29,45 @@
 {% endfor %}
 {% endif %}
 
-## 3. 实验验证建议
+## 3. 实验验证建议 [A]
 {% if experiments %}
 {% for ex in experiments %}
-- **{{ ex.name }}**：靶点 {{ ex.target }}，细胞系 {{ ex.cell_line }}（来源：PMID {{ ex.pmid }}）
+- **{{ ex.name }}**：靶点 {{ ex.target }}，细胞系 {{ ex.cell_line }}（[A] 来源：PMID {{ ex.pmid }}）
 {% endfor %}
 {% else %}
-暂无来自知识库的实验方案。
+暂无来自知识库的实验方案。[E] 建议基于通路机制设计验证实验。
 {% endif %}
 
-## 4. 文献证据
+## 4. 文献证据 [A]
 {% if evidence %}
 {% for ev in evidence %}
-- {{ ev.title }}（PMID: {{ ev.pmid }}，图 {{ ev.figure_ref | default('-') }}，细胞系 {{ ev.cell_line | default('-') }}）
+- [A] {{ ev.title }}（PMID: {{ ev.pmid }}，图 {{ ev.figure_ref | default('-') }}，细胞系 {{ ev.cell_line | default('-') }}）
 {% endfor %}
 {% else %}
-暂无来自知识库的文献证据。
+[A] 暂无 PubMed 文献证据。本报告机制分析基于 [D] 通路知识推理，仿真结果基于 [C] ODE/DDE 求解，未经 [A] 文献交叉验证。
 {% endif %}
 
-## 5. 讨论
+## 5. 讨论 [D]
 {{ llm.discussion }}
 
-## 6. 局限性
+## 6. 局限性 [E]
 {{ llm.limitations }}
+
+{% if llm_auto_decisions is defined and llm_auto_decisions %}
+## 7. LLM 自动决策标注 [E]
+
+> **注意**：以下建模决策在用户超时未响应时由 LLM 自动做出，可能引入建模假设偏差，请审慎参考相关结论。
+
+{% for decision in llm_auto_decisions %}
+### 决策 {{ loop.index }}：{{ decision.context }}
+
+- **问题**：{{ decision.question }}
+- **LLM 选择**：选项 {{ decision.selected_option }} — {{ decision.selected_label }}
+- **LLM 理由**：{{ decision.llm_reasoning }}
+- **失真风险**：{{ decision.warning }}
+
+{% endfor %}
+{% endif %}
 
 ---
 

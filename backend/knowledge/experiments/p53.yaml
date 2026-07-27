@@ -1,0 +1,42 @@
+# Sprint 4 — Experiment Rule Engine
+# 100% Rule 驱动，Mechanism-aware，无 LLM
+pathway: P53_SIGNALING
+name: "p53 DNA damage response signaling pathway"
+
+# 实验链（Mechanism-aware，非 Keyword）
+# canonical_timeline 参考 knowledge/canonical/p53.yaml：
+#   ATM activation <30 min；p53 phosphorylation 30-60 min；MDM2 peak 1-2h after p53；p53 oscillation period 5-6 h；p21 induction 2-4 h
+experiments:
+  - name: "Western blot p53 (Ser15)"
+    technique: "Western blot"
+    target_node: "p53"
+    mechanism_step: "ATM → p53 phosphorylation"
+    time_course: [0, 30, 60, 90, 120, 240, 360, 480]  # 分钟（覆盖 8h 振荡窗口）
+    cell_line: "MCF7"
+    expected_result: "p53 在 30-60 min 出现磷酸化峰，随后呈 5-6 h 周期振荡"
+    justification: "p53 Ser15 磷酸化是 ATM 介导 DNA 损伤响应的直接标志，振荡行为是 p53 通路核心特征"
+
+  - name: "Western blot MDM2"
+    technique: "Western blot"
+    target_node: "MDM2"
+    mechanism_step: "p53 → MDM2 transcription (negative feedback)"
+    time_course: [0, 30, 60, 90, 120, 240, 360, 480]  # 分钟
+    cell_line: "U2OS"
+    expected_result: "MDM2 峰值在 p53 峰后 1-2 h 出现，验证负反馈时序"
+    justification: "MDM2 是 p53 的负反馈调节子，其延迟表达验证 p53→MDM2→p53 振荡回路"
+
+  - name: "Western blot p21"
+    technique: "Western blot"
+    target_node: "p21"
+    mechanism_step: "p53 → p21 transcription"
+    time_course: [0, 30, 60, 90, 120, 240, 360, 480]  # 分钟
+    cell_line: "MCF7"
+    expected_result: "p21 在 2-4 h 诱导表达，晚于 p53 磷酸化峰"
+    justification: "p21 是 p53 介导细胞周期阻滞的下游效应子，验证 p53 转录活性输出"
+
+# 禁止的实验（Mechanism-aware 禁止）
+forbidden:
+  - name: "p53 qPCR"
+    technique: "qPCR"
+    target_node: "p53"
+    reason: "p53 激活依赖 Ser15 磷酸化及蛋白稳定性变化，需用 Western blot 检测 p53 蛋白量与磷酸化；qPCR 仅测 TP53 mRNA，不能反映磷酸化、蛋白降解或振荡动力学"

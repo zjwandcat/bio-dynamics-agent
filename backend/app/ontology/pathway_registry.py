@@ -131,6 +131,16 @@ PATHWAY_REGISTRY: dict[str, PathwayEntry] = {
             "cell cycle", "细胞周期", "Cyclin", "CDK", "CDKN2A", "p16", "p21",
             "Cyclin D", "Cyclin E", "Cyclin B", "CDC", "Rb", "E2F",
             "G1/S", "G2/M", "checkpoint", "检查点",
+            # [BENCHMARK CLOSURE / Gap-APC-collision] 新增 APC/C 专有关键词
+            # 根因：WNT 通路关键词含 "APC"（Adenomatous Polyposis Coli），
+            # 与 CELL_CYCLE 的 "APC/C"（Anaphase Promoting Complex/Cyclosome）
+            # 词边界 \bAPC\b 匹配冲突，导致 CELL_CYCLE benchmark 输入
+            # "CyclinB-Cdk1-APC/C delayed negative feedback" 误命中 WNT，
+            # 生成 MULTI:CELL_CYCLE+WNT，触发 v3 Signaling_Cascade_Phos 模板，
+            # 缺失 cyclin_cdk_toggle.j2 的 Rb-E2F toggle + APC/C 振荡，
+            # 导致 pLRP6=16M 数值爆炸。
+            "APC/C", "APC_C", "Anaphase Promoting Complex", "Cyclosome",
+            "Cdc20", "Securin", "Separase",
         ),
         description="细胞周期通路：Cyclin-CDK 驱动 G1/S/G2/M 转换，Rb/E2F 调控",
         biomodels_id="BIOMD0000000005",  # TD-043 (IB-068)
@@ -165,9 +175,15 @@ PATHWAY_REGISTRY: dict[str, PathwayEntry] = {
         kegg_id="hsa04310",
         reactome_id="R-HSA-195721",
         keywords=(
-            "Wnt", "WNT", "β-catenin", "beta-catenin", "APC", "Axin", "GSK3", "GSK-3β",
+            "Wnt", "WNT", "β-catenin", "beta-catenin", "Axin", "GSK3", "GSK-3β",
             "destruction complex", "降解复合物", "LRP5", "LRP6", "Frizzled", "FZD",
             "TCF", "LEF", "canonical Wnt", "经典Wnt通路", "胚胎发育",
+            # [BENCHMARK CLOSURE / Gap-APC-collision] 移除裸 "APC" 关键词
+            # 根因：WNT 的 "APC"（Adenomatous Polyposis Coli）与 CELL_CYCLE 的
+            # "APC/C"（Anaphase Promoting Complex）词边界冲突，导致 CELL_CYCLE
+            # benchmark 误命中 WNT 生成 MULTI:CELL_CYCLE+WNT。
+            # 替换为更具体的 WNT-APC 变体（避免与 APC/C 冲突）：
+            "APC tumor", "APC gene", "APC protein", "APC-Axin", "Axin-APC",
         ),
         description="Wnt 通路：Wnt→Frizzled/LRP→破坏复合体解离→β-catenin 累积入核",
         biomodels_id="BIOMD0000000026",  # TD-043 (IB-068) Lee Wnt model

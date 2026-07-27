@@ -10,48 +10,43 @@ classical_reviews:        # 经典综述（最高优先级，score 5）
     year: 2001
     journal: "Nature Reviews Molecular Cell Biology"
     reason: "细胞周期数学模型经典综述，定义 Cyclin-CDK-Cdc20 振荡框架"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:11371178"  # Tyson/Novak 2001 - verified, J Theor Biol
     title: "Regulation of the eukaryotic cell cycle: molecular antagonism, hysteresis, and irreversible transitions"
     authors: "Tyson JJ, Novak B"
     year: 2001
     journal: "Journal of Theoretical Biology"
     reason: "细胞周期调控理论奠基综述，定义不可逆转变与滞后回滞机制"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
+  - pmid: "PMID:UNVERIFIED"  # PMID verification failed — needs manual check
     title: "The cell cycle: principles of control"
     authors: "Morgan DO"
     year: 2007
     journal: "New Science Press"
-    reason: "细胞周期调控原理权威教科书级综述，系统定义 CDK 检查点机制"
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Mammalian cell cycle: the cdks and their activators and inhibitors"
+    reason: "细胞周期调控原理权威教科书级综述，系统定义 CDK 检查点机制（教科书无 PMID）"
+  - pmid: "PMID:19238148"  # Malumbres/Barbacid 2009 - verified, title corrected
+    title: "Cell cycle, CDKs and cancer: a changing paradigm"
     authors: "Malumbres M, Barbacid M"
     year: 2009
     journal: "Nature Reviews Cancer"
-    reason: "哺乳动物细胞周期 CDK 激活/抑制综述经典，定义 CDK 家族功能"
+    reason: "细胞周期 CDK 与癌症范式转变综述，定义 CDK 家族功能与治疗靶点"
 
 mechanism_papers:         # 机制论文（score 4）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Modeling the restriction point of the cell cycle"
-    authors: "Novak B, Tyson JJ"
+  - pmid: "PMID:15363676"  # Novak/Tyson 2004 - verified, J Theor Biol (not Mol Biol Cell), title corrected
+    title: "A model for restriction point control of the mammalian cell cycle"
+    authors: "Novák B, Tyson JJ"
     year: 2004
-    journal: "Molecular Biology of the Cell"
-    reason: "细胞周期限制点建模机制，量化 R 点不可逆转变的分子开关"
+    journal: "Journal of Theoretical Biology"
+    reason: "哺乳动物细胞周期限制点建模机制，量化 R 点不可逆转变的分子开关"
 
 biomodels_source_papers:  # BioModels 来源论文（score 3）
-  - pmid: "PMID:11381155"  # 已确认（与 classical_reviews 重叠，分类时取更高优先级 REVIEW）
+  - pmid: "PMID:15169868"  # Chen 2004 - verified（BioModels ID BIOMD0000000056 实际对应 Chen 2004，非 Novak 2001）
     biomodels_id: "BIOMD0000000056"
-    title: "Mathematical model of the cell cycle"
-    authors: "Novak B, Tyson JJ"
-    year: 2001
-    journal: "Nature Reviews Molecular Cell Biology"
+    title: "Integrative analysis of cell cycle control in budding yeast"
+    authors: "Chen KC, Calzone L, Csikasz-Nagy A, Cross FR, Novak B, Tyson JJ"
+    year: 2004
+    journal: "Molecular Biology of the Cell"
 
 recent_applications:      # 近期应用论文（score 2，仅补充）
-  - pmid: "TODO: verify PMID"  # TODO: verify PMID
-    title: "Cell cycle dynamics in cancer therapy and drug resistance"
-    authors: "Recent cell cycle application study"
-    year: 2021
-    journal: "Nature Reviews Cancer"
-    reason: "细胞周期治疗耐药动力学近期应用（PubMed 补充）"
+  []                      # 占位条目已移除：原 "Recent cell cycle application study" 为 PLACEHOLDER
 
 case_reports: []          # 案例报告（score 1，一般不用）
 

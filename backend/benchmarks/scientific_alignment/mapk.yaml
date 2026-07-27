@@ -1,38 +1,140 @@
-# BioDynamics Scientific Alignment Gold Standard — MAPK cascade 通路
+# BioDynamics Scientific Alignment Benchmark — MAPK cascade 通路
+# Task 13: 对齐 Task 12 Canonical Answer，补全 acceptance_criteria / expected_curve_metrics / forbidden_patterns
 # 唯一权威"标准答案"，禁止 Codex/Agent 自行定义。
-# 参考：Huang & Ferrell 1996 (PMID:8663050) / Levchenko 2000 / Kholodenko 2000
-# TODO: verify PMID — Levchenko 2000、Kholodenko 2000、Witzel 2012
-pathway: MAPK_ERK
-name: "MAPK/ERK Cascade Signaling"
+# 参考 Canonical: knowledge/canonical/mapk.yaml
+# Benchmark 02: DUSP Knockout — ERK 动力学变化
+benchmark_id: mapk_dusp_knockout
+pathway: mapk
+category: positive
+question: >
+  预测 DUSP1 敲除后 ERK 动力学变化（持续 EGF 刺激下）。
+  与野生型相比，ERK 峰值、持续时间、adaptation、AUC 如何改变？请仿真并解释机制。
+
+expected_answer: >
+  DUSP1 敲除后 ERK 动力学变化：
+  (1) ERK Peak 更高（失去 phosphatase 抑制）；
+  (2) ERK 持续更久（下降相延长或消失）；
+  (3) Adaptation 减弱（adaptation_ratio 升高）；
+  (4) AUC 增大。
+  机制：失去 ERK phosphatase（DUSP1），ERK 去磷酸化速率下降，
+  导致 ERK 在持续刺激下不能有效衰减。
+  ERK 升高后不下降（或下降变慢），与野生型的 transient peak then decline 形成对比。
+
+# 从 knowledge/canonical/mapk.yaml.canonical_mechanism.required_nodes 复制
+canonical_mechanism_nodes:
+  - RAS
+  - RAF
+  - MEK
+  - ERK
+  - DUSP
+
+# 从 knowledge/canonical/mapk.yaml.canonical_reviews 复制
+canonical_reviews:
+  - "PMID:8663050"          # Huang & Ferrell 1996 PNAS（MAPK 级联超敏感性）
+  - "PMID:16246870"         # Orton 2005 Computational Biology and Chemistry（MAPK 级联数学建模）
+
+# 从 knowledge/canonical/mapk.yaml.canonical_models 复制（Canonical 中为空，已验证 BIOMD0000000012 非 MAPK 模型）
+canonical_models: []
+
+# 期望动力学（DUSP KO 场景，基于 dusp_knockout_assertions）
 expected_dynamics:
-  ERK: "transient peak, ultrasensitive"
-  signal_amplification: "10-100x from Ras to ERK"
-  ultrasensitivity: "Hill-like switch behavior"
-  ERK_nuclear_translocation: "rapid after peak"
-required_mechanisms:
-  - Ras_activation
-  - Raf_MEK_ERK_cascade
-  - ERK_nuclear_translocation
-  - negative_feedback
-required_biomodels:
-  - BIOMD0000000012   # Levchenko 2000 scaffold model
-required_reviews:
-  - PMID:8663050      # Huang & Ferrell 1996 PNAS (ultrasensitivity) (confirmed)
-  - PMID:xxxxxxxx     # TODO: verify Levchenko 2000 PMID
-  - PMID:xxxxxxxx     # TODO: verify Kholodenko 2000 PMID
-  - PMID:xxxxxxxx     # TODO: verify Witzel 2012 PMID
-required_experiments:
-  - ppERK Western blot
-  - MEK inhibitor (U0126) validation
-  - dose response (EGF gradient)
-  - time course 0-60 min
+  - molecule: pERK_wildtype
+    peak_time: [10, 20]
+    behavior: "transient peak then decline (adaptive)"
+    must_decline: true
+  - molecule: pERK_dusp_knockout
+    peak_time: [10, 20]
+    behavior: "sustained high (loss of adaptation)"
+    must_decline: false
+  - molecule: DUSP_mRNA
+    peak_time: [30, 60]
+    behavior: "absent (knockout)"
+  - molecule: DUSP_protein
+    peak_time: [60, 120]
+    behavior: "absent (knockout)"
+
+# 8 项 Curve Metrics 期望值（DUSP KO 场景）
+expected_curve_metrics:
+  - molecule: pERK_wildtype
+    peak_time_min: [10, 20]
+    peak_amplitude: [0.8, 1.0]
+    rise_time_min: [4, 10]
+    half_decay_min: [20, 60]
+    adaptation_ratio: [0.1, 0.5]
+    steady_state: [0.1, 0.5]
+    oscillation: false
+    auc: [25, 80]
+  - molecule: pERK_dusp_knockout
+    peak_time_min: [10, 20]
+    peak_amplitude: [0.9, 1.0]            # 比 WT 更高
+    rise_time_min: [4, 10]
+    half_decay_min: null                  # 不下降或下降极慢
+    adaptation_ratio: [0.7, 1.0]          # 接近 1.0，证明 adaptation 减弱
+    steady_state: [0.7, 1.0]              # 持续高位
+    oscillation: false
+    auc: [80, 200]                        # AUC 显著增大
+
+# 从 knowledge/canonical/mapk.yaml.expected_experiments 复制
+expected_experiments:
+  - name: "pERK Western blot (wild-type vs DUSP1 KO)"
+    technique: "Western blot"
+    timepoints: [0, 5, 10, 15, 20, 30, 45, 60, 120]
+    target: "pERK"
+  - name: "DUSP1 qPCR (verify KO)"
+    technique: "qPCR"
+    timepoints: [15, 30, 60, 120]
+    target: "DUSP1"
+  - name: "DUSP protein Western blot (verify KO)"
+    technique: "Western blot"
+    timepoints: [0, 30, 60, 120]
+    target: "DUSP"
+
+# 从 knowledge/canonical/mapk.yaml.forbidden_experiments 复制
+forbidden_experiments:
+  - "ERK qPCR"
+  - "EGF ELISA"
+
+# 禁止出现的模式（regex + reason）
 forbidden_patterns:
-  - "No PubMed evidence"
-  - "No BioModels comparison"
-  - "monotonic ERK increase"
-key_time_scales:
-  ERK_peak: "5-20 min"
-  cascade_amplification: "seconds per tier"
-key_feedbacks:
-  - "negative feedback from ERK to SOS/Raf"
-  - "DUSP-mediated dephosphorylation"
+  - pattern: "DUSP.*KO.*ERK.*still.*adaptive"
+    reason: "DUSP1 KO 后 ERK 应失去 adaptation（持续高位），不能仍表现为 adaptive decline"
+  - pattern: "ERK.*decline.*normally.*after.*DUSP.*KO"
+    reason: "DUSP1 KO 后 ERK 下降应减弱或消失"
+  - pattern: "ERK qPCR"
+    reason: "ERK qPCR 不能反映磷酸化动力学"
+  - pattern: "no.*phosphatase.*mechanism"
+    reason: "必须解释 DUSP1 作为 ERK phosphatase 的机制"
+  - pattern: "no.*PubMed"
+    reason: "必须引用 PubMed 权威文献"
+  - pattern: "no.*BioModels"
+    reason: "必须引用 BioModels 模型比较"
+
+# 验收标准（对齐 spec acceptance_criteria）
+acceptance_criteria:
+  mechanism_nodes_required: true
+  mechanism_node_min_coverage: 0.8
+  pubmed_min_count: 2                    # MAPK canonical reviews 较少
+  biomodels_min_count: 0                 # Canonical 中 MAPK models 为空（已验证 BIOMD 非 MAPK）
+  experiment_min_count: 2
+  hallucination_tolerance: 0
+  curve_metric_pass_min: 6
+  forbidden_experiment_blocked: true
+  forbidden_pattern_absent: true
+  must_compare_wt_vs_ko: true             # 必须对比 WT vs DUSP1 KO
+  erk_peak_higher_in_ko: true             # KO 中 ERK 峰值必须更高
+  erk_auc_increased_in_ko: true           # KO 中 ERK AUC 必须增大
+  adaptation_weakened_in_ko: true         # KO 中 adaptation 必须减弱
+
+# 从 knowledge/canonical/mapk.yaml.dusp_knockout_assertions 复制
+dusp_knockout_assertions:
+  erk_peak: "higher than wild-type"
+  erk_duration: "longer"
+  adaptation: "weakened"
+  auc: "increased"
+  mechanism: "loss of ERK phosphatase (DUSP1)"
+  curve_requirement: "ERK 持续高位（不下降）"
+
+# 参考 Canonical
+canonical_reference: "knowledge/canonical/mapk.yaml"
+known_negative_feedback:
+  - DUSP

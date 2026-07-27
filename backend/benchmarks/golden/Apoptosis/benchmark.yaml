@@ -1,0 +1,16 @@
+# Golden Benchmark — Apoptosis Pathway
+pathway: Apoptosis
+question: "Death receptor (Fas) activation triggers the caspase cascade. MOMP (mitochondrial outer membrane permeabilization) commits the cell to irreversible death, and caspase activation exhibits bistable switch behavior. Explain the caspase cascade bistability and MOMP irreversibility mechanism and simulate expected dynamics."
+ground_truth: "Fas activates Caspase-8, which cleaves tBID; tBID activates BAX/BAK to induce MOMP, releasing cytochrome c at 30-60 min [PMID:18073771]. MOMP activates Caspase-9 (30-60 min) and subsequently Caspase-3 at 1-2 h, with PARP cleavage at 1-2 h marking execution [PMID:14744432]. Caspase activation exhibits bistable switch behavior: once MOMP occurs, the caspase cascade is irreversibly committed [PMID:18073771]. tBID provides amplification between extrinsic and intrinsic pathways [PMID:14744432]. XIAP inhibits Caspase-3 as a negative regulator, but MOMP irreversibility overrides this control [PMID:15286356]. The mitochondrial pathway is the point of no return in cell death [PMID:15286356]."
+canonical_papers: ["PMID:18073771", "PMID:14744432", "PMID:15286356"]  # Taylor 2008; Danial & Korsmeyer 2004; Green & Kroemer 2004
+canonical_biomodels: ["BIOMD0000000102"]  # Legewie2006 apoptosis model
+expected_mechanism: [Fas, Caspase8, Caspase3, BAX, BAK, tBID, XIAP]
+expected_time_scale:
+  cytochrome_c_release: "30-60 min after stimulus"
+  caspase9_activation: "30-60 min"
+  caspase3_activation: "1-2 h"
+  parp_cleavage: "1-2 h"
+expected_experiment: []  # 实验方案，待 Sprint 4 填充
+expected_discussion: {}  # Discussion 预期，待 Sprint 2 填充
+expected_validation: {}  # Validation 预期，待 Sprint 3 填充
+expected_confidence: 0.0  # 预期置信度，待 Sprint 3 填充
