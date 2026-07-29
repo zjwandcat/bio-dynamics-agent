@@ -1246,6 +1246,11 @@ _KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
     "pTbRI": {
         "k_cat": 0.5,                 # min^-1 (TGF_complex 催化 TβRI 磷酸化, P1-NEXT-13 V3: 1.0→0.5 推迟达峰)
         "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
+        # RCA-12: bounded receptor dephosphorylation adjustment. The
+        # transcription_factor template reads k_dephos for phosphorylation
+        # products; the previous default (0.05/min) left pTbRI adaptation at
+        # 0.6378. This 2x value is a conservative calibration, not a new edge.
+        "k_dephos": 0.1,               # min^-1; receptor down-regulation bound
         # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突 (SMAD7 负反馈抑制)
         "k_off": 1e-3,                # min^-1 (SMAD7 抑制 pTbRI 解离, Clarke 2006)
     },

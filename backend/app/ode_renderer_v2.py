@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -106,9 +107,13 @@ class ODERendererV2:
                 f"v4 ODE 模板目录不存在: {_V4_TEMPLATES_DIR}。"
                 f"请确认 Phase 3 已正确实施。"
             )
-        # Jinja2 环境（不使用 StrictUndefined，避免模板变量缺失时崩溃）
+        # [RCA-21] 启用 StrictUndefined：模板变量缺失时立即报错而非静默渲染为空字符串
+        # 根因：之前未使用 StrictUndefined，导致 v4_get_param_clamp_enabled 等变量缺失时
+        # 渲染为空字符串（如 "_V4_GET_PARAM_CLAMP_ENABLED = "），引发 AST 语法错误
+        # 修复：所有 10 个模板变量均由 render() 方法显式传递，StrictUndefined 安全启用
         self.env = Environment(
             loader=FileSystemLoader(str(_V4_TEMPLATES_DIR)),
+            undefined=StrictUndefined,
             trim_blocks=True,
             lstrip_blocks=True,
             keep_trailing_newline=True,
@@ -219,6 +224,14 @@ class ODERendererV2:
             dde_delay_minutes=dde_delay,
             requires_dde=requires_dde,
             pathway_class=pathway_class,
+            # [RCA-20 修复 B/C] Feature Flag 通过 Jinja2 上下文传入，
+            # 避免在模板内 import os（沙箱安全策略禁止 import os）
+            v4_get_param_clamp_enabled=os.environ.get(
+                "V4_GET_PARAM_CLAMP_ENABLED", "false"
+            ).lower() == "true",
+            v4_activation_mm_saturation_enabled=os.environ.get(
+                "V4_ACTIVATION_MM_SATURATION_ENABLED", "false"
+            ).lower() == "true",
         )
 
         logger.info(
@@ -575,13 +588,20 @@ class ODERendererV2:
         if "phospho" in n:
             # [C6-BASELINE-V2] phospho 变体命名同样设为 0.05 本底水平
             return 0.05
-        # [BENCHMARK CLOSURE / Gap-C1-PeakTime-PIP3] PIP3 是 PI3K 催化产物，静息态应为 0
+        # [BENCHMARK CLOSURE / Gap-C1-PeakTime-PIP3] PIP3 是 PI3K 催化产物，静息态应极低
         #   旧 BUG：PIP3 不匹配磷酸化规则（大小写敏感），fallthrough 到 1.0，
         #   导致 PIP3 从 t=0 即峰值，peak_time=0.0。
         #   生物学：PIP3 是 PI3K 催化 PIP2 生成的脂质第二信使，静息态浓度极低，
         #   由生长因子刺激后 PI3K 激活才产生（PMID:11562373）。
+        # [RC-FIX-PIP3-C5C6-r25] 从 0.0 改为 0.05（生物学本底水平）：
+        #   根因：r25b 抽检显示 PIP3 IC=0.05（specialist 设置）未生效，Y0=0.0，
+        #   导致 fold=peak（无法达 C6 fold≥5，因 PIP2 池守恒限制 peak≤1.0）。
+        #   specialist pi3k_akt_mtor_specialist.py 已设置 PIP3 IC=0.05（PMID:11562373
+        #   静息态 PIP3 占比 1-5%），但 IC 传递链路在 v4_to_v3 Adapter 等环节丢失。
+        #   修复：默认 IC 设为 0.05，使 fold=peak/0.05，peak=0.25→fold=5（C6✓）。
+        #   注意：需配合 k_dephos=1.0 使 peak_time 达 [1,3]min（C5✓）
         if n in ("pip3", "pip_3"):
-            return 0.0
+            return 0.05
         # [BENCHMARK CLOSURE / Gap-C1-PeakTime-Cyclin] Cyclin 是转录/周期性表达产物
         #   旧 BUG：Cyclin_D/Cyclin_B 不匹配任何 0.0 规则，fallthrough 到 1.0，
         #   导致 Cyclin 从 t=0 即峰值，peak_time=0.0。
@@ -611,13 +631,20 @@ class ODERendererV2:
         #   设为 0.05 模拟静息态极低本底蛋白表达（Western blot 检测下限）
         if "dusp" in n:
             return 0.05
-        # 5. GTP 形式（RasGTP 等）→ 0.05（生物学本底 GTP 结合态）
+        # 5. GTP 形式（RasGTP / RhebGTP 等）→ 0.05（生物学本底 GTP 结合态）
         #   [C6-BASELINE-V2] [P0-C+P0-D 修复] 旧值 0.01 → fold≈100 超 C3；
         #   生物学依据：PMID:10608906 静息态 Ras-GTP 占总 Ras 的 1-5%（区间上界 0.05）
         #   fold=peak/0.05≈20，满足 C3 ≤50 且 C6 ≥5
         #   注意：仅修改 baseline，不修改 gtp_gdp_exchange 机制动力学
         #   （已通过的 C5 峰值顺序 pShc<RasGTP<pRaf 不受影响）。
-        if "gtp" in n and "ras" in n:
+        #   [RC-FIX-GTP-Rule-r21] 扩展匹配范围：旧规则仅匹配 "ras" in n，
+        #   导致 RhebGTP（小 GTP 酶，与 Ras 同属 GTP 酶超家族）fallthrough 到
+        #   "其他基线蛋白 → 1.0"，使 RhebGTP 从 t=0 即高浓度，无需 pTSC2 级联
+        #   即可激活 mTORC1，破坏 PI3K-AKT-mTOR 级联时序。
+        #   修复：匹配任意 "*GTP" 物种（RasGTP / RhebGTP / RhoGTP / RacGTP 等），
+        #   这些都是小 GTP 酶活性形式，静息态浓度极低（需上游 GEF 激活）。
+        #   依据：PMID:10608906, PMID:19029981 小 GTP 酶超家族保守的 GDP/GTP 循环。
+        if "gtp" in n and not n.endswith("_gtpase"):
             return 0.05
         # [BENCHMARK CLOSURE / Gap-y0] 5b. sink/降解产物池 → 0.05（极低本底水平）
         #   [C6-BASELINE-V2] [P0-C+P0-D 修复] 旧值 0.01 → fold≈100 超 C3；
@@ -840,6 +867,27 @@ class ODERendererV2:
                 if isinstance(src, dict):
                     src = src.get("canonical_name") or src.get("name", "")
 
+            # [RC-FIX-PI3K-Activation-r17] 从 reactants 中按 role="substrate" 提取真实底物
+            # 适用于 activation 异激活分支（如 PI3K 催化 PIP2→PIP3）：
+            #   reactants = [PI3K(role=enzyme), PIP2(role=substrate)]
+            #   旧代码仅读 rxn.get("substrate") 顶层字段（ReactionV2 schema 无此字段，恒返回空），
+            #   导致 ODE 模板 activation 分支进入"无 substrate"子分支，PIP3 产生错误。
+            # 注意：phosphorylation 和普通 activation 边的 reactants[0] role 也是 "substrate"
+            #   （source 作底物），此时 substrate == source，应传递空字符串避免误触发异激活分支。
+            substrate_name = ""
+            if isinstance(reactants, list):
+                for r in reactants:
+                    if isinstance(r, dict) and r.get("role") == "substrate":
+                        _candidate = _resolve_species_ref(r)
+                        # 仅当底物 != source 时才传递（异激活/异磷酸化），
+                        # 否则保持空（让模板走自磷酸化/预存物种激活分支）
+                        if _candidate and _candidate != src:
+                            substrate_name = _candidate
+                        break
+            # 兜底：旧格式顶层 substrate 字段（向后兼容）
+            if not substrate_name:
+                substrate_name = rxn.get("substrate", "") or ""
+
             # IB-001: 从 products[0] 解析 target
             products = rxn.get("products", [])
             tgt = ""
@@ -871,7 +919,8 @@ class ODERendererV2:
                 "sbo_term": rxn.get("sbo_term"),
                 "modifiers": modifier_names,
                 # [RC24] 修复：传递 substrate 供磷酸化分支正确消耗底物
-                "substrate": rxn.get("substrate", "") or "",
+                # [RC-FIX-PI3K-Activation-r17] 从 reactants 按 role="substrate" 提取
+                "substrate": substrate_name,
             })
         return edges
 

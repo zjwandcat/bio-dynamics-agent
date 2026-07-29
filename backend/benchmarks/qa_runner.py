@@ -134,8 +134,15 @@ SPECIES_ALIASES: dict[str, tuple[str, ...]] = {
     "erkpp": ("pperk", "perk"),
     "mapkpp": ("pperk", "perk"),
     "mkkpp": ("ppmek", "pmek"),
-    "mkkkp": ("praf",),
-    "paktser473": ("pakt", "ppakt"),
+    # [RCA-38 P0 修复 RC-1f] MKKK_P 优先匹配 pMKKK（通用 MAPK 模型物种名），
+    #   回退到 pRaf（EGFR 通路特定名）。
+    #   根因：旧值 ("praf",) 强制 MKKK_P→pRaf，即使仿真中存在 pMKKK 也不匹配，
+    #   导致 2.M1 等 case 的 C5/C6 检查错误物种（pRaf peak=0 而非 pMKKK peak=120min）
+    "mkkkp": ("pmkkk", "praf"),
+    # Ser473 denotes the fully active T308+S473 form, so ppAKT must win over
+    # the singly phosphorylated pAKT fallback.
+    "paktser473": ("ppakt", "pakt"),
+    "pakts473": ("ppakt", "pakt"),
     "pakt": ("pakt", "ppakt"),
     "ppakt": ("ppakt",),
     "ps6k1": ("ps6k",),
@@ -152,6 +159,7 @@ SPECIES_ALIASES: dict[str, tuple[str, ...]] = {
     "pjak": ("pjak",),
     "betacatenincytosolic": ("bcatenin",),
     "betacateninnuclear": ("bcateninnuclear",),
+    "betacatenin": ("bcatenin",),
     "axin2mrna": ("axin2mrna", "axin"),
     "ptbri": ("tgfbractive",),
     "psmad2": ("psmad2",),
@@ -163,6 +171,21 @@ SPECIES_ALIASES: dict[str, tuple[str, ...]] = {
     "p53total": ("p53",),
     "prbs780": ("prbphosphorylated", "prb"),
     "pirs1s636": ("pirs1",),
+}
+
+MECHANISM_ALIASES: dict[str, str] = {
+    "blocks": "inhibits",
+    "knockout": "loss",
+    "rewiring": "reroute",
+    "induction": "upregulation",
+}
+
+CJK_MECHANISM_KEYWORDS: dict[str, str] = {
+    "磷酸化": "phosphorylation",
+    "级联": "cascade",
+    "二聚化": "dimerization",
+    "负反馈": "negative_feedback",
+    "核转位": "nuclear_translocation",
 }
 
 
@@ -305,7 +328,10 @@ def _mechanism_terms(mechanisms: list[str]) -> set[str]:
     # 这样 agent 在文本中分散提到这些词即可匹配，更符合"机制覆盖"语义
     stop = {
         "and", "the", "with", "via", "by", "to", "of", "in", "from", "fast",
-        "slow", "medium",
+        "slow", "medium", "when", "blocks", "block", "media", "three", "tier",
+        "induced", "mediated", "activity", "levels", "response", "exchange",
+        "recruitment", "adaptor", "kinetic", "kinetics", "distributive",
+        "processive", "ultrasensitive", "coefficient", "hill",
         # [P2-6] 移除机制核心词：feedback/signaling/activation/inhibition/cascade/
         # protein/complex 是 canonical mechanism 的关键描述词，过滤会导致
         # 如 "Destruction complex inhibition" 只剩 destruction，丢失机制语义
@@ -334,6 +360,13 @@ def _mechanism_terms(mechanisms: list[str]) -> set[str]:
 
     terms: set[str] = set()
     for mechanism in mechanisms:
+        mechanism = re.sub(r"\([^)]*\)", "", mechanism)
+        for source, target in CJK_MECHANISM_KEYWORDS.items():
+            mechanism = mechanism.replace(source, f" {target} ")
+        for source, target in MECHANISM_ALIASES.items():
+            mechanism = re.sub(
+                rf"\b{re.escape(source)}\b", target, mechanism, flags=re.IGNORECASE
+            )
         for token in re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", mechanism):
             norm = _norm_mech(token)
             if norm and norm not in stop and not norm.isdigit():

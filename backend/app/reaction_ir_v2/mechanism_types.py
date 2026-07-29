@@ -145,6 +145,10 @@ _V3_INTERACTION_TO_V4_MECHANISM: dict[str, MechanismType] = {
     # 切割/交换类
     "cleavage": MechanismType.CLEAVAGE,
     "gtp_gdp_exchange": MechanismType.GTP_GDP_EXCHANGE,
+    # [RCA-22-A] "exchange" 作为 "gtp_gdp_exchange" 的别名（防御性兼容）
+    # 根因：部分 specialist 使用 "exchange" 而非 "gtp_gdp_exchange"，
+    #       导致 MechanismType("exchange") 触发 ValueError → fallback 到 ACTIVATION
+    "exchange": MechanismType.GTP_GDP_EXCHANGE,
     # 基因表达类
     "transcription": MechanismType.TRANSCRIPTION,
     "translation": MechanismType.TRANSLATION,

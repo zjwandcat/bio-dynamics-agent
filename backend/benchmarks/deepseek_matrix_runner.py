@@ -55,10 +55,13 @@ def _atomic_json(path: Path, value: Any) -> None:
 
 def _profile_environment(profile: str, chroma_dir: Path | None = None) -> dict[str, str]:
     values = dotenv_values(ENV_PATH)
-    key = str(values.get("BACKUP_API_KEY") or "")
-    base_url = str(values.get("BACKUP_BASE_URL") or "https://api.deepseek.com")
+    # [r22] 优先使用 BACKUP2_*（DeepSeek 官方 API https://api.deepseek.com）凭据，
+    #   避免误用 OpenRouter 端点调用 deepseek-v4-flash（OpenRouter 不支持该模型）。
+    #   回退顺序：BACKUP2_API_KEY → BACKUP_API_KEY
+    key = str(values.get("BACKUP2_API_KEY") or values.get("BACKUP_API_KEY") or "")
+    base_url = str(values.get("BACKUP2_BASE_URL") or values.get("BACKUP_BASE_URL") or "https://api.deepseek.com")
     if not key:
-        raise RuntimeError("BACKUP_API_KEY is not configured in backend/.env")
+        raise RuntimeError("BACKUP2_API_KEY/BACKUP_API_KEY is not configured in backend/.env")
     env = dict(os.environ)
     env.update(
         {

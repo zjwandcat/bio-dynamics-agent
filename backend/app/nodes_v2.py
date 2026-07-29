@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from collections import OrderedDict
@@ -946,7 +947,36 @@ async def n5_parameter_rag(state: BioDynamicsState) -> dict:
                 "model_id": str(state.get("sbml_model_id", "")),
                 "sbml_text": str(state.get("sbml_model_text", "")),
             }]
-        grounded, decisions, grounding = ground_sbml_parameters_to_edges(edges, sbml_models)
+        grounding_models = sbml_models
+        if settings.L5_GROUNDED_RAG_ENABLED and _prefer_biomd_id:
+            preferred_models = [
+                model for model in sbml_models
+                if str(
+                    model.get("model_id")
+                    or model.get("biomodels_id")
+                    or model.get("id")
+                    or ""
+                ).upper() == _prefer_biomd_id
+            ]
+            if preferred_models:
+                grounding_models = preferred_models
+                logger.info(
+                    "RCA-17 L5 grounded RAG: restricting SBML grounding to %s",
+                    _prefer_biomd_id,
+                )
+        grounded, decisions, grounding = ground_sbml_parameters_to_edges(
+            edges, grounding_models
+        )
+        if (
+            len(grounded) != len(edges)
+            and grounding_models is not sbml_models
+        ):
+            logger.warning(
+                "RCA-17 preferred SBML did not cover all edges; falling back to mixed SBML pool"
+            )
+            grounded, decisions, grounding = ground_sbml_parameters_to_edges(
+                edges, sbml_models
+            )
         if edges and len(grounded) == len(edges):
             latency_ms = (time.time() - start_ts) * 1000
             logger.info(
@@ -1273,6 +1303,29 @@ async def n5_parameter_rag(state: BioDynamicsState) -> dict:
         ]
     )
 
+    # [RCA-20 修复 F] benchmark 模式 RAG 兜底：SBML 部分覆盖时预填充已 ground 参数
+    # 根因：benchmark_run 时 SBML fast path 仅当 len(grounded)==len(edges) 才返回，
+    #   部分覆盖时 fall through 到 remote RAG，但 parameters={} 丢弃已 ground 的 SBML 参数
+    # 修复：预填充 parameters + 跳过已 ground 的 edge
+    # Feature Flag: V4_BENCHMARK_RAG_FALLBACK_ENABLED（默认 OFF，回退安全）
+    import os as _os_rc20f
+    _V4_RAG_FALLBACK_ENABLED = (
+        _os_rc20f.environ.get("V4_BENCHMARK_RAG_FALLBACK_ENABLED", "false").lower() == "true"
+    )
+    if _V4_RAG_FALLBACK_ENABLED:
+        try:
+            _sbml_grounded = grounded if isinstance(grounded, dict) else {}
+        except NameError:
+            _sbml_grounded = {}
+        if _sbml_grounded:
+            for _gk, _gv in _sbml_grounded.items():
+                if isinstance(_gv, dict) and _gk not in parameters:
+                    parameters[_gk] = _gv
+            logger.info(
+                "[RC20-F] SBML 预填充 %d/%d edges，剩余 %d 走 remote RAG",
+                len(_sbml_grounded), len(edges), len(edges) - len(_sbml_grounded),
+            )
+
     for edge_idx, edge in enumerate(edges):
         # 深度审核报告 §4.2 在线回退熔断：workflow 总时长预算控制（默认 600s = 10 分钟）
         # 超出预算时强制跳出循环，剩余边走估算降级，避免阻塞 Workflow 超过 10 分钟
@@ -1312,6 +1365,11 @@ async def n5_parameter_rag(state: BioDynamicsState) -> dict:
         mechanism = edge.get("mechanism", "activation")
         reaction_equation = edge.get("reaction_equation", "")
         edge_key = f"{source_name}->{target_name}"
+
+        # [RCA-20 修复 F] 跳过已由 SBML grounding 覆盖的 edge
+        if _V4_RAG_FALLBACK_ENABLED and edge_key in parameters:
+            logger.info("[RC20-F] 跳过已 ground edge: %s", edge_key)
+            continue
 
         # Step 2.2: 根据 mechanism 构建精确的 RAG 查询
         # binding → k_on/k_off (mass-action association/dissociation)
@@ -2396,11 +2454,17 @@ def n6_ode_generator(state: BioDynamicsState) -> dict:
         except Exception:
             pass
         logger.info("N6 [R5-DBG] Entered elif edges fallback branch: template=%s", template_name)
-        y0 = [_initial_conditions.get(sp, 10.0) for sp in species_names]
+        # [RCA-38 P0 修复 RC-1e] v3 fallback 默认值 10.0 → 1.0
+        # [S1.2 磷酸化形式折中] 磷酸化形式（pX 开头）初始浓度 1.0 → 0.5
+        #   根因：0.05/0.1 导致 3.P1 pAKT peak_time 回归（信号启动过慢）
+        #         1.0 导致 fold_change≈1（信号无放大）
+        #   折中：0.5 既能适度改善 fold，又不过度延迟 peak_time
+        y0 = [_initial_conditions.get(sp, (0.5 if sp.lower().startswith("p") and len(sp) > 1 else 1.0)) for sp in species_names]
     else:
         # 无边回退：用节点名或默认值
         species_names = [_raw_name_to_ode(n.get("name", n.get("id", "Species"))) for n in nodes] or ["Species"]
-        y0 = [_initial_conditions.get(sp, 10.0) for sp in species_names]
+        # [S1.2 磷酸化形式折中] 同上，磷酸化形式 1.0 → 0.5
+        y0 = [_initial_conditions.get(sp, (0.5 if sp.lower().startswith("p") and len(sp) > 1 else 1.0)) for sp in species_names]
 
     # 为 Simple 模板确定 inhibitor / activator / target（TODO: P1-2 — 转换为 ASCII 标识符）
     inh_edge = next((e for e in edges if e.get("interaction") == "inhibition"), None)
@@ -2660,6 +2724,13 @@ def n6_ode_generator(state: BioDynamicsState) -> dict:
         "ec50": _pkpd_vars.get("ec50", 10.0),
         "emax": _pkpd_vars.get("emax", 1.0),
         "gamma": _pkpd_vars.get("gamma", 1.0),
+        # [RCA-20 修复 B/C] Feature Flag 通过 Jinja2 上下文传入（避免模板内 import os）
+        "v4_get_param_clamp_enabled": os.environ.get(
+            "V4_GET_PARAM_CLAMP_ENABLED", "false"
+        ).lower() == "true",
+        "v4_activation_mm_saturation_enabled": os.environ.get(
+            "V4_ACTIVATION_MM_SATURATION_ENABLED", "false"
+        ).lower() == "true",
     }
     # [DEBUG R5] Marker right before render_template to log the FULL y0 and species_names (APPEND)
     import os as _rt_os, tempfile as _rt_tf, time as _rt_time

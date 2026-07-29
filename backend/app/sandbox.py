@@ -142,6 +142,8 @@ def _run_subprocess_with_escalation(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         preexec_fn=preexec_fn if sys.platform != "win32" else None,
     )
     try:
@@ -522,6 +524,11 @@ def execute_simulation_code(code: str) -> dict:
 
         env = os.environ.copy()
         env["MPLBACKEND"] = "Agg"
+        # Generated models contain biological Unicode identifiers (NF-κB,
+        # IκBα, ∅).  Force UTF-8 mode so redirected stdout and numpy.savetxt
+        # do not fall back to the Windows GBK locale and leave a zero-byte CSV.
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
         # [BM2-BM8 修复 / Mode B] v4_ode_system 可能 import app.solvers.dde_solver 等
         # 模块，sandbox 临时目录不包含 app 包。将 backend 根目录加入 PYTHONPATH，
         # 使 sandbox 内可 import app.* 模块（仅 v4 ODE 模板需要，v3 模板不受影响）。
@@ -537,6 +544,8 @@ def execute_simulation_code(code: str) -> dict:
                 cwd=temp_dir,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=60,
                 env=env,
             )
@@ -896,6 +905,9 @@ def execute_simulation_code_v2(
 
         env = os.environ.copy()
         env["MPLBACKEND"] = "Agg"
+        # Keep subprocess streams and regular text files UTF-8 on Windows.
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
         # [BM2-BM8 修复 / Mode B] v4_ode_system 可能 import app.solvers.dde_solver 等
         # 模块，sandbox 临时目录不包含 app 包。将 backend 根目录加入 PYTHONPATH，
         # 使 sandbox 内可 import app.* 模块（仅 v4 ODE 模板需要，v3 模板不受影响）。

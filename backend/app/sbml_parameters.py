@@ -10,14 +10,128 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 
 from defusedxml.ElementTree import fromstring
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# [RCA-20 修复 A] SBML 参数生物合理性校验层
+# =============================================================================
+# 根因（详见 P1_OVERACTIVATION_RCA.md 根因 1）：
+#   SBML 原生参数（如 JAK2ActEpo=633,250）被无校验直接注入 ODE，
+#   导致 fold_change 爆炸到 57~605x（期望 5~15x）。
+#
+# 修复：在 ground_sbml_parameters_to_edges 注入参数前，按 mechanism 类型
+# 对 value 做生物学合理性 clamp。超界值截断到范围内并记录 warning，
+# 标记 is_fallback=True 以提示下游降级处理。
+#
+# Feature Flag: V4_SBML_PARAM_RANGE_CHECK_ENABLED（默认 OFF）
+# 回退安全：Flag OFF 时直接走原逻辑（无校验），完全恢复 v3 行为
+# =============================================================================
+
+_V4_SBML_PARAM_RANGE_CHECK_ENABLED = (
+    os.environ.get("V4_SBML_PARAM_RANGE_CHECK_ENABLED", "false").lower() == "true"
+)
+
+# 按 mechanism 类型定义参数的生物学合理范围（基于文献动力学常数典型值）
+# 来源：BioNumbers、SBioBox、Kegg Reaction 参数库
+# 范围宽松（10.0 上限）以避免误伤合法参数，仅截断明显异常值（如 633,250）
+_MECHANISM_PARAM_RANGES: dict[str, dict[str, tuple[float, float]]] = {
+    "activation": {
+        "k_cat": (1e-4, 10.0), "kact": (1e-4, 10.0), "k_act": (1e-4, 10.0),
+        "k1": (1e-4, 10.0), "k1f": (1e-4, 10.0), "kf": (1e-4, 10.0),
+        "vmax": (1e-4, 100.0), "k": (1e-4, 10.0),
+    },
+    "phosphorylation": {
+        "k_cat": (1e-4, 10.0), "kcat": (1e-4, 10.0),
+        "k_phos": (1e-4, 10.0), "kphos": (1e-4, 10.0),
+        "km": (1e-6, 100.0), "Km": (1e-6, 100.0),
+        "k_dephos": (1e-4, 1.0), "kdephos": (1e-4, 1.0), "k2": (1e-4, 1.0),
+    },
+    "dephosphorylation": {
+        "k_dephos": (1e-4, 1.0), "kdephos": (1e-4, 1.0), "k2": (1e-4, 1.0),
+    },
+    "inhibition": {
+        "k_inhibit": (1e-4, 10.0), "ki": (1e-4, 10.0), "kd": (1e-4, 100.0),
+        "ic50": (1e-4, 100.0), "koff": (1e-4, 10.0), "k1b": (1e-4, 10.0),
+    },
+    "binding": {
+        "kon": (1e-4, 100.0), "k1f": (1e-4, 100.0), "kf": (1e-4, 100.0),
+        "koff": (1e-4, 10.0), "k1b": (1e-4, 10.0), "kb": (1e-4, 10.0),
+        "kd": (1e-4, 100.0),
+    },
+    "degradation": {
+        "k_deg": (1e-4, 1.0), "kdeg": (1e-4, 1.0),
+        "kdegr": (1e-4, 1.0), "decay": (1e-4, 1.0),
+    },
+}
+
+
+def _clamp_sbml_param_value(
+    selected: SBMLKineticParameter,
+    mechanism: str,
+) -> tuple[SBMLKineticParameter, str, float | None]:
+    """对 SBML 参数值做生物学合理性 clamp。
+
+    Args:
+        selected: 原始 SBML 参数（dataclass，frozen）
+        mechanism: 边的 mechanism 类型（如 "activation"/"phosphorylation"）
+
+    Returns:
+        tuple: (处理后的 selected, clamp_status, original_value)
+        - clamp_status: "pass" | "clamped" | "no_range_defined"
+        - original_value: 原始值（仅 clamp 时非 None）
+    """
+    if not _V4_SBML_PARAM_RANGE_CHECK_ENABLED:
+        return selected, "disabled", None
+
+    mechanism_lower = mechanism.lower()
+    param_ranges = _MECHANISM_PARAM_RANGES.get(mechanism_lower)
+    if not param_ranges:
+        # 未定义范围的 mechanism 不做校验（保守策略，避免误伤）
+        return selected, "no_range_defined", None
+
+    param_name_lower = selected.param_name.lower()
+    range_info = param_ranges.get(param_name_lower)
+    if not range_info:
+        # 参数名不在范围字典中，尝试模糊匹配（如 JAK2ActEpo 含 "act"）
+        # 仅对 activation 机制尝试模糊匹配（因为 JAK2ActEpo 类参数最常见）
+        if mechanism_lower == "activation":
+            for key, rng in param_ranges.items():
+                if key in param_name_lower or param_name_lower in key:
+                    range_info = rng
+                    break
+        if not range_info:
+            return selected, "no_range_defined", None
+
+    lo, hi = range_info
+    original_value = selected.value
+    if not math.isfinite(original_value):
+        # 非有限值（inf/nan）直接降级到下限
+        clamped_value = lo
+        logger.warning(
+            "SBML param %s=%r non-finite for mechanism=%s, clamped to %g",
+            selected.param_name, original_value, mechanism, clamped_value,
+        )
+        return replace(selected, value=clamped_value), "clamped", original_value
+
+    if lo <= original_value <= hi:
+        return selected, "pass", None
+
+    # 超界：clamp 到范围内
+    clamped_value = max(lo, min(hi, original_value))
+    logger.warning(
+        "SBML param %s=%g out of range [%g, %g] for mechanism=%s, clamped to %g",
+        selected.param_name, original_value, lo, hi, mechanism, clamped_value,
+    )
+    return replace(selected, value=clamped_value), "clamped", original_value
 
 
 def _local_name(tag: str) -> str:
@@ -314,6 +428,12 @@ def ground_sbml_parameters_to_edges(
         mapping_method = "participant_match" if match_score > 0 else "model_mechanism_reuse"
         direct_matches += int(match_score > 0)
         origin = f"{selected.model_id}:{selected.reaction_id}:{selected.param_name}"
+
+        # [RCA-20 修复 A] SBML 参数生物合理性校验
+        # 在注入 parameters 字典前对 selected.value 做 clamp
+        selected, clamp_status, original_value = _clamp_sbml_param_value(selected, mechanism)
+        is_clamped = clamp_status == "clamped"
+
         parameters[edge_key] = {
             "edge_key": edge_key,
             "param_name": selected.param_name,
@@ -328,8 +448,12 @@ def ground_sbml_parameters_to_edges(
             "reaction_id": selected.reaction_id,
             "parameter_scope": selected.scope,
             "mapping_method": mapping_method,
-            "is_fallback": False,
+            # [RCA-20 修复 A] clamp 后的参数标记为 fallback 以提示下游降级
+            "is_fallback": is_clamped,
             "missing_parameter": False,
+            # 新增字段：参数校验状态（供审计追溯）
+            "param_clamp_status": clamp_status,
+            "param_original_value": original_value,
         }
         decisions[edge_key] = {
             "param_found": True,
@@ -339,7 +463,10 @@ def ground_sbml_parameters_to_edges(
                 "unit": selected.unit,
                 "source": origin,
             }],
-            "reasoning": f"Governed canonical SBML parameter ({mapping_method})",
+            "reasoning": (
+                f"Governed canonical SBML parameter ({mapping_method})"
+                + (f"; [RCA-20] clamped from {original_value}" if is_clamped else "")
+            ),
             "fallback_to_estimation": False,
         }
     return parameters, decisions, {

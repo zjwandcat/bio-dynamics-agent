@@ -68,6 +68,81 @@ _PATHWAY_CLASS_TO_CANONICAL: dict[str, str] = {
 }
 
 
+def _evidence_docs_from_paper_evidence(
+    canonical_name: str,
+    paper_evidence: list[Any],
+) -> list[Any]:
+    """Convert pipeline paper metadata into the EvidenceDoc contract used by SA."""
+    try:
+        from app.scientific_alignment import load_literature_gold_standard
+        from app.scientific_alignment.evidence_ranker import (
+            EvidenceDoc,
+            EvidenceRanker,
+            EvidenceType,
+        )
+
+        try:
+            ranker = EvidenceRanker(
+                gold_standard=load_literature_gold_standard(canonical_name)
+            )
+        except Exception:
+            ranker = EvidenceRanker(gold_standard={})
+
+        docs: list[Any] = []
+        for evidence in paper_evidence if isinstance(paper_evidence, list) else []:
+            if not isinstance(evidence, dict):
+                continue
+            pmid = str(evidence.get("pmid") or evidence.get("PMID") or "").strip()
+            if not pmid:
+                continue
+            try:
+                evidence_type = ranker.classify(pmid, metadata=evidence)
+            except Exception:
+                evidence_type = EvidenceType.RECENT_APPLICATION
+            try:
+                year = int(evidence.get("year") or evidence.get("pub_year") or 0)
+            except (TypeError, ValueError):
+                year = 0
+            docs.append(EvidenceDoc(
+                pmid=pmid.split(":", 1)[-1] if pmid.upper().startswith("PMID:") else pmid,
+                title=str(evidence.get("title") or ""),
+                year=year,
+                journal=str(evidence.get("journal") or evidence.get("source") or ""),
+                evidence_type=evidence_type,
+            ))
+        return docs
+    except Exception as exc:
+        logger.warning("paper evidence conversion failed: %s", exc)
+        return []
+
+
+def _review_count_from_seven_axis(report: Any) -> int:
+    """Read Literature.review_count from list- or mapping-shaped axis reports."""
+    axes = getattr(report, "axes", None)
+    if axes is None and isinstance(report, dict):
+        axes = report.get("axes")
+    literature: Any = None
+    if isinstance(axes, dict):
+        literature = axes.get("literature") or axes.get("Literature")
+    elif isinstance(axes, (list, tuple)):
+        literature = next((
+            axis for axis in axes
+            if str(
+                getattr(axis, "axis_name", "")
+                or (axis.get("axis_name", "") if isinstance(axis, dict) else "")
+            ).lower() == "literature"
+        ), None)
+    sub_scores = (
+        literature.get("sub_scores", {})
+        if isinstance(literature, dict)
+        else getattr(literature, "sub_scores", {})
+    ) or {}
+    try:
+        return max(0, int(float(sub_scores.get("review_count", 0))))
+    except (TypeError, ValueError):
+        return 0
+
+
 # =============================================================================
 # 12 管线阶段定义
 # =============================================================================
@@ -1310,13 +1385,17 @@ class ScientificBenchmarkOrchestrator:
         try:
             from app.scientific_alignment import run_scientific_critic
 
+            evidence_doc_list = _evidence_docs_from_paper_evidence(
+                canonical_name, paper_evidence
+            )
+
             report = run_scientific_critic(
                 pathway=canonical_name,
                 extracted_nodes=extracted_nodes,
                 simulation_metrics=metrics,
                 biomodels_report=None,  # 仅有 dict，传 None 让 BioModels 类别降级
                 cited_pmids=cited_pmids,
-                evidence_docs=None,
+                evidence_docs=evidence_doc_list or None,
                 experiments=experiment_protocols if isinstance(experiment_protocols, list) else None,
                 retry_count=0,
             )
@@ -1444,6 +1523,7 @@ class ScientificBenchmarkOrchestrator:
         try:
             from app.scientific_alignment import check_acceptance
 
+            review_count = _review_count_from_seven_axis(seven_axis_report_obj)
             report = check_acceptance(
                 pathway=canonical_name,
                 simulation_metrics=metrics_flat,
@@ -1453,7 +1533,7 @@ class ScientificBenchmarkOrchestrator:
                 multi_dim_report=multi_dim_report_obj,  # [Round 3] 从 None 改为实际计算的 6 维置信度报告
                 biomodels_comparison=result.biomodels_comparison,
                 cited_pmids=cited_pmids,
-                review_count=0,  # Review 数量需从 evidence_docs 统计，此处简化
+                review_count=review_count,
                 experiments=experiment_protocols if isinstance(experiment_protocols, list) else None,
                 discussion_coverage=0.0,  # 由 Discussion Checker 单独计算，此处简化
             )

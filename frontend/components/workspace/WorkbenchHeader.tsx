@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import {
   Atom,
@@ -33,6 +33,10 @@ const PATHWAY_OPTIONS: { value: PathwayClass; label: string }[] = [
 /**
  * Top header bar of the Scientific Modeling IDE: brand, pathway selector,
  * run action, knowledge-base controls, and the AI Assistant collapse toggle.
+ *
+ * "运行" 按钮：展开 AI 助手面板并聚焦输入框（仿真由 AI 助手内的
+ * sendMessage 触发，此处不做误导性的"直接运行"）。
+ * "知识库状态" 按钮：点击弹出 RAG 数据库状态浮层。
  */
 export function WorkbenchHeader() {
   const { t, locale, toggleLocale } = useTranslation();
@@ -45,11 +49,42 @@ export function WorkbenchHeader() {
   const isUpdatingDb = useWorkbenchStore((s) => s.isUpdatingDb);
   const ragStatus = useWorkbenchStore((s) => s.ragStatus);
 
+  const [kbOpen, setKbOpen] = useState(false);
+  const kbBtnRef = useRef<HTMLButtonElement>(null);
+
+  // 点击外部关闭知识库状态浮层
+  useEffect(() => {
+    if (!kbOpen) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (kbBtnRef.current && !kbBtnRef.current.contains(target)) {
+        const popover = document.getElementById("kb-status-popover");
+        if (!popover || !popover.contains(target)) {
+          setKbOpen(false);
+        }
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [kbOpen]);
+
+  // "运行"：展开 AI 面板并聚焦输入框（不做误导性直接运行）
+  const handleRun = () => {
+    setAIPanelOpen(true);
+    // 延迟聚焦，等待面板展开渲染
+    setTimeout(() => {
+      const ta = document.querySelector<HTMLTextAreaElement>(
+        'textarea[placeholder*="生物学假说"]'
+      );
+      ta?.focus();
+    }, 50);
+  };
+
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-3">
       {/* Brand */}
       <div className="flex items-center gap-2">
-        <Link href="/workspace" className="flex items-center gap-2">
+        <Link href="/" className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-blue-500 to-purple-600">
             <Atom className="h-4 w-4 text-white" />
           </span>
@@ -86,7 +121,7 @@ export function WorkbenchHeader() {
           </div>
           <Button
             size="sm"
-            onClick={() => setAIPanelOpen(true)}
+            onClick={handleRun}
             title={t("header.run")}
             className="gap-1 bg-blue-600 hover:bg-blue-700"
           >
@@ -128,15 +163,49 @@ export function WorkbenchHeader() {
         >
           <RefreshCw className={isUpdatingDb ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
         </Button>
-        <Button
-          variant="outline"
-          size="icon-sm"
-          title={t("header.kbStatus")}
-          aria-label={t("header.kbStatus")}
-          className="border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
-        >
-          <Database className="h-3.5 w-3.5" />
-        </Button>
+        <div className="relative">
+          <Button
+            ref={kbBtnRef}
+            variant="outline"
+            size="icon-sm"
+            onClick={() => setKbOpen((v) => !v)}
+            title={t("header.kbStatus")}
+            aria-label={t("header.kbStatus")}
+            aria-expanded={kbOpen}
+            className="border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+          >
+            <Database className="h-3.5 w-3.5" />
+          </Button>
+          {kbOpen && (
+            <div
+              id="kb-status-popover"
+              className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-zinc-700 bg-zinc-900 p-3 shadow-xl"
+            >
+              <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                {t("header.kbStatus")}
+              </p>
+              {ragStatus && ragStatus.databases.length > 0 ? (
+                <ul className="space-y-1.5">
+                  {ragStatus.databases.map((db) => (
+                    <li key={db.name} className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-300">{db.name}</span>
+                      <span className="text-zinc-500">
+                        {db.type === "online_api" ? "在线 API" : db.type === "local_file" ? "本地文件" : "用户导入"}
+                      </span>
+                    </li>
+                  ))}
+                  {ragStatus.online_fallback_enabled && (
+                    <li className="border-t border-zinc-800 pt-1.5 text-[11px] text-zinc-500">
+                      在线兜底：阈值 {ragStatus.online_fallback_threshold}
+                    </li>
+                  )}
+                </ul>
+              ) : (
+                <p className="text-xs text-zinc-500">知识库状态暂未加载</p>
+              )}
+            </div>
+          )}
+        </div>
         <Button
           variant="outline"
           size="sm"

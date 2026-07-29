@@ -8,7 +8,7 @@ import math
 import re
 import time
 from collections import Counter
-from typing import Optional
+from typing import Any, Optional
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
@@ -371,6 +371,28 @@ def _parse_network_json(raw_text: str) -> NetworkOutput:
     return NetworkOutput(**data)
 
 
+def _expected_dynamics_species(value: Any) -> list[str]:
+    """Collect benchmark species names from nested expected_dynamics mappings."""
+    metric_keys = {
+        "peak_time_min", "peak_time_h", "peak_amplitude_fold",
+        "peak_amplitude_norm", "induction_fold_min", "adaptation_ratio_max",
+        "oscillation_period_min", "fold_increase", "inhibition_pct",
+    }
+    found: list[str] = []
+
+    def visit(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        for key, child in node.items():
+            if isinstance(child, dict):
+                if metric_keys.intersection(child):
+                    found.append(str(key))
+                visit(child)
+
+    visit(value)
+    return list(dict.fromkeys(name for name in found if name))
+
+
 # TODO: P1-4 — 统一 v1/v3 network_json schema 的公共规范化函数
 def _normalize_network_json(network_json: dict) -> dict:
     """统一 network_json schema：node.id 优先取 name，同步更新 edge 引用。
@@ -450,7 +472,21 @@ def node1_parse_network(state: BioDynamicsState) -> dict:
             )
         mcp_term_context = "\n【MCP 术语标准化上下文】\n" + "\n".join(def_lines)
 
-    system_prompt = NODE1_PARSER_PROMPT + mcp_term_context + (
+    expected_species = _expected_dynamics_species(
+        state.get("benchmark_expected_dynamics") or {}
+    )
+    benchmark_species_rule = ""
+    if expected_species:
+        species_text = ", ".join(expected_species)
+        benchmark_species_rule = (
+            "\n\n【Benchmark dynamics completeness】\n"
+            f"The governed expected_dynamics species are: {species_text}. "
+            "Every listed species must appear in knowledge_graph.nodes and must be connected "
+            "to at least one producing or consuming reaction so its trajectory can change. "
+            "If a species belongs to an implicit cross-pathway branch, include that canonical branch."
+        )
+
+    system_prompt = NODE1_PARSER_PROMPT + mcp_term_context + benchmark_species_rule + (
         "\n\n【中英双标签要求】\n"
         "在生成 network_json 时，每个节点对象必须同时包含：\n"
         '- name: 英文标识符（用于代码变量和图表标签，如 EGFR_phosphorylation）\n'

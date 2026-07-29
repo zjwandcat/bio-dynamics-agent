@@ -196,7 +196,9 @@ class PathwayGraphBuilder:
         ct_edges = self._build_cross_talk_edges(cross_talk_edges)
 
         # 5. 时间尺度标注
-        temporal = self._build_temporal_annotation(pathway_class, enriched_nodes, ir_edges)
+        temporal = self._build_temporal_annotation(
+            pathway_class, enriched_nodes, ir_edges, fb_loops
+        )
 
         graph = PathwayGraph(
             pathway_class=pathway_class,
@@ -585,11 +587,12 @@ class PathwayGraphBuilder:
         pathway_class: str,
         nodes: list[PathwayNode],
         edges: list[PathwayEdge],
+        feedback_loops: list[FeedbackLoop] | None = None,
     ) -> TemporalAnnotation:
         """根据通路主导过程构建时间尺度标注。
 
         规则：
-          - 含转录反馈（p53/NF-κB/TGF-β）→ requires_dde=True, delay=30-120 min
+          - 含正延迟反馈 → requires_dde=True，延迟取反馈环声明值
           - 含细胞周期（slow species）→ t_end=2880 min (48h)
           - 默认 fast signaling → t_end=60 min, max_step=0.1 min
         """
@@ -597,11 +600,14 @@ class PathwayGraphBuilder:
         has_slow = any(e.time_scale == TimeScale.SLOW for e in edges)
         # 检测是否含 transcription（MEDIUM，可能需要 DDE）
         has_transcription = any(e.mechanism == "transcription" for e in edges)
-        # 已知需要 DDE 的通路
+        positive_delays = [
+            float(loop.delay_minutes)
+            for loop in (feedback_loops or [])
+            if float(loop.delay_minutes or 0.0) > 0.0
+        ]
+        # 保留历史通路默认，同时让 Wnt/其他 specialist 声明的延迟真正进入运行时。
         dde_pathways = {"p53_signaling", "NF_kB", "TGF_beta"}
-        requires_dde = pathway_class in dde_pathways or (
-            has_transcription and pathway_class in dde_pathways
-        )
+        requires_dde = bool(positive_delays) or pathway_class in dde_pathways
 
         if has_slow:
             primary_scale = TimeScale.SLOW
@@ -616,8 +622,9 @@ class PathwayGraphBuilder:
             t_end = 60.0
             max_step = 0.1
 
-        # DDE 延迟默认值（转录反馈典型延迟 60 min）
-        dde_delay = 60.0 if requires_dde else 0.0
+        # Specialist feedback metadata is authoritative; legacy pathways retain
+        # the 60-minute default when no explicit delay was supplied.
+        dde_delay = max(positive_delays) if positive_delays else (60.0 if requires_dde else 0.0)
 
         return TemporalAnnotation(
             pathway_class=pathway_class,

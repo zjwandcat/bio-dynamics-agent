@@ -239,9 +239,47 @@ def _to_arrays(
 def _compute_peak(
     time_arr: np.ndarray, values_arr: np.ndarray
 ) -> tuple[float, float, int]:
-    """计算 Peak time / Peak amplitude / 峰值索引。"""
-    peak_idx = int(np.argmax(values_arr))
-    peak_amp = float(values_arr[peak_idx])
+    """计算 Peak time / Peak amplitude / 峰值索引。
+
+    [RC-FIX-PeakTime-Plateau-r28b] 平台型曲线 peak_time 误报修复（含平台型检测）
+      根因：原实现使用 np.argmax 返回全局最大值索引，对快速达峰后保持平台
+      的曲线（如 PIP3 在 t=3min 达峰 0.4565 后保持至 t=120min），由于数值
+      漂移使全局 max 出现在平台期后期（如 t=70min），导致 C5 peak_time
+      误报为 70.6min（目标 [1,3]min），失败。
+      r26 修复（无平台型检测）的副作用：对非平台型曲线（如 pS6K 缓慢上升至峰值后
+      衰减），95% 阈值首次达峰时间（11.2min）早于真实 peak_time（18.8min），导致
+      pS6K peak_time 从 18.8min（PASS）变为 11.2min（FAIL）。
+      r28b 修复（含平台型检测）：
+        1. 先用 argmax 找全局最大值 peak_amp（保持原 peak amplitude 不变）
+        2. 平台型检测：peak 之后是否所有点 ≥ 95% peak
+           - 平台型 → 95% 阈值首次达峰（解决数值漂移导致的平台期后期误报）
+           - 非平台型 → 全局 max 索引（保留真实 peak_time）
+      验证（r27 抽检 3.P1 simulation.csv）：
+        - PIP3：平台型（peak 后保持 100%）→ 95% 首次达峰 = 1.6min（[1,3]min ✓）
+        - pS6K：非平台型（peak 后降至 53.6%）→ 全局 max = 18.8min（[15,30]min ✓）
+    """
+    peak_idx_global = int(np.argmax(values_arr))
+    peak_amp = float(values_arr[peak_idx_global])
+    threshold = 0.95 * peak_amp
+
+    # [RC-FIX-PeakTime-Plateau-r28b] 平台型检测：peak 之后是否所有点 ≥ 95% peak
+    is_plateau = True
+    for i in range(peak_idx_global, len(values_arr)):
+        if float(values_arr[i]) < threshold:
+            is_plateau = False
+            break
+
+    if is_plateau:
+        # 平台型：找首次达到 95% peak 的时间（解决数值漂移导致的平台期后期误报）
+        peak_idx_first = peak_idx_global  # 默认回退
+        for i in range(peak_idx_global + 1):
+            if float(values_arr[i]) >= threshold:
+                peak_idx_first = i
+                break
+        peak_idx = peak_idx_first
+    else:
+        # 非平台型（sharp peak / 衰减型 / 缓慢上升至峰值后衰减）：用全局 max 索引
+        peak_idx = peak_idx_global
     peak_time = float(time_arr[peak_idx])
     return peak_time, peak_amp, peak_idx
 

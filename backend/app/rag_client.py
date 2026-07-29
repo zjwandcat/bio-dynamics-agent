@@ -1275,7 +1275,7 @@ class RagClient:
                 "".join(p.itertext()) for p in abstract_parts
             )[:2000]
 
-            # 扩展字段：authors / journal / pub_year / mesh_terms
+            # 扩展字段：authors / journal / pub_year / mesh_terms / pub_types
             authors: list[str] = []
             for au in article_elem.findall(".//Author"):
                 last = au.findtext("LastName") or ""
@@ -1294,6 +1294,11 @@ class RagClient:
             for mh in article_elem.findall(".//MeshHeading/DescriptorName"):
                 if mh.text:
                     mesh_terms.append(mh.text)
+            pub_types = [
+                "".join(item.itertext()).strip()
+                for item in article_elem.findall(".//PublicationTypeList/PublicationType")
+                if "".join(item.itertext()).strip()
+            ]
 
             if pmid:
                 articles.append({
@@ -1307,6 +1312,7 @@ class RagClient:
                     "journal": journal,
                     "pub_year": pub_year,
                     "mesh_terms": mesh_terms,
+                    "pub_types": pub_types,
                     "source_role": "PubMed",
                 })
 

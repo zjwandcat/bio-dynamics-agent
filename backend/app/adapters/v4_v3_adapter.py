@@ -103,11 +103,20 @@ def v4_to_v3(reaction_ir: ReactionIRv2) -> dict[str, Any] | None:
         for sp in reaction_ir.species:
             name = sp.canonical_name or sp.id
             species_id_to_name[sp.id] = name
-            nodes.append({
+            # [RC-FIX-IC-Adapter-r25] 保留 initial_concentration 和 compartment 字段。
+            #   根因：v4_to_v3 Adapter 仅复制 id/name/type，丢失 IC，导致
+            #   _reaction_ir_v2_hook 的 Adapter 同步覆盖 specialist_hook 修改的
+            #   network_json，使下游 SpeciesV2.initial_concentration=0.0，
+            #   _extract_y0 回退到 _default_initial_concentration 使 PIP3=0.0（应 0.05）。
+            #   修复：透传 IC + compartment，保证 v4→v3 roundtrip 不丢失 specialist IC。
+            node: dict[str, Any] = {
                 "id": name,  # v3 用 name 作为 id（与 graph_v3.py _normalize_network_json 一致）
                 "name": name,
                 "type": sp.species_type,
-            })
+                "initial_concentration": sp.initial_concentration,
+                "compartment": sp.compartment,
+            }
+            nodes.append(node)
 
         # —— 2. Reactions → edges ——
         edges: list[dict[str, Any]] = []

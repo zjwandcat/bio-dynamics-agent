@@ -61,10 +61,67 @@ from app.solvers.dde_solver import solve_dde, is_dde_available
 _JITCDDE_AVAILABLE = is_dde_available()
 
 
+# [RCA-20 修复 B] _get_param clamp 机制
+# 根因：_get_param 无 clamp/clip，SBML 原生参数（如 633,250）原样返回导致数值爆炸
+# 修复：按 param_key 类型设置上限，超界值截断到上限
+# Feature Flag: V4_GET_PARAM_CLAMP_ENABLED（默认 OFF，回退安全）
+_V4_GET_PARAM_CLAMP_ENABLED = {{ v4_get_param_clamp_enabled }}
+_PARAM_CLAMP_MAX = {
+    "k_cat": 10.0, "kcat": 10.0, "k_act": 10.0, "kact": 10.0,
+    "k_phos": 10.0, "kphos": 10.0, "k1": 10.0, "k1f": 10.0, "kf": 10.0, "k": 10.0,
+    "k_inhibit": 10.0, "ki": 10.0, "koff": 10.0, "k1b": 10.0, "kb": 10.0,
+    "k_deg": 1.0, "kdeg": 1.0, "k_dephos": 1.0, "kdephos": 1.0, "k2": 1.0,
+    "vmax": 100.0, "Vmax": 100.0, "km": 100.0, "Km": 100.0,
+    "kon": 100.0, "kd": 100.0, "ic50": 100.0,
+}
+
+
 def _get_param(target_name, param_key, default):
-    """从 PARAMS 中获取指定 target 的参数值。"""
+    """从 PARAMS 中获取指定 target 的参数值。
+
+    [RCA-20 修复 B] 当 V4_GET_PARAM_CLAMP_ENABLED=true 时，
+    对超界参数值做 clamp（截断到生物学合理上限）。
+    """
     eparams = PARAMS.get(target_name, {})
-    return eparams.get(param_key, default)
+    value = eparams.get(param_key, default)
+    if _V4_GET_PARAM_CLAMP_ENABLED and isinstance(value, (int, float)):
+        max_val = _PARAM_CLAMP_MAX.get(param_key)
+        if max_val is not None and value > max_val:
+            return float(max_val)
+    return value
+
+
+# [RCA-38 P1 修复 RC-1g] CellCycle 通路特异性动力学参数表
+# 根因：cyclin_cdk_toggle.j2 所有动力学参数（k_trans=0.1, k_transl=0.05, k_ubi=0.1,
+#   k_act=0.05）均为分钟级，导致振荡周期 ~280min（约 4.7h），
+#   而 CellCycle 期望振荡周期 16-24h（首峰 [600,960]min）。
+#   实际周期比期望快 3-5 倍。
+# 修复：当 PATHWAY_CLASS="CELL_CYCLE" 时，使用小时级参数（k_trans=0.005 等），
+#   使振荡周期达到 960-1440min。
+_PATHWAY_KINETICS = {
+    # CellCycle 小时级参数：振荡周期 16-24h
+    "CELL_CYCLE":     {"phos_k_cat": 0.05, "act_k_cat": 0.02, "trans_k": 0.005,
+                       "transl_k": 0.002, "ubi_k": 0.005, "deg_k": 0.002,
+                       "bind_k": 0.01, "inhib_k": 0.005, "dephos_k": 0.002},
+    # 默认（非 CellCycle 通路，如交叉通路）：分钟级参数
+    "DEFAULT":        {"phos_k_cat": 0.1, "act_k_cat": 0.05, "trans_k": 0.1,
+                       "transl_k": 0.05, "ubi_k": 0.1, "deg_k": 0.05,
+                       "bind_k": 0.1, "inhib_k": 0.05, "dephos_k": 0.05},
+}
+_pathway_kin = _PATHWAY_KINETICS.get(
+    (PATHWAY_CLASS or "").strip().upper(),
+    _PATHWAY_KINETICS["DEFAULT"],
+)
+
+
+def _pk(param_type):
+    """返回通路特异性的动力学参数默认值。
+
+    [RCA-38 P1 修复 RC-1g] 替代硬编码的 _get_param default 值，
+    按 PATHWAY_CLASS 选择生物学合理的时间尺度参数。
+    CellCycle 通路使用小时级参数（k_trans=0.005 等）。
+    """
+    return _pathway_kin.get(param_type, 0.05)
 
 
 # [RC25g] 去重预计算：对同一 (source, target) 对，若已有非 activation 机制，
@@ -128,12 +185,14 @@ def _ode_rhs(t, y, y_delayed=None):
 
         if mechanism == "phosphorylation":
             # CDK 磷酸化 Rb（Michaelis-Menten）
-            k_cat = _get_param(tgt_name, "k_cat", 0.1)
+            # [RCA-38 P1 修复 RC-1g] k_cat/k_dephos 默认值改为通路特异性（_pk）
+            k_cat = _get_param(tgt_name, "k_cat", _pk("phos_k_cat"))
             Km = _get_param(tgt_name, "Km", 0.1)
             # [RC25c] 0.001→0.05: 防止磷酸化形式质量爆炸（半衰期从 693min 降至 14min）
-            k_dephos = _get_param(tgt_name, "k_dephos", 0.05)
-            # [RC25h] 自磷酸化：使用固定激酶活性，避免自催化正反馈
-            _enzyme_conc = 0.1  # 等效外源激酶浓度（nM）
+            k_dephos = _get_param(tgt_name, "k_dephos", _pk("dephos_k"))
+            modifiers = edge.get("modifiers", [])
+            _enzyme_idx = SP_IDX.get(modifiers[0]) if modifiers else None
+            _enzyme_conc = max(float(y[_enzyme_idx]), 0.0) if _enzyme_idx is not None else 0.1
             _Vmax = k_cat * _enzyme_conc
             _rate = _Vmax * src / (Km + src) if (Km + src) > 0 else 0.0
             sub_idx = s_idx  # [RC25e] 记录底物索引用于去磷酸化回流
@@ -146,7 +205,8 @@ def _ode_rhs(t, y, y_delayed=None):
 
         elif mechanism == "binding":
             # Cyclin-CDK 结合（mass-action）
-            k_bind = _get_param(tgt_name, "k_bind", 0.1)
+            # [RCA-38 P1 修复 RC-1g] k_bind 改为通路特异性（_pk）
+            k_bind = _get_param(tgt_name, "k_bind", _pk("bind_k"))
             _rate = k_bind * src
             dy[s_idx] -= _rate
             dy[t_idx] += _rate
@@ -160,7 +220,8 @@ def _ode_rhs(t, y, y_delayed=None):
 
         elif mechanism == "ubiquitination":
             # APC/C 泛素化 Cyclin B
-            k_ubi = _get_param(tgt_name, "k_ubi", 0.1)
+            # [RCA-38 P1 修复 RC-1g] k_ubi 改为通路特异性（_pk）
+            k_ubi = _get_param(tgt_name, "k_ubi", _pk("ubi_k"))
             Km_ubi = _get_param(tgt_name, "Km_ubi", 0.5)
             _rate = k_ubi * src * tgt / (Km_ubi + tgt) if (Km_ubi + tgt) > 0 else 0.0
             dy[t_idx] -= _rate
@@ -169,9 +230,10 @@ def _ode_rhs(t, y, y_delayed=None):
             # [BENCHMARK CLOSURE / Gap 1] 新增 degradation 分支
             # 生物语义：source → ∅（一级 mass-action 衰减）。
             # target 是 sink（∅ 或未注册的降解产物池），不写入 dy[t_idx]。
+            # [RCA-38 P1 修复 RC-1g] k_deg fallback 改为通路特异性（_pk）
             k_deg = _get_param(tgt_name, "k_deg", None)
             if k_deg is None:
-                k_deg = _get_param(src_name, "k_deg", 0.05)
+                k_deg = _get_param(src_name, "k_deg", _pk("deg_k"))
             _rate = k_deg * src
             dy[s_idx] -= _rate
             if t_idx >= 0:
@@ -179,14 +241,16 @@ def _ode_rhs(t, y, y_delayed=None):
 
         elif mechanism == "proteasomal_degradation":
             # Cyclin 降解
-            k_deg = _get_param(tgt_name, "k_deg", 0.01)
+            # [RCA-38 P1 修复 RC-1g] k_deg 改为通路特异性（_pk）
+            k_deg = _get_param(tgt_name, "k_deg", _pk("deg_k"))
             _rate = k_deg * src
             dy[s_idx] -= _rate
 
         elif mechanism == "transcription":
             # E2F → Cyclin E/D1 转录（Hill，含延迟）
             # [v5 RC1] DDE: 使用 y_delayed[s_idx] 作为 TF 浓度（τ 分钟前的 E2F 驱动当前转录）
-            k_trans = _get_param(tgt_name, "k_trans", 0.1)
+            # [RCA-38 P1 修复 RC-1g] k_trans 改为通路特异性（_pk）
+            k_trans = _get_param(tgt_name, "k_trans", _pk("trans_k"))
             n_hill = _get_param(tgt_name, "n_hill", 2.0)
             K_d = _get_param(tgt_name, "K_d", 0.5)
             k_mRNA_deg = _get_param(tgt_name, "k_mRNA_deg", 0.01)
@@ -200,7 +264,8 @@ def _ode_rhs(t, y, y_delayed=None):
             dy[t_idx] -= k_mRNA_deg * tgt
 
         elif mechanism == "translation":
-            k_transl = _get_param(tgt_name, "k_transl", 0.05)
+            # [RCA-38 P1 修复 RC-1g] k_transl 改为通路特异性（_pk）
+            k_transl = _get_param(tgt_name, "k_transl", _pk("transl_k"))
             k_prot_deg = _get_param(tgt_name, "k_prot_deg", 0.005)
             # [RC25f] logistic 饱和：防止蛋白无限累积
             _max_prot = max(Y0[t_idx] if t_idx < len(Y0) else 0.1, 0.1) * 5.0
@@ -210,7 +275,8 @@ def _ode_rhs(t, y, y_delayed=None):
 
         elif mechanism == "inhibition":
             # p21/p27 抑制 Cyclin-CDK
-            k_inhib = _get_param(tgt_name, "k_inhib", 0.05)
+            # [RCA-38 P1 修复 RC-1g] k_inhib 改为通路特异性（_pk）
+            k_inhib = _get_param(tgt_name, "k_inhib", _pk("inhib_k"))
             _rate = k_inhib * src * tgt
             dy[t_idx] -= _rate
 
@@ -222,8 +288,9 @@ def _ode_rhs(t, y, y_delayed=None):
             #     1. logistic 饱和防止单调递增
             #     2. 消耗未激活前体（如 APC_C → APC_C_active）实现质量守恒
             #     3. k_deg 降解回流到未激活形式
-            k_act = _get_param(tgt_name, "k_act", 0.05)
-            k_deg = _get_param(tgt_name, "k_deg", 0.02)
+            # [RCA-38 P1 修复 RC-1g] k_act 改为通路特异性（_pk）
+            k_act = _get_param(tgt_name, "k_act", _pk("act_k_cat"))
+            k_deg = _get_param(tgt_name, "k_deg", _pk("deg_k"))
             _max_pool = max(Y0[t_idx] if t_idx < len(Y0) else 0.1, 0.1) * 3.0
             _rate = k_act * src * max(0.0, 1.0 - tgt / _max_pool)
             _unphospho_name = tgt_name[1:] if (tgt_name.startswith("p") and len(tgt_name) > 1) else ""
@@ -374,6 +441,9 @@ if __name__ == "__main__":
 
     # [v5 Recovery Sprint 1 / RC1] 主程序使用 3 值返回签名 (t, y, dde_used)
     t_arr, y_arr, _dde_used = solve_toggle()
+
+    # [RCA-38 P0 修复 RC-2] C3 非负性修复：clamp 负浓度（生物学无意义）
+    y_arr = np.maximum(y_arr, 0.0)
 
     # BIO_CHECK: simulation_complete, n_species=N_SP, n_steps=len(t_arr)
     # BIO_CHECK: max_conc={max(y_arr[:,i]) for i in range(N_SP)}

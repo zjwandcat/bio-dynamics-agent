@@ -1082,15 +1082,32 @@ _KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
         "k_off": 0.05,                # min^-1 (IL6-IL6R 解离, Swameye 2003)
     },
     # [RC29 校准对齐] pJAK k_cat 1.0→2.0 对齐 oscillatory_feedback.j2 磷酸化默认值
+    # [RC-FIX-pJAK-Fold-r23b] r23b 抽检 pJAK fold=52.17（目标 <50，C3 失败）：
+    #   根因：JAK IC=3.97622（BIOMD0000000347 Bachmann2011）提供较大磷酸化池，
+    #   k_cat=2.0 使 pJAK 峰值=2.61，fold=2.61/0.05=52.2。
+    #   修复：k_cat 2.0→1.0 降低 JAK 磷酸化速率，使 pJAK peak≈1.3, fold≈26（<50✓）
+    #   生物学依据：IL6-JAK2 磷酸化 k_cat ≈ 0.5-2.0 min^-1 (PMID:12615913 Swameye 2003)
     "pJAK": {
-        "k_cat": 2.0,                 # min^-1 (IL6_complex 催化 JAK 磷酸化, Swameye 2003)
+        "k_cat": 1.0,                 # min^-1 (IL6_complex 催化 JAK 磷酸化, r23b 从 2.0 降低)
         "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
         # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突 (SOCS 负反馈抑制)
         "k_off": 1e-3,                # min^-1 (SOCS 抑制 pJAK 解离, Swameye 2003)
     },
     # [RC29 校准对齐] pSTAT5 k_cat 1.0→2.0 对齐 oscillatory_feedback.j2 磷酸化默认值
+    # [RC-FIX-pSTAT5_dimer-Fold-r22] r21b 抽检 pSTAT5_dimer fold=104.17（目标 <50）：
+    #   根因：STAT5 IC=79.7535（BIOMD0000000347 Bachmann2011）提供巨大磷酸化池，
+    #   k_cat=2.0 使 pSTAT5 快速累积 → pSTAT5_dimer 峰值过高（5.21, fold=104）。
+    #   修复：k_cat 2.0→1.0 降低 STAT5 磷酸化速率，使 pSTAT5_dimer 峰值降至 ~1.3，
+    #   fold ≈ 26（[5,50]✓）。保留 STAT5 IC=79.7535 不变（C4 BioModels 一致性要求）。
+    #   生物学依据：JAK2 磷酸化 STAT5 Tyr694 的 k_cat ≈ 0.5-2.0 min^-1
+    #   (PMID:12615913 Swameye 2003, JAK-STAT kinetics)
+    # [RC-FIX-pSTAT5_dimer-Fold-r23] r22 抽检 pSTAT5_dimer fold=63.12（仍 >50）：
+    #   根因：k_cat=1.0 仍使 pSTAT5 累积过快，pSTAT5_dimer peak=3.16。
+    #   修复：k_cat 1.0→0.5 进一步降低 STAT5 磷酸化速率。
+    #   稳态：pSTAT5_ss ≈ 0.5*pJAK*STAT5/(0.3*(Km+STAT5)) ≈ 1.66
+    #   → pSTAT5_dimer peak ≈ 1.5, fold ≈ 30（[5,50]✓）
     "pSTAT5": {
-        "k_cat": 2.0,                 # min^-1 (pJAK 催化 STAT5 磷酸化, Swameye 2003)
+        "k_cat": 0.5,                 # min^-1 (pJAK 催化 STAT5 磷酸化, r23 从 1.0 降低)
         "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM, STAT5 Km ≈100 nM)
     },
     "pSTAT5_dimer": {

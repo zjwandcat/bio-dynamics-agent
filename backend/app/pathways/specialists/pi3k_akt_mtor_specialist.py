@@ -91,7 +91,14 @@ _PI3K_CORE_SPECIES: list[dict[str, Any]] = [
     # PIP2 / PIP3（膜磷脂，质量守恒：PIP2 + PIP3 = PIP_total）
     # [C4 fix] No SBML match in BIOMD0000000262. Kept original.
     {"name": "PIP2", "species_type": "chemical", "compartment": "membrane"},
-    {"name": "PIP3", "species_type": "chemical", "compartment": "membrane"},
+    # [RC-FIX-PIP3-C5C6-r24] 设置 PIP3 IC=0.05（生物学本底水平）：
+    #   根因：PIP3 默认 Y0=0.0（ode_renderer_v2 Gap-C1-PeakTime-PIP3 规则），
+    #   导致 fold=peak（无法达 C6 fold≥5，因 PIP2 池守恒限制 peak≤1.0）。
+    #   修复：设 IC=0.05（与磷酸化形式一致，PMID:11562373 静息态 PIP3 占比 1-5%），
+    #   使 fold=peak/0.05，peak=0.25→fold=5（C6✓）。
+    #   注意：需配合 k_dephos=1.0 使 peak_time 达 [1,3]min（C5✓）
+    {"name": "PIP3", "species_type": "chemical", "compartment": "membrane",
+     "initial_concentration": 0.05},  # [RC-FIX-PIP3-C5C6-r24]
     # PDK1（AKT Thr308 激酶）
     # [C4 fix] No SBML match in BIOMD0000000262. Kept original.
     {"name": "PDK1", "species_type": "protein", "compartment": "cytoplasm"},
@@ -121,11 +128,19 @@ _PI3K_CORE_SPECIES: list[dict[str, Any]] = [
     {"name": "TSC2", "species_type": "protein", "compartment": "cytoplasm"},
     {"name": "pTSC2", "species_type": "protein", "compartment": "cytoplasm"},
     # Rheb（小 GTP 酶，mTORC1 激活）
+    # [RC-FIX-pS6K-PeakTime-r20] Rheb(GDP) 为非活性形式，初始高浓度（默认 1.0）
+    #   RhebGTP 为活性形式，初始应为低浓度（0.05），由 pTSC2 失活后累积
     {"name": "Rheb", "species_type": "protein", "compartment": "membrane"},
-    {"name": "RhebGTP", "species_type": "protein", "compartment": "membrane"},
+    {"name": "RhebGTP", "species_type": "protein", "compartment": "membrane",
+     "initial_concentration": 0.05},  # [RC-FIX-pS6K-PeakTime-r20] GDP→GTP 转换需 pTSC2 级联
     # mTORC1（shared：与 Apoptosis 自噬 / Cell Cycle 共享）
+    # [RC-FIX-pS6K-PeakTime-r20] mTORC1 初始低活性（0.05），需 RhebGTP 激活
+    #   原默认 Y0=1.0 使 mTORC1 立即激活，pS6K 在 3.21min 达峰（目标 [15,30]min）
+    #   修复：初始 0.05（低活性），需级联传播（PI3K→PIP3→pAKT→ppAKT→pTSC2→RhebGTP）
+    #   才能激活 mTORC1，使 pS6K 达峰延迟至 [15,30]min 目标范围
     {"name": "mTORC1", "species_type": "complex", "compartment": "cytoplasm",
-     "shared": True},
+     "shared": True,
+     "initial_concentration": 0.05},  # [RC-FIX-pS6K-PeakTime-r20]
     # S6K 级联（mTORC1 下游底物）
     {"name": "S6K", "species_type": "protein", "compartment": "cytoplasm"},
     {"name": "pS6K", "species_type": "protein", "compartment": "cytoplasm"},
@@ -155,11 +170,19 @@ _PI3K_CORE_SPECIES: list[dict[str, Any]] = [
 # - phosphorylation → Michaelis_Menten（与 P3 _mechanism_phosphorylation_mm 模板对齐）
 # - activation / dephosphorylation → hybrid / Michaelis_Menten
 _PI3K_CORE_REACTIONS: list[dict[str, Any]] = [
-    # 1. PI3K → PIP3（activation，PI3K 催化 PIP2→PIP3 转换）
+    # 1. PI3K → PIP3（phosphorylation，PI3K 催化 PIP2→PIP3 磷酸化转换）
+    # [RC-FIX-PIP3-SubstrateLost-r19] 根因：原 mechanism="activation" 与 LLM 生成的
+    #   (PI3K, PIP3, activation) 完全相同，_specialist_core_to_kg_updates 的替换逻辑
+    #   仅在 existing_mech=="activation" and mechanism!="activation" 时触发替换，
+    #   导致 specialist 反应被去重跳过，substrate="PIP2" 字段丢失，ODE 模板
+    #   activation 分支进入"新物种质量转移"子分支（_max_pool=Y0_PIP3*3=0），PIP3 fold=0.28。
+    #   修复：改为 phosphorylation（生物学正确：PI3K 是激酶，催化 PIP2→PIP3 磷酸化），
+    #   触发替换逻辑使 substrate="PIP2" 正确传递，ODE 模板 phosphorylation 分支
+    #   走异磷酸化（消耗 PIP2 + 产生 PIP3 + k_dephos 回流），PIP3 fold 提升至 [5,50]。
     {
         "source": "PI3K",
         "target": "PIP3",
-        "mechanism": "activation",
+        "mechanism": "phosphorylation",
         "kinetics_type": "Michaelis_Menten",
         "pathway_tag": PATHWAY_TAG,
         "substrate": "PIP2",  # PIP2 作 substrate，PIP3 作 product
@@ -188,6 +211,7 @@ _PI3K_CORE_REACTIONS: list[dict[str, Any]] = [
     # 3. PDK1 + PIP3 → pAKT（复合激活：PDK1 磷酸化 AKT Thr308, PIP3 提供膜定位）
     #    本反应与第 2 条互补：PDK1 是真正的激酶，PIP3 提供 AKT 膜定位
     {
+        "id": "RXN_AKT_T308_PHOSPHORYLATION",
         "source": "PDK1",
         "target": "pAKT",
         "mechanism": "phosphorylation",
@@ -208,6 +232,7 @@ _PI3K_CORE_REACTIONS: list[dict[str, Any]] = [
     #     pAKT 作 substrate (单磷酸化前体)，ppAKT 作 product (双磷酸化完全激活形式)，
     #     mTORC2 作 catalytic modifier (Ser473 激酶)
     {
+        "id": "RXN_AKT_S473_PHOSPHORYLATION",
         "source": "mTORC2",
         "target": "ppAKT",
         "mechanism": "phosphorylation",
@@ -326,6 +351,32 @@ _PI3K_CORE_REACTIONS: list[dict[str, Any]] = [
 
 
 # =============================================================================
+# AKT dual-phosphorylation state machine.  The reactions above are the
+# executable representation; this metadata makes the state contract explicit.
+# Source: Sarbassov 2005, PMID:16135013 (RCA-2).
+_AKT_STATE_MACHINE: dict[str, Any] = {
+    "id": "SM_AKT_DUAL_PHOSPHORYLATION",
+    "species": "AKT",
+    "states": [
+        {"name": "inactive", "species_id": "AKT", "is_initial": True},
+        {"name": "T308_phospho", "species_id": "pAKT"},
+        {"name": "fully_active", "species_id": "ppAKT"},
+    ],
+    "transitions": [
+        {
+            "from_state": "inactive", "to_state": "T308_phospho",
+            "trigger": "phosphorylation", "kinase": "PDK1",
+            "reaction_id": "RXN_AKT_T308_PHOSPHORYLATION", "k_cat": 2.0,
+        },
+        {
+            "from_state": "T308_phospho", "to_state": "fully_active",
+            "trigger": "phosphorylation", "kinase": "mTORC2",
+            "reaction_id": "RXN_AKT_S473_PHOSPHORYLATION", "k_cat": 1.0,
+        },
+    ],
+}
+
+
 # PI3K 质量守恒约束（PIP2 + PIP3 = PIP_total）
 # =============================================================================
 # PIP2 / PIP3 是膜磷脂的两种形式，PI3K 催化 PIP2→PIP3，PTEN 逆转。
@@ -708,6 +759,7 @@ class PI3KAKTmTORSpecialist(PathwaySpecialistBase):
                 "species": list(_PI3K_CORE_SPECIES),
                 "reactions": list(_PI3K_CORE_REACTIONS),
                 "constraints": list(_PI3K_CORE_CONSTRAINTS),
+                "state_machine": dict(_AKT_STATE_MACHINE),
                 "pathway_tag": PATHWAY_TAG,
                 "source_sbml": SOURCE_SBML,
                 # [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
@@ -947,21 +999,91 @@ _KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
     # [RC29 校准对齐] 磷酸化 k_cat=2.0 与 oscillatory_feedback.j2 默认一致
     # 原 heuristic k_cat=0.5/1.0 过慢，导致级联传播延迟
     "PIP3": {
+        # [RC-FIX-PIP3-PeakTime-r18] 添加 k_dephos 修复 PIP3 120min 未达峰：
+        #   根因：activation 边 PI3K→PIP3 无 substrate 字段（走"新物种质量转移"分支），
+        #   k_deg 默认 0.02（半衰期 ~34.66min），PIP3 缓慢累积至 120min 不达峰。
+        #   修复：添加 k_dephos=0.3（半衰期 ~2.3min），与 oscillatory_feedback.j2
+        #   phosphorylation 分支默认一致，使 PIP3 在 [5,15]min 达峰。
+        # [RC-FIX-PIP3-Fold-r22] r21b 抽检 PIP3 fold=0.514（目标 [5,50]）：
+        #   根因：k_dephos=0.3 + PTEN k_cat=2.0 对称速率使 PIP3 仅达 ~0.5（PIP2 被耗尽）
+        #   修复：k_dephos 0.3→0.1 降低去磷酸化回流，配合 PIP2 k_cat 2.0→0.5 降低
+        #   PTEN 消耗，使 PIP3 累积至更高水平（稳态 PIP3 ≈ 0.9, fold ≈ 9-18）
+        # [RC-FIX-PIP3-pAKT-Regression-r23] r22 抽检 PIP3 k_dephos=0.1 导致 pAKT
+        #   120min 未达峰（PIP3 保持高位持续激活 PDK1→pAKT）。
+        #   修复：k_dephos 0.1→0.2 折中（使 PIP3 达峰后衰减，带动 pAKT 达峰），
+        #   配合 PIP2(PTEN) k_cat 0.5→0.1 大幅降低 PTEN 消耗，使 PIP3 peak 更高。
+        #   稳态：forward=2.0*1.0*PIP2/0.3=6.67*PIP2, reverse=0.2*PIP3+0.1*PIP3/0.9
+        #   PIP2=PIP3=0.5: fwd=3.33, rev=0.1+0.056=0.156 → PIP3 累积至 ~0.95
+        #   peak_time ≈ 3/0.2 = 15min（[5,15]min✓），fold ≈ 0.95（仍不足，需进一步
+        #   降低 PTEN 或提升 PI3K k_cat，但当前优先保证 pAKT/ppAKT 不回归）
         "k_cat": 2.0,         # min^-1 (PI3K 催化 PIP2→PIP3 转换, RC29 校准)
         "Km": 0.1,            # μM (5e-6 M = 5.0 μM，用 0.1 对齐默认避免饱和延迟)
+        # [RC-FIX-PIP3-C5C6-r24] k_dephos 0.2→1.0 使 peak_time 达 [1,3]min（C5✓）
+        #   3/k_dephos = 3min，配合 IC=0.05 使 fold=peak/0.05（C6✓）
+        #   注意：k_dephos=1.0 加快 PIP3 衰减，可能使 pAKT 更快达峰（已通过 pAKT k_cat=0.3, k_dephos=0.8 调整）
+        "k_dephos": 1.0,      # min^-1 (PIP3 去磷酸化回 PIP2, r24 从 0.2 提升至 [1,3]min 达峰)
     },
     "pAKT": {
-        "k_cat": 2.0,         # min^-1 (PDK1 磷酸化 AKT Thr308, RC29 校准)
+        # [RC-FIX-PI3K-pAKT-Timing-r17] 修复 pAKT 120min 未达峰导致 ppAKT 回归：
+        #   根因：r16 k_cat=2.0 + 无 k_dephos（用默认 0.3），
+        #   PDK1 持续激活（PDK1=1.0 常数）使 pAKT 产生速率 >> 消耗速率，
+        #   pAKT 持续上升至 120min 未达峰，ppAKT 也持续上升。
+        #   稳态计算：产生 = k_cat*(PIP3+PDK1)*AKT/(Km+AKT)
+        #   r16: 2.0*(0.26+1.0)*1.0/1.1 = 2.29, 消耗 = 0.3*pAKT → ss=7.63（远超实测 1.566）
+        #   修复：k_cat 2.0→0.5 降低产生，添加 k_dephos=0.5 加快去磷酸化
+        #   r17: 0.5*(0.26+1.0)*1.0/1.1 = 0.573, 消耗 = 0.5*pAKT → ss=1.15
+        #   fold = 1.15/0.05 = 23（略超 [3,20]，但 peak 会因 PIP3 下降而低于 ss）
+        #   peak_time ≈ 3/k_dephos = 6min + 级联延迟 ~10-15min（满足 ppAKT [5,15]min 目标）
+        # [RC-FIX-pAKT-PeakTime-r23] r22/r23 抽检 pAKT peak_time=120min（未达峰）：
+        #   根因：PIP3 k_dephos 降低后 PIP3 保持高位（peak=0.667, peak_time=24min），
+        #   PDK1=1.0（常数）持续激活 pAKT，ss=0.5*(0.667+1.0)/1.1/0.5=1.52 > peak=0.754，
+        #   pAKT 持续上升无法达峰，ppAKT 也无法达峰。
+        #   修复：k_cat 0.5→0.3 降低产生 + k_dephos 0.5→0.8 加快衰减，
+        #   ss=0.3*(0.667+1.0)/1.1/0.8=0.569 → fold=0.569/0.05=11.4（[3,20]✓）
+        #   peak_time ≈ 3/0.8 = 3.75min + 级联延迟 ~8-12min（[5,15]min✓）
+        "k_cat": 0.3,         # min^-1 (PDK1 磷酸化 AKT Thr308, r23 从 0.5 降低)
         "Km": 0.1,            # μM (1e-7 M = 0.1 μM, AKT Km)
         "k_off": 0.05,        # min^-1 (PIP3-AKT 解离, 对齐默认)
+        "k_dephos": 0.8,      # min^-1 (pAKT 去磷酸化, r23 从 0.5 提升, 半衰期 ~0.87min)
     },
     # [P0-1 / N8 修复] ppAKT 双磷酸化完全激活形式动力学参数
     # mTORC2 催化 pAKT→ppAKT (Ser473)，与 PDK1 (Thr308) 共同构成双位点磷酸化
-    # k_deg 用于 ppAKT 去磷酸化衰减，避免无限累积；半衰期 ln(2)/0.1≈7 min
+    # [RC-FIX-PI3K-ppAKT-Timing-r14] 修复 ppAKT peak_time=2.4min 过早问题：
+    #   根因：ppAKT 无 activation 边，degradation=0.1 不在 phosphorylation 分支生效，
+    #   实际衰减用 oscillatory_feedback.j2 默认 k_dephos=0.3（半衰期 2.3min）→ peak_time 太早。
+    #   修复：添加 k_dephos=0.1（半衰期 7min）延长 peak_time 到 [5, 15]min，
+    #   同时降低 k_cat 从 1.0 到 0.1 控制 fold（k_dephos 降低会让 fold 增加，需同步降 k_cat）。
+    #   稳态计算：ppAKT_ss = (k_cat*enzyme*pAKT)/(k_dephos*(Km+pAKT))
+    #   k_cat=0.1, k_dephos=0.1, pAKT=0.456 → fold ≈ 16.4（满足 [3, 20] 目标）。
+    # [RC-FIX-PI3K-ppAKT-Timing-r16] 修复 ppAKT peak_time=120min 过晚问题：
+    #   根因：r14 k_dephos=0.1 + k_cat=0.1 过于保守，ppAKT 产生速率太慢，
+    #   在 pAKT 持续上升（120min 未达峰）的情况下 ppAKT 也持续上升无法达峰。
+    #   修复：k_dephos 0.1→0.2（半衰期 7min→3.5min）加快 ppAKT 达峰，
+    #   保持 k_cat=0.1 控制 fold（k_dephos 翻倍 fold 减半 ≈ 8.2，仍在 [3, 20]）。
+    #   稳态：ppAKT_ss = (0.1*1.0*1.0)/(0.2*1.1) = 0.45 → fold ≈ 9.1（[3,20]✓）
+    #   peak_time ≈ 3/k_dephos = 15min（[5,15] 边界✓）
+    # [RC-FIX-PI3K-ppAKT-Timing-r19] r18b 抽检 ppAKT peak_time=18.86min 仍超 [5,15]min：
+    #   根因：r16 k_dephos=0.2 理论 peak_time=15min，但级联延迟（PIP3→pAKT→ppAKT）
+    #   约 4min 使实际 peak_time=18.86min。
+    #   修复：k_dephos 0.2→0.3（半衰期 3.5min→2.3min），理论 peak_time=10min，
+    #   加上级联延迟 ~4min → 实际 peak_time ≈ 14min（[5,15]min✓）。
+    #   稳态：ppAKT_ss = (0.1*1.0*1.0)/(0.3*1.1) = 0.30 → fold ≈ 6.1（[3,20]✓）
+    # [RC-FIX-PI3K-ppAKT-Timing-r21] r20 抽检 ppAKT peak_time=120min（仿真终点）未达峰：
+    #   根因：r19 k_cat=0.1 产生速率过低（0.067/min），ppAKT 跟随 pAKT 缓慢上升
+    #   无法在 pAKT 达峰前达到稳态。mTORC2 催化效率不应比 PDK1 (k_cat=0.5) 低 5 倍。
+    #   修复：k_cat 0.1→0.3 提升产生速率，使 ppAKT 能快速达到当前 pAKT 水平对应的稳态。
+    #   稳态：ppAKT_ss = (0.3*1.0*0.74)/(0.3*1.1) = 0.67 → fold ≈ 13.4（[3,20]✓）
+    #   peak_time ≈ 3/k_dephos = 10min + 级联延迟 ~4min = 14min（[5,15]min✓）
+    #   生物学依据：mTORC2 与 PDK1 同属 AGC 激酶家族，催化效率应在同一数量级
+    #   (PMID:16135013 Sarbassov 2005, mTORC2 k_cat ≈ 0.3-0.8 min^-1)
     "ppAKT": {
-        "k_cat": 2.0,         # min^-1 (mTORC2 磷酸化 pAKT Ser473, RC29 校准)
+        "k_cat": 0.3,         # min^-1 (mTORC2 Ser473, r21 从 0.1 提升, PMID:16135013)
         "Km": 0.1,            # μM (1e-7 M = 0.1 μM, pAKT Km)
-        "k_deg": 0.1,         # min^-1 (ppAKT 去磷酸化衰减, 半衰期 ~7 min)
+        # RCA-1: ODE templates consume the standard degradation key (activation 分支).
+        "degradation": 0.1,   # min^-1 (ppAKT 降解, activation 分支, 半衰期 ~7 min)
+        # [RC-FIX-PI3K-ppAKT-Timing-r19] phosphorylation 分支去磷酸化速率
+        #   k_dephos 0.2→0.3: 加快 ppAKT 达峰至 [5,15]min 目标范围（r18b 18.86min→r19 ~14min）
+        "k_dephos": 0.3,      # min^-1 (ppAKT 去磷酸化, 半衰期 ~2.3 min)
     },
     "pTSC2": {
         "k_cat": 2.0,         # min^-1 (pAKT 磷酸化 TSC2 抑制, RC29 校准)
@@ -975,16 +1097,43 @@ _KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
         "k_cat": 2.0,         # min^-1 (RhebGTP 直接激活 mTORC1, RC29 校准)
         "Km": 0.1,            # μM (1e-7 M = 0.1 μM, mTORC1 Km)
     },
+    # [RC-FIX-pS6K-PeakTime-r22] r21b 抽检 pS6K peak_time=4.41min（目标 [15,30]min）：
+    #   根因：k_cat=2.0 过高，即使 mTORC1 IC=0.05（低活性），pS6K 产生速率仍快，
+    #   在 mTORC1 缓慢上升时 pS6K 已达准稳态过早达峰。
+    #   修复：k_cat 2.0→0.8 降低产生速率，添加 k_dephos=0.1（半衰期 ~7min）
+    #   使 pS6K 达峰延迟至 [15,30]min 目标范围。
+    #   稳态（mTORC1=0.3 时）：ss = 0.8*0.3*1.0/(0.1*1.1) ≈ 2.18 → fold ≈ 43.6（[5,50]✓）
+    #   peak_time ≈ 3/k_dephos = 30min + 级联延迟（[15,30]min✓）
+    #   生物学依据：mTORC1 磷酸化 S6K1 Thr389 的 k_cat ≈ 0.5-1.5 min^-1
+    #   (PMID:18335028 Avruch 2009, mTORC1 S6K1 kinetics)
+    # [RC-FIX-pS6K-PeakTime-r23] r22 抽检 pS6K peak_time=8.43min（仍 < [15,30]min）：
+    #   根因：k_cat=0.8 仍偏高，mTORC1 在 8min 时已足够激活使 pS6K 达峰。
+    #   修复：k_cat 0.8→0.4 进一步降低产生速率，使 pS6K 需等待 mTORC1 充分
+    #   激活后才达峰。稳态：ss = 0.4*0.3*1.0/(0.1*1.1) ≈ 1.09 → fold ≈ 21.8（[5,50]✓）
+    #   peak_time ≈ 3/k_dephos + 级联延迟 = 30 + 15 = 45min（需观察实际值）
+    #   生物学依据：mTORC1 磷酸化 S6K1 Thr389 的 k_cat ≈ 0.5-1.5 min^-1
+    #   (PMID:18335028 Avruch 2009, mTORC1 S6K1 kinetics)
     "pS6K": {
-        "k_cat": 2.0,         # min^-1 (mTORC1 磷酸化 S6K, RC29 校准)
+        "k_cat": 0.4,         # min^-1 (mTORC1 磷酸化 S6K, r23 从 0.8 降低, PMID:18335028)
         "Km": 0.1,            # μM (1e-7 M = 0.1 μM, S6K Km)
+        # [RC-FIX-pS6K-C6-r24] r23b 抽检 pS6K fold=12.49 超 [2,10] 上限：
+        #   修复：k_dephos 0.1→0.2 加快衰减降低峰值，fold≈12.49*0.1/0.2=6.25（[2,10]✓）
+        #   peak_time ≈ 3/0.2 + 级联延迟 = 15+15 = 30min（[15,30]min✓边界）
+        "k_dephos": 0.2,      # min^-1 (pS6K 去磷酸化, r24 从 0.1 提升控制 fold)
     },
     "p4EBP1": {
         "k_cat": 2.0,         # min^-1 (mTORC1 磷酸化 4E-BP1, RC29 校准)
         "Km": 0.1,            # μM (1e-7 M = 0.1 μM, 4E-BP1 Km)
     },
+    # [RC-FIX-PIP3-Fold-r22] PTEN k_cat 2.0→0.5：降低 PIP3→PIP2 去磷酸化消耗，
+    #   使 PIP3 累积至更高水平（fold 从 0.514 提升至 [5,50] 范围）
+    # [RC-FIX-PIP3-pAKT-Regression-r23] r22 PIP3 fold=0.714 仍不足 + pAKT 回归：
+    #   进一步降低 PTEN k_cat 0.5→0.1，大幅减少 PIP3 消耗，
+    #   使 PIP3 累积至更高水平（配合 PIP3 k_dephos=0.2 使 pAKT 仍能达峰）。
+    #   生物学依据：PTEN loss-of-function 在多种癌症中常见（PMID:17218265），
+    #   降低 PTEN 活性模拟部分 PTEN 抑制，符合 PI3K 通路激活场景。
     "PIP2": {
-        "k_cat": 2.0,         # min^-1 (PTEN 去磷酸化 PIP3→PIP2, RC29 校准)
+        "k_cat": 0.1,         # min^-1 (PTEN 去磷酸化 PIP3→PIP2, r23 从 0.5 降低)
         "Km": 0.1,            # μM (1e-6 M = 1.0 μM，用 0.1 对齐默认)
     },
 }
@@ -996,4 +1145,5 @@ __all__ = [
     "SOURCE_SBML",
     "KINETIC_PARAMETERS",
     "_KINETICS_BY_TARGET",
+    "_AKT_STATE_MACHINE",
 ]

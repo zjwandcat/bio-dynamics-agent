@@ -235,10 +235,14 @@ export function parameterSweep(
 // Legacy v3 endpoints (kept verbatim — AI Assistant + admin contracts)
 // ---------------------------------------------------------------------------
 
-/** LLM / embedding / rerank provider status (mirrors `/api/models/status`). */
+/** LLM / embedding / rerank provider status (mirrors `/api/models/status`).
+ *  支持三链路容灾：primary LLM → backup LLM → backup2 LLM。
+ */
 export interface ModelStatusData {
   llm: { provider: string; model: string; base_url: string };
   backup_llm: { provider: string; model: string; base_url: string } | null;
+  backup2_llm: { provider: string; model: string; base_url: string } | null;
+  user_selected_llm: string | null;
   embedding: { provider: string; model: string };
   rerank: {
     provider: string;
@@ -246,6 +250,34 @@ export interface ModelStatusData {
     provider_priority: string[];
     candidates: Array<{ provider: string; model: string; display_name: string }>;
   };
+}
+
+/** LLM 模型可选项（来自 /api/llm/models）。 */
+export interface LlmModelOption {
+  model: string;
+  provider: string;
+  base_url: string;
+  role: "primary" | "backup" | "backup2" | "unknown";
+}
+
+/** /api/llm/models 响应：可选模型列表 + 当前主用 + 容灾链路顺序。 */
+export interface LlmModelsData {
+  models: LlmModelOption[];
+  current: string;
+  chain: string[];
+}
+
+/** /api/llm/select 响应：切换结果。 */
+export interface LlmSelectResult {
+  ok: boolean;
+  message?: string;
+  primary?: string;
+  backup?: string;
+  backup2?: string;
+  chain?: string[];
+  current?: string;
+  error?: string;
+  available?: string[];
 }
 
 /** RAG knowledge-base status (mirrors `/api/admin/rag-status`). */
@@ -264,6 +296,18 @@ export function fetchRagStatus(signal?: AbortSignal): Promise<RagStatusData> {
 /** LLM / embedding / rerank provider status shown in the header control. */
 export function fetchModelStatus(signal?: AbortSignal): Promise<ModelStatusData> {
   return getJSON<ModelStatusData>(`${V3_PREFIX}/models/status`, signal);
+}
+
+/** 获取所有可用 LLM 模型列表（供前端切换 UI 渲染）。 */
+export function fetchLlmModels(signal?: AbortSignal): Promise<LlmModelsData> {
+  return getJSON<LlmModelsData>(`${V3_PREFIX}/llm/models`, signal);
+}
+
+/** 切换主 LLM 模型（重新组合三链路容灾顺序）。
+ *  传空字符串或 "default" 恢复默认链路。
+ */
+export function selectLlm(model: string): Promise<LlmSelectResult> {
+  return postJSON<LlmSelectResult>(`${V3_PREFIX}/llm/select`, { model });
 }
 
 /** Trigger a vector-db rebuild. */

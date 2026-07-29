@@ -82,11 +82,11 @@ SOURCE_SBML: str = get_biomodels_id(PATHWAY_TAG)
 # Validation benchmark PMID 引用（Polakis 2002 Wnt signaling）
 _PMID_POLAKIS_2002: str = "PMID:12064617"
 
-# β-catenin→Axin2 转录延迟负反馈延迟（DDE，分钟）
-# Polakis 2002 模型中 β-catenin 入核转录激活 Axin2 mRNA（含 30 min 转录延迟），
-# Axin2 蛋白重新合成促进 destruction complex 形成，形成 delay=30min 延迟负反馈，
-# 调节 β-catenin 稳态水平与 Axin2 mRNA 1-2h 达峰。
-_WNT_BCAT_AXIN2_DELAY_MINUTES: float = 30.0
+# β-catenin→Axin2 transcription/translation feedback delay.  A 60-minute
+# effective delay captures the measured 1-2 h AXIN2 response window while the
+# underlying Lee 2003 mechanism remains unchanged (RCA-3, PMID:14551908).
+_WNT_AXIN2_DELAY_MINUTES: float = 60.0
+_WNT_BCAT_AXIN2_DELAY_MINUTES: float = _WNT_AXIN2_DELAY_MINUTES
 
 
 # =============================================================================
@@ -644,7 +644,7 @@ _WNT_COMPOSITE_REACTIONS: list[dict[str, Any]] = [
 # + LRP6 磷酸化维持 destruction complex 解离正反馈）
 # =============================================================================
 _WNT_FEEDBACK_LOOPS: list[dict[str, Any]] = [
-    # 1. β-catenin→Axin2 转录延迟负反馈（DDE, delay=30min）
+    # 1. β-catenin→Axin2 转录延迟负反馈（DDE, delay=60min）
     #    Polakis 2002 (PMID:12064617) 经典模型：
     #    - β-catenin 入核转录激活 Axin2 mRNA（含 30 min 转录延迟）
     #    - Axin2 蛋白重新合成促进 destruction complex 形成，降解 β-catenin
@@ -658,13 +658,13 @@ _WNT_FEEDBACK_LOOPS: list[dict[str, Any]] = [
             "Axin2_mRNA",
             "Axin2",
         ],
-        "delay_minutes": _WNT_BCAT_AXIN2_DELAY_MINUTES,  # 30.0 min 转录延迟
+        "delay_minutes": _WNT_AXIN2_DELAY_MINUTES,
         "bistable": False,
         "template": "destruction_complex.j2",
         "description": (
             "β-catenin→Axin2 转录延迟负反馈（bCatenin_nuclear 转录激活 Axin2 mRNA, "
             "Axin2 蛋白重新合成促进 destruction complex 形成降解 β-catenin, "
-            "delay=30min, Axin2 mRNA 1-2h 达峰, Polakis 2002）"
+            "delay=60min, Axin2 mRNA 1-2h 达峰, Lee 2003）"
         ),
         "source_pmid": _PMID_POLAKIS_2002,
         "dde_solver": "solvers/dde_solver.py",
@@ -967,7 +967,7 @@ class WntSpecialist(PathwaySpecialistBase):
             if module_name == MODULE_FEEDBACK:
                 return FeedbackModuleData(
                     feedback_loops=list(_WNT_FEEDBACK_LOOPS),
-                    delay_minutes=_WNT_BCAT_AXIN2_DELAY_MINUTES,
+                    delay_minutes=_WNT_AXIN2_DELAY_MINUTES,
                     loop_type="negative",   # β-catenin→Axin2 负反馈为主
                 )
             if module_name == MODULE_CROSSTALK:
@@ -1387,10 +1387,13 @@ _KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
         "Km": 0.1,                    # μM (原 1e-7 M = 0.1 μM)
     },
     "bcat_degraded": {
-        "k_degradation": 0.5,         # min^-1 (蛋白酶体降解 ub_bcat, Lee 2003, step5)
+        # RCA-1: standard template key plus k_cat compatibility fallback.
+        "degradation": 0.5,           # min^-1 (蛋白酶体降解 ub_bcat, Lee 2003, step5)
+        "k_cat": 0.5,
     },
     "bCatenin_nuclear": {
         "k_import": 0.1,              # min^-1 (bCatenin 入核, Lee 2003)
+        "k_cat": 0.1,                 # fallback for generic activation templates
     },
     "TCF_LEF_bcat_complex": {
         # k_on SKIP: 单位 M^-1 min^-1 与 μM 模型冲突
@@ -1402,6 +1405,7 @@ _KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
     },
     "Axin2": {
         "k_translation": 0.1,         # min^-1 (Axin2_mRNA 翻译, Lee 2003, 负反馈重建)
+        "k_cat": 0.1,                 # fallback for generic activation templates
     },
     "Cyclin_D1_mRNA": {
         "k_transcription": 1.0,       # min^-1 (TCF_LEF_bcat 转录激活 Cyclin D1, Polakis 2002, cross-talk)
@@ -1420,4 +1424,5 @@ __all__ = [
     "SOURCE_SBML",
     "KINETIC_PARAMETERS",
     "_KINETICS_BY_TARGET",
+    "_WNT_AXIN2_DELAY_MINUTES",
 ]

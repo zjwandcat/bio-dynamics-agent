@@ -2,8 +2,8 @@
 # 对应 PART C5 + 审计 §3.2 无 DDE 支持。
 #
 # 设计原则：
-# 1. jitcdde 可用时使用 DDE 求解（转录延迟真实生效）
-# 2. jitcdde 不可用时降级为 scipy.integrate.solve_ivp（延迟失效但仍可仿真）
+# 1. 数值 RHS 使用 method-of-steps 求解（转录延迟真实生效）
+# 2. jitcdde 仅保留为可选依赖探针；通用 NumPy RHS 不能直接符号化
 # 3. 接口与 scipy.solve_ivp 对齐，便于 v4 模板无缝替换
 # 4. 不修改 sandbox.py（不可碰清单）
 
@@ -36,8 +36,12 @@ except ImportError:
 
 
 def is_dde_available() -> bool:
-    """返回 jitcdde 是否可用。"""
-    return _JITCDDE_AVAILABLE
+    """Return whether the supported numerical DDE backend is available."""
+    try:
+        import scipy.integrate  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 def solve_dde(
@@ -78,30 +82,124 @@ def solve_dde(
     y0_arr = np.asarray(y0, dtype=float)
     t_start, t_end = t_span
 
-    if _JITCDDE_AVAILABLE and delay > 0:
-        # IB-006 修复：jitcdde 可用时真正执行 DDE 求解
-        # 旧实现："MVP 阶段降级为 ODE"（jitcdde 可用但不用）
-        # 新实现：使用 jitcdde 的 lambda-based API 进行真实 DDE 求解
+    if delay > 0:
+        # Generic agent templates provide numerical NumPy RHS functions.  They
+        # cannot be converted safely to jitcdde symbolic expressions, so use a
+        # standard method-of-steps integrator with dense history interpolation.
         try:
-            return _solve_dde_jitcdde(rhs, t_span, y0_arr, delay, t_eval,
-                                       max_step, rtol, atol, history)
+            return _solve_dde_method_of_steps(
+                rhs, t_span, y0_arr, delay, t_eval, history,
+                max_step, rtol, atol,
+            )
         except Exception as e:
-            # jitcdde 求解失败时降级为 ODE，但明确记录
+            # Preserve operational behavior, but make the scientific downgrade
+            # explicit in both logs and result metadata.
             logger.error(
-                "jitcdde DDE 求解失败 (%s)，降级为 ODE（延迟失效）", e
+                "method-of-steps DDE 求解失败 (%s)，降级为 ODE（延迟失效）", e
             )
             return _solve_ode_fallback(rhs, t_span, y0_arr, t_eval,
                                         max_step, rtol, atol, delay)
     else:
-        # ODE 降级（延迟项近似为 y(t)）
-        if delay > 0:
-            logger.warning(
-                "jitcdde 不可用，DDE 延迟 τ=%.2f 将失效（近似为 y(t)）。"
-                "如需真实 DDE 求解，请安装：pip install jitcdde",
-                delay,
-            )
+        # No delay requested: the DDE contract reduces exactly to an ODE.
         return _solve_ode_fallback(rhs, t_span, y0_arr, t_eval,
                                     max_step, rtol, atol, 0.0)
+
+
+def _solve_dde_method_of_steps(
+    rhs: Callable[[float, np.ndarray, np.ndarray], np.ndarray],
+    t_span: tuple[float, float],
+    y0: np.ndarray,
+    delay: float,
+    t_eval: np.ndarray | None,
+    history: Callable[[float], np.ndarray] | None,
+    max_step: float,
+    rtol: float,
+    atol: float,
+) -> dict[str, Any]:
+    """Solve a constant-delay DDE with the method of steps.
+
+    Each integration segment is no longer than ``delay``. Therefore every
+    delayed lookup in the current segment lies in the supplied history or a
+    previously completed dense-output segment.
+    """
+    from scipy.integrate import solve_ivp
+
+    if not np.isfinite(delay) or delay <= 0:
+        raise ValueError(f"delay must be positive and finite, got {delay!r}")
+
+    t_start, t_end = map(float, t_span)
+    if not np.isfinite(t_start) or not np.isfinite(t_end) or t_end <= t_start:
+        raise ValueError(f"invalid t_span={t_span!r}")
+
+    if t_eval is None:
+        eval_points = np.linspace(t_start, t_end, 200)
+    else:
+        eval_points = np.asarray(t_eval, dtype=float)
+        if eval_points.ndim != 1 or eval_points.size == 0:
+            raise ValueError("t_eval must be a non-empty one-dimensional array")
+        if np.any(np.diff(eval_points) < 0):
+            raise ValueError("t_eval must be sorted")
+        if eval_points[0] < t_start or eval_points[-1] > t_end:
+            raise ValueError("t_eval points must lie within t_span")
+
+    history_fn = history or (lambda _t: y0)
+    completed: list[tuple[float, float, Any]] = []
+
+    def past_value(query_time: float) -> np.ndarray:
+        if query_time <= t_start + 1e-12:
+            value = np.asarray(history_fn(query_time), dtype=float)
+            if value.shape != y0.shape:
+                raise ValueError("history function returned an incompatible shape")
+            return value
+        for seg_start, seg_end, dense in reversed(completed):
+            if seg_start - 1e-10 <= query_time <= seg_end + 1e-10:
+                return np.asarray(dense(query_time), dtype=float)
+        raise RuntimeError(f"delayed state unavailable at t={query_time:.9g}")
+
+    current_t = t_start
+    current_y = np.asarray(y0, dtype=float).copy()
+    while current_t < t_end - 1e-12:
+        segment_end = min(current_t + delay, t_end)
+
+        def segment_rhs(t: float, y: np.ndarray) -> np.ndarray:
+            delayed = past_value(t - delay)
+            value = np.asarray(rhs(t, y, delayed), dtype=float)
+            if value.shape != current_y.shape:
+                raise ValueError("rhs returned an incompatible shape")
+            return value
+
+        sol = solve_ivp(
+            segment_rhs,
+            (current_t, segment_end),
+            current_y,
+            method="LSODA",
+            dense_output=True,
+            max_step=min(max_step, delay),
+            rtol=rtol,
+            atol=atol,
+        )
+        if not sol.success or sol.sol is None:
+            raise RuntimeError(sol.message or "DDE segment integration failed")
+        completed.append((current_t, segment_end, sol.sol))
+        current_t = segment_end
+        current_y = np.asarray(sol.y[:, -1], dtype=float)
+
+    values: list[np.ndarray] = []
+    for point in eval_points:
+        if point <= t_start + 1e-12:
+            values.append(np.asarray(y0, dtype=float).copy())
+            continue
+        values.append(past_value(float(point)))
+
+    return {
+        "t": eval_points,
+        "y": np.vstack(values),
+        "dde_used": True,
+        "delay": float(delay),
+        "solver": f"scipy.solve_ivp method-of-steps (LSODA, delay={delay:.6g})",
+        "backend": "method_of_steps",
+        "jitcdde_available": _JITCDDE_AVAILABLE,
+    }
 
 
 def _solve_dde_jitcdde(

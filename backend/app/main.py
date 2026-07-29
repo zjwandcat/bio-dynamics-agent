@@ -830,12 +830,21 @@ def _get_active_embedding_model() -> tuple[str, str]:
 
 @app.get("/api/models/status")
 async def models_status() -> Dict[str, Any]:
-    """返回当前使用的大模型供应商与模型名，供前端展示。"""
+    """返回当前使用的大模型供应商与模型名，供前端展示。
+
+    支持三链路容灾展示：primary LLM → backup LLM → backup2 LLM。
+    若用户在前端选择了某个模型（USER_SELECTED_LLM），则按选择顺序展示。
+    """
     embedding_provider, embedding_model_name = _get_active_embedding_model()
     llm_provider = _derive_provider_name(settings.OPENAI_BASE_URL, "Primary LLM")
     backup_provider = (
         _derive_provider_name(settings.BACKUP_BASE_URL, "Backup LLM")
         if settings.BACKUP_MODEL
+        else None
+    )
+    backup2_provider = (
+        _derive_provider_name(settings.BACKUP2_BASE_URL, "Backup2 LLM")
+        if settings.BACKUP2_MODEL
         else None
     )
 
@@ -863,6 +872,16 @@ async def models_status() -> Dict[str, Any]:
             if settings.BACKUP_MODEL
             else None
         ),
+        "backup2_llm": (
+            {
+                "provider": backup2_provider,
+                "model": settings.BACKUP2_MODEL,
+                "base_url": settings.BACKUP2_BASE_URL,
+            }
+            if settings.BACKUP2_MODEL
+            else None
+        ),
+        "user_selected_llm": settings.USER_SELECTED_LLM or None,
         "embedding": {
             "provider": embedding_provider,
             "model": embedding_model_name,
@@ -874,6 +893,121 @@ async def models_status() -> Dict[str, Any]:
             "candidates": rerank_candidates,
         },
     }
+
+
+@app.get("/api/llm/models")
+async def llm_models() -> Dict[str, Any]:
+    """返回所有可用的 LLM 模型列表，供前端选择 UI 渲染。
+
+    Returns:
+        models: 可选模型列表，每项含 model/provider/base_url/role 字段
+        current: 当前作为 primary 的模型名
+        chain: 当前容灾链路 [primary, backup, backup2]
+    """
+    from app.config import LLM_REGISTRY, llm
+
+    def _role_of(model_name: str) -> str:
+        if model_name == settings.OPENAI_MODEL:
+            return "primary"
+        if model_name == settings.BACKUP_MODEL:
+            return "backup"
+        if model_name == settings.BACKUP2_MODEL:
+            return "backup2"
+        return "unknown"
+
+    models: list[dict[str, Any]] = []
+    for model_name in (
+        settings.OPENAI_MODEL,
+        settings.BACKUP_MODEL,
+        settings.BACKUP2_MODEL,
+    ):
+        if not model_name or model_name not in LLM_REGISTRY:
+            continue
+        base_url = (
+            settings.OPENAI_BASE_URL
+            if model_name == settings.OPENAI_MODEL
+            else settings.BACKUP_BASE_URL
+            if model_name == settings.BACKUP_MODEL
+            else settings.BACKUP2_BASE_URL
+        )
+        models.append({
+            "model": model_name,
+            "provider": _derive_provider_name(base_url, model_name),
+            "base_url": base_url,
+            "role": _role_of(model_name),
+        })
+
+    # 当前 primary（根据 USER_SELECTED_LLM 或默认 OPENAI_MODEL）
+    current = settings.USER_SELECTED_LLM or settings.OPENAI_MODEL
+
+    # 当前容灾链路顺序
+    chain: list[str] = []
+    if llm.primary is not None:
+        chain.append(_llm_model_name(llm.primary))
+    if llm.backup is not None:
+        chain.append(_llm_model_name(llm.backup))
+    if llm.backup2 is not None:
+        chain.append(_llm_model_name(llm.backup2))
+
+    return {
+        "models": models,
+        "current": current,
+        "chain": chain,
+    }
+
+
+def _llm_model_name(llm_instance: Any) -> str:
+    """从 ChatOpenAI 实例提取 model_name，兼容不同 LangChain 版本。"""
+    for attr in ("model_name", "model"):
+        val = getattr(llm_instance, attr, None)
+        if val:
+            return str(val)
+    return "unknown"
+
+
+@app.post("/api/llm/select")
+async def llm_select(request: Request) -> Dict[str, Any]:
+    """切换主 LLM 模型，重新组合三链路容灾顺序。
+
+    请求体 JSON 格式：{"model": "poolside/laguna-s-2.1:free"}
+    若 model 为空字符串或 "default"，则恢复默认链路顺序。
+    """
+    from app.config import LLM_REGISTRY, set_active_llm
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    model_name = (body.get("model") or "").strip()
+
+    # 空字符串或 "default" 恢复默认顺序（set_active_llm 内部处理）
+    if not model_name or model_name.lower() == "default":
+        result = set_active_llm("")
+        return {
+            "ok": True,
+            "message": "Restored default LLM chain order",
+            **result,
+        }
+
+    if model_name not in LLM_REGISTRY:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "ok": False,
+                "error": f"Model '{model_name}' not available",
+                "available": list(LLM_REGISTRY.keys()),
+            },
+        )
+
+    try:
+        result = set_active_llm(model_name)
+        return {"ok": True, "message": f"Primary LLM switched to {model_name}", **result}
+    except Exception as exc:
+        logger.error("Failed to switch LLM: %s", exc)
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": str(exc)},
+        )
 
 
 @app.post("/api/chat/clear-memory")

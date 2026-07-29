@@ -1,9 +1,9 @@
 "use client";
 
 import React from "react";
-import { Atom, ExternalLink } from "lucide-react";
+import { Atom, ExternalLink, AlertCircle } from "lucide-react";
 import Link from "next/link";
-import { useWorkbenchStore, type Message } from "@/lib/store";
+import { useWorkbenchStore } from "@/lib/store";
 import { NaturalLanguageInput } from "./NaturalLanguageInput";
 import { AIWorkflowSteps, WorkflowIdleHint } from "./AIWorkflowSteps";
 import { ResultsTabs } from "./ResultsTabs";
@@ -11,33 +11,35 @@ import { ResultsTabs } from "./ResultsTabs";
 /**
  * MinimalApp —— 极简 Auto-Chat 仿真产品主界面。
  *
- * 单栏纵向布局，对齐用户指定的 5 模块结构：
+ * 单栏纵向布局：
+ *   Header → Natural Language Input → AI Workflow → Results Tabs
  *
- *   ┌───────────────────────────────────────┐
- *   │  Header（BioDynamics · 品牌标语）       │
- *   ├───────────────────────────────────────┤
- *   │  Natural Language Input（假说 + 模拟）   │
- *   ├───────────────────────────────────────┤
- *   │  AI Workflow（7 步自动进度）            │
- *   ├───────────────────────────────────────┤
- *   │  Results Tabs（Graph|Curves|Validation|Report）│
- *   └───────────────────────────────────────┘
- *
- * 不展示任何空壳 / 高级功能（Sensitivity、SBML、Calibration 等，见
- * TODO.md）。所有 SSE 事件由 store.ingestSSEEvent 统一消费，本组件只读
- * 顶层派生状态，保持极简与解耦。
+ * 所有 SSE 事件由 store.ingestSSEEvent 统一消费，本组件只读顶层派生状态。
+ * 错误反馈：当 sendMessage 的 onError 触发时，store 会 append 一条
+ * role=agent type=text 的错误消息；本组件取最后一条 agent text 作为
+ * 实时状态/错误行展示，不再用脆弱的中文关键词过滤。
  */
 export function MinimalApp() {
   const isStreaming = useWorkbenchStore((s) => s.isStreaming);
-  // 订阅稳定的 messages 数组引用（仅在 messages 真实变化时变更），
-  // 在渲染体内派生 lastError，避免每次 store 更新都产生新数组引用
-  // 触发无谓重渲染（曾导致 E2E 中按钮 "unstable" 点击超时）。
   const messages = useWorkbenchStore((s) => s.messages);
-  const lastError = messages.reduceRight<Message | undefined>(
-    (acc, m) => acc ?? (m.type === "text" && m.content.includes("错误") ? m : undefined),
-    undefined
-  );
   const currentNode = useWorkbenchStore((s) => s.currentNode);
+
+  // 取最后一条 agent text 消息作为状态/错误反馈（含 SSE error 与 onError）。
+  // store 的 error 事件和 onError 回调都会 append role=agent type=text，
+  // 所以这里能稳定捕获连接失败、流读取失败等所有错误。
+  const lastAgentText = messages.reduceRight<
+    | { content: string; isError: boolean }
+    | undefined
+  >((acc, m) => {
+    if (acc) return acc;
+    if (m.role === "agent" && m.type === "text" && m.content) {
+      // 识别错误类消息（后端 error 事件 / 网络失败 / 流错误）
+      const isError =
+        /错误|error|失败|failed|refused|fetch|连接|timeout/i.test(m.content);
+      return { content: m.content, isError };
+    }
+    return undefined;
+  }, undefined);
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -81,7 +83,7 @@ export function MinimalApp() {
           <SectionLabel index="02" title="AI Workflow" />
           <div className="mt-2 space-y-3">
             <AIWorkflowSteps />
-            {/* 实时状态行：当前节点 / 错误 */}
+            {/* 实时状态行：当前节点 */}
             {(isStreaming || currentNode) && (
               <p className="font-mono text-[11px] text-zinc-500">
                 {isStreaming ? (
@@ -94,10 +96,21 @@ export function MinimalApp() {
                 )}
               </p>
             )}
-            {lastError && (
-              <p className="rounded-md border border-red-900/40 bg-red-950/30 px-3 py-2 text-xs text-red-300">
-                {lastError.content}
-              </p>
+            {/* 错误/状态反馈：捕获所有 agent text（含网络错误） */}
+            {lastAgentText && !isStreaming && (
+              <div
+                className={
+                  lastAgentText.isError
+                    ? "flex items-start gap-2 rounded-md border border-red-900/40 bg-red-950/30 px-3 py-2 text-xs text-red-300"
+                    : "rounded-md border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-xs text-zinc-400"
+                }
+                role={lastAgentText.isError ? "alert" : "status"}
+              >
+                {lastAgentText.isError && (
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                )}
+                <span className="break-words">{lastAgentText.content}</span>
+              </div>
             )}
             <WorkflowIdleHint />
           </div>

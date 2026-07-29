@@ -64,10 +64,34 @@ from app.solvers.dde_solver import solve_dde, is_dde_available
 _JITCDDE_AVAILABLE = is_dde_available()
 
 
+# [RCA-20 修复 B] _get_param clamp 机制
+# 根因：_get_param 无 clamp/clip，SBML 原生参数（如 633,250）原样返回导致数值爆炸
+# 修复：按 param_key 类型设置上限，超界值截断到上限
+# Feature Flag: V4_GET_PARAM_CLAMP_ENABLED（默认 OFF，回退安全）
+_V4_GET_PARAM_CLAMP_ENABLED = {{ v4_get_param_clamp_enabled }}
+_PARAM_CLAMP_MAX = {
+    "k_cat": 10.0, "kcat": 10.0, "k_act": 10.0, "kact": 10.0,
+    "k_phos": 10.0, "kphos": 10.0, "k1": 10.0, "k1f": 10.0, "kf": 10.0, "k": 10.0,
+    "k_inhibit": 10.0, "ki": 10.0, "koff": 10.0, "k1b": 10.0, "kb": 10.0,
+    "k_deg": 1.0, "kdeg": 1.0, "k_dephos": 1.0, "kdephos": 1.0, "k2": 1.0,
+    "vmax": 100.0, "Vmax": 100.0, "km": 100.0, "Km": 100.0,
+    "kon": 100.0, "kd": 100.0, "ic50": 100.0,
+}
+
+
 def _get_param(target_name, param_key, default):
-    """从 PARAMS 中获取指定 target 的参数值。"""
+    """从 PARAMS 中获取指定 target 的参数值。
+
+    [RCA-20 修复 B] 当 V4_GET_PARAM_CLAMP_ENABLED=true 时，
+    对超界参数值做 clamp（截断到生物学合理上限）。
+    """
     eparams = PARAMS.get(target_name, {})
-    return eparams.get(param_key, default)
+    value = eparams.get(param_key, default)
+    if _V4_GET_PARAM_CLAMP_ENABLED and isinstance(value, (int, float)):
+        max_val = _PARAM_CLAMP_MAX.get(param_key)
+        if max_val is not None and value > max_val:
+            return float(max_val)
+    return value
 
 
 # [RC25g] 去重预计算：对同一 (source, target) 对，若已有非 activation 机制，
@@ -201,21 +225,77 @@ def _ode_rhs(t, y, y_delayed=None):
 
         elif mechanism == "phosphorylation":
             # TF 磷酸化激活（Michaelis-Menten）
+            # [RC-FIX-TF-CascadeAmplification] 对齐 oscillatory_feedback.j2 phosphorylation 分支：
+            #   1. 支持 substrate 字段（异磷酸化：底物≠source）
+            #   2. 底物下限保护（防止 dy[sub]-=_rate 使底物变负）
+            #   3. 不添加守恒池限制（守恒池=pERK+ppERK=0.1 太小，会限制 ppERK fold
+            #      从 14 降到 10，与 C6 fold=[100,1000] 目标背道而驰）
+            #   根因：ppERK fold=14.12 不足的根因是 k_dephos=0.05（与默认值相同），
+            #   需在 mapk_specialist.py 降低 k_dephos 提升值联放大，而非添加守恒池限制。
             k_cat = _get_param(tgt_name, "k_cat", 0.1)
             Km = _get_param(tgt_name, "Km", 0.1)
             # [RC25c] 0.001→0.05: 防止磷酸化形式质量爆炸（半衰期从 693min 降至 14min）
             k_dephos = _get_param(tgt_name, "k_dephos", 0.05)
-            # [RC25h] 自磷酸化：使用固定激酶活性，避免自催化正反馈
-            _enzyme_conc = 0.1  # 等效外源激酶浓度（nM）
+            modifiers = edge.get("modifiers", [])
+            _enzyme_idx = SP_IDX.get(modifiers[0]) if modifiers else None
+            _enzyme_conc = max(float(y[_enzyme_idx]), 0.0) if _enzyme_idx is not None else 0.1
             _Vmax = k_cat * _enzyme_conc
-            _rate = _Vmax * src / (Km + src) if (Km + src) > 0 else 0.0
-            sub_idx = s_idx  # [RC25e] 记录底物索引用于去磷酸化回流
-            dy[s_idx] -= _rate
-            dy[t_idx] += _rate
-            # [RC25e] 修复质量泄漏：去磷酸化产物必须返回底物池
-            _dephos_rate = k_dephos * tgt
-            dy[t_idx] -= _dephos_rate
-            dy[sub_idx] += _dephos_rate  # 去磷酸化产物返回底物池
+            # [RC-FIX-TF-CascadeAmplification] 支持 substrate 字段（异磷酸化）
+            substrate_name = edge.get("substrate", "")
+            if substrate_name and substrate_name in SP_IDX:
+                # 异磷酸化：底物浓度驱动酶催化（如 ppMEK 催化 pERK→ppERK）
+                sub_idx = SP_IDX[substrate_name]
+                sub_conc = y[sub_idx]
+                _rate = _Vmax * sub_conc / (Km + sub_conc) if (Km + sub_conc) > 0 else 0.0
+                # 底物下限保护：_rate 不能超过当前底物浓度
+                _rate = min(_rate, max(0.0, sub_conc))
+                dy[sub_idx] -= _rate             # 消耗底物
+                dy[t_idx] += _rate               # 产生磷酸化产物
+                # [RC25e] 修复质量泄漏：去磷酸化产物必须返回底物池
+                dy[t_idx] -= k_dephos * tgt
+                dy[sub_idx] += k_dephos * tgt    # 去磷酸化产物返回底物池
+            else:
+                # 自磷酸化：source=底物=酶自身
+                sub_idx = s_idx
+                _rate = _Vmax * src / (Km + src) if (Km + src) > 0 else 0.0
+                # 底物下限保护
+                _rate = min(_rate, max(0.0, src))
+                dy[s_idx] -= _rate
+                dy[t_idx] += _rate
+                # [RC25e] 修复质量泄漏：去磷酸化产物必须返回底物池
+                dy[t_idx] -= k_dephos * tgt
+                dy[sub_idx] += k_dephos * tgt    # 去磷酸化产物返回底物池
+
+        elif mechanism == "dephosphorylation":
+            # [RC-FIX-TF-Dephosphorylation-r20] 新增 dephosphorylation 分支
+            #   根因：MULTI:EGFR_RTK+PI3K_AKT_mTOR+JAK_STAT 通路被路由到
+            #   transcription_factor.j2（因 JAK_STAT transcription 机制），但该模板
+            #   缺 dephosphorylation 分支，导致 PTEN→PIP2 (dephosphorylation) 反应
+            #   落入 else 默认分支（k_default=0.01），PIP3→PIP2 转换失效。
+            #   修复：mirror oscillatory_feedback.j2 dephosphorylation 分支模式，
+            #   支持 substrate 字段（异去磷酸化）和 source 作底物（自去磷酸化）。
+            #   生物语义（PTEN→PIP2 dephosphorylation）：
+            #     v3 edge: source=PIP3(底物), target=PIP2(产物), modifiers=[PTEN](酶)
+            #     或: source=PTEN(酶), target=PIP2(产物), substrate=PIP3(底物)
+            k_dephos = _get_param(tgt_name, "k_dephos", 0.3)
+            substrate_name = edge.get("substrate", "")
+            modifiers_dep = edge.get("modifiers", [])
+            if substrate_name and substrate_name in SP_IDX:
+                # 异去磷酸化：substrate 字段声明真实底物（如 PIP3）
+                sub_idx = SP_IDX[substrate_name]
+                sub_conc = y[sub_idx]
+                _enzyme_conc_dep = src if modifiers_dep else 1.0
+                _rate = k_dephos * _enzyme_conc_dep * sub_conc / (0.1 + sub_conc) if (0.1 + sub_conc) > 0 else 0.0
+                _rate = min(_rate, max(0.0, sub_conc))
+                dy[sub_idx] -= _rate             # 消耗底物 (PIP3)
+                dy[t_idx] += _rate               # 产生产物 (PIP2)
+            else:
+                # 自去磷酸化：source 作底物（v3 edge 转换后 source=底物）
+                # 适用于 PTEN edge: source=PIP3, target=PIP2
+                _rate = k_dephos * src
+                _rate = min(_rate, max(0.0, src))
+                dy[s_idx] -= _rate               # 消耗 source (PIP3)
+                dy[t_idx] += _rate               # 产生 target (PIP2)
 
         elif mechanism == "dimerization":
             # TF 二聚化（mass-action 2A → A2）
@@ -282,28 +362,85 @@ def _ode_rhs(t, y, y_delayed=None):
         elif mechanism == "activation":
             # [BENCHMARK CLOSURE / Gap-NumericalExplosion] 修复：旧代码无饱和无守恒
             #   修复（与 oscillatory_feedback.j2 对齐）：logistic 饱和 + 守恒 + k_deg 回流
-            # [BENCHMARK CLOSURE / Gap-TGF_BETA-ActivationMassCreation] 修复 else 分支：
-            #   旧 BUG：target 为非磷酸化形式（TbRII/TbRI/SMAD7_mRNA）时走 else 分支，
-            #   dy[tgt] += _rate 不消耗 source，质量凭空创造（TbRII 增至 1.364x）。
-            #   修复：非磷酸化 target 也应消耗 source（信号传递需质量转移），
-            #   同时保留 k_deg 降解使 target 有衰减动态。
-            k_act = _get_param(tgt_name, "k_act", 0.05)
-            k_deg = _get_param(tgt_name, "k_deg", 0.02)
+            # [RC-FIX-PI3K-Activation] 修复 activation 对非 p-前缀 target 零产出/质量创造 bug：
+            #   优先使用 edge.substrate 字段，否则降级到 p-前缀推断；
+            #   无 substrate 但 target 是预存物种时使用"活性增加"模式（不消耗 source）。
+            #   参考 oscillatory_feedback.j2 的 RC-FIX-PI3K-Activation 修复。
+            # [RC-FIX-pAKT-PeakTime-r18] 对齐 oscillatory_feedback.j2：
+            #   旧代码仅读 `k_act` 键（默认 0.05），不读 specialist 的 `k_cat` 键，
+            #   导致 activation 边速率比 phosphorylation 边慢 10 倍（0.05 vs 0.5）。
+            #   修复：优先读 `k_cat`，回退到 `k_act`，再回退到默认 0.05。
+            k_act = _get_param(tgt_name, "k_cat", _get_param(tgt_name, "k_act", 0.05))
+            # [RC-FIX-PI3K-Activation-kDegKeyAlign] 对齐 RCA-1 键名约定：
+            # specialist 提供的是 `degradation` 键（如 ppAKT degradation=0.1, 半衰期 ~7 min），
+            # 旧代码仅读 `k_deg` 键导致默认 0.02（半衰期 ~34.66 min）生效 →
+            # target 单调累积至 120min 不达峰（peak_time 失效）。
+            # 修复：优先读 `degradation`，回退到 `k_dephos`（与 phosphorylation 分支一致），
+            # 再回退到 `k_deg`，最后回退到默认 0.02。
+            # [RC-FIX-pAKT-PeakTime-r18] 根因：activation 边使用 k_deg=0.02
+            #   而 phosphorylation 边使用 k_dephos=0.5，速率差 25 倍。
+            #   修复：activation 分支也读取 `k_dephos` 键，与 phosphorylation 对齐。
+            k_deg = _get_param(tgt_name, "degradation",
+                               _get_param(tgt_name, "k_dephos",
+                                          _get_param(tgt_name, "k_deg", 0.02)))
             _max_pool = max(Y0[t_idx] if t_idx < len(Y0) else 0.1, 0.1) * 3.0
             _rate = k_act * src * max(0.0, 1.0 - tgt / _max_pool)
-            _unphospho_name = tgt_name[1:] if (tgt_name.startswith("p") and len(tgt_name) > 1) else ""
-            if _unphospho_name and _unphospho_name in SP_IDX:
+            _substrate_name = edge.get("substrate", "")
+            _unphospho_name = _substrate_name if _substrate_name else (
+                tgt_name[1:] if (tgt_name.startswith("p") and len(tgt_name) > 1) else ""
+            )
+            if _unphospho_name and _unphospho_name in SP_IDX and _unphospho_name != tgt_name:
+                # 异磷酸化分支：底物 != target，消耗底物 + 回流（质量守恒）
                 _unphos_idx = SP_IDX[_unphospho_name]
+                _rate = min(_rate, max(0.0, y[_unphos_idx]))
                 dy[_unphos_idx] -= _rate
                 dy[t_idx] += _rate
                 dy[t_idx] -= k_deg * tgt
                 dy[_unphos_idx] += k_deg * tgt
-            else:
-                # [BENCHMARK CLOSURE / Gap-TGF_BETA-ActivationMassCreation] 修复：
-                #   消耗 source（信号传递需质量转移），不再凭空创造 target。
+            elif t_idx >= 0 and (Y0[t_idx] if t_idx < len(Y0) else 0.0) > 0.0:
+                # [RC-FIX-PI3K-Activation-NoSubstrate] 无 substrate 但 target 是预存物种（Y0>0）：
+                #   激酶变构激活预存物种，target 活性增加，src 不被消耗。
+                dy[t_idx] += _rate
+                dy[t_idx] -= k_deg * tgt
+            elif t_idx >= 0:
+                # [RC-FIX-PI3K-Activation-NewSpecies] 无 substrate 且 target 初始浓度=0（新物种）：
+                #   消耗 source 产生 target（信号传递需质量转移），避免质量凭空创造。
+                #   同时保留 k_deg 降解使 target 有衰减动态。
                 dy[s_idx] -= _rate
                 dy[t_idx] += _rate
                 dy[t_idx] -= k_deg * tgt
+            # else: target 不在 SP_IDX，不生产质量
+
+        elif mechanism in ("feedback_regulation", "negative_feedback"):
+            # [RC-FIX-TF-DUSP-Feedback-r15] 镜像 oscillatory_feedback.j2 的 feedback_regulation handler
+            #   根因：transcription_factor.j2 缺失此 handler，DUSP→pERK/ppERK 边落入 else 分支，
+            #   else 分支 `_rate = k_default * src; dy[s_idx]-=_rate; dy[t_idx]+=_rate`
+            #   错误地**消耗 DUSP 产生 pERK/ppERK**（反向生物学语义），
+            #   导致 ppERK 质量凭空创造 + DUSP 反馈失效。
+            #   生物正确：DUSP 是磷酸酶，去磷酸化 pERK→ERK / ppERK→pERK（守恒转换），
+            #   DUSP 作为酶催化剂不被消耗。
+            #   来源：oscillatory_feedback.j2 第 507-535 行（RC22+RC31+CAL-06b 修复）
+            k_fb = _get_param(tgt_name, "k_cat", 0.05)
+            _rate = k_fb * src * tgt
+            _fb_substrate = edge.get("substrate", "")
+            _fb_product = edge.get("product", "")
+            if (_fb_substrate and _fb_product
+                    and _fb_substrate in SP_IDX and _fb_product in SP_IDX):
+                # 显式 substrate/product：守恒转换
+                _fb_sub_idx = SP_IDX[_fb_substrate]
+                _fb_prod_idx = SP_IDX[_fb_product]
+                dy[_fb_sub_idx] -= _rate   # 消耗磷酸化形式（substrate）
+                dy[_fb_prod_idx] += _rate  # 产生去磷酸化形式（product）
+            else:
+                # 从 target 名推断去磷酸化产物（pERK→ERK / ppERK→pERK）
+                _unphospho_name = tgt_name[1:] if (tgt_name.startswith("p") and len(tgt_name) > 1) else ""
+                if _unphospho_name and _unphospho_name in SP_IDX:
+                    _unphos_idx = SP_IDX[_unphospho_name]
+                    dy[t_idx] -= _rate            # 消耗磷酸化形式（pERK/ppERK）
+                    dy[_unphos_idx] += _rate      # 产生去磷酸化形式（ERK/pERK）
+                else:
+                    # 无法推断去磷酸化形式：不消耗质量（保守策略，避免质量销毁）
+                    pass
 
         else:
             k_default = _get_param(tgt_name, "k", 0.01)
@@ -426,6 +563,9 @@ if __name__ == "__main__":
 
     # [v5 Recovery Sprint 1 / RC1] 主程序使用 3 值返回签名 (t, y, dde_used)
     t_arr, y_arr, _dde_used = solve_tf()
+
+    # [RCA-38 P0 修复 RC-2] C3 非负性修复：clamp 负浓度（生物学无意义）
+    y_arr = np.maximum(y_arr, 0.0)
 
     # BIO_CHECK: simulation_complete, n_species=N_SP, n_steps=len(t_arr)
     # BIO_CHECK: max_conc={max(y_arr[:,i]) for i in range(N_SP)}

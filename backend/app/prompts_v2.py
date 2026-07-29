@@ -134,7 +134,7 @@ template 字段必须取自以下白名单：
     {{"source": "pEGFR", "target": "pShc", "interaction": "activation", "mechanism": "phosphorylation", "reaction_equation": "pEGFR + Shc → pEGFR-Shc → pEGFR + pShc"}},
     {{"source": "pShc", "target": "Grb2", "interaction": "activation", "mechanism": "binding", "reaction_equation": "pShc + Grb2 → pShc-Grb2"}},
     {{"source": "Grb2", "target": "SOS", "interaction": "activation", "mechanism": "binding", "reaction_equation": "pShc-Grb2 + SOS → pShc-Grb2-SOS"}},
-    {{"source": "SOS", "target": "RasGTP", "interaction": "activation", "mechanism": "exchange", "reaction_equation": "RasGDP → RasGTP (catalyzed by SOS)"}},
+    {{"source": "SOS", "target": "RasGTP", "interaction": "activation", "mechanism": "gtp_gdp_exchange", "reaction_equation": "RasGDP → RasGTP (catalyzed by SOS)"}},
     {{"source": "RasGTP", "target": "pRaf", "interaction": "activation", "mechanism": "phosphorylation", "reaction_equation": "RasGTP + Raf → RasGTP-pRaf"}},
     {{"source": "pRaf", "target": "pMEK", "interaction": "activation", "mechanism": "phosphorylation", "reaction_equation": "pRaf + MEK → pRaf + pMEK"}},
     {{"source": "pMEK", "target": "pMAPK", "interaction": "activation", "mechanism": "phosphorylation", "reaction_equation": "pMEK + MAPK → pMEK + pMAPK"}}

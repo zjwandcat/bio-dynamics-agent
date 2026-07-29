@@ -147,10 +147,32 @@ PLOT_CANONICAL_SET: tuple[str, ...] = (
     "ERK_active",
 )
 
-# 必须存在的 MAPK 链边（TASK 3）。若 BIOMD 反应图缺失，将强制注入。
+# [RCA-37 修复 D1] 必须存在的 MAPK 完整链（TASK 3 + 上游信号完整性）
+# 根因：旧 _REQUIRED_MAPK_CHAIN 仅含下游 Raf→MEK→ERK 两条边，缺失上游关键边：
+#   - EGF→EGFR (binding)：配体-受体结合触发整个级联
+#   - EGFR→Shc (binding)： adaptor 招募
+#   - Shc→Grb2 (binding)： adaptor 复合
+#   - Grb2→SOS (binding)： GEF 招募
+#   - SOS→Ras (gtp_gdp_exchange)： Ras GDP→GTP 活化
+#   - Ras→Raf (binding/activation)： Ras-GTP 招募 Raf 到膜上
+#   - Raf→MEK (phosphorylation)： Raf 磷酸化 MEK
+#   - MEK→ERK (phosphorylation)： MEK 双磷酸化 ERK
+# 旧链导致：BFS 从 EGF 出发无法到达 ERK_active，C8 通路完整性失败 + 信号传递中断
+# 修复：扩展为完整 8 条边的级联链（含上游）
 _REQUIRED_MAPK_CHAIN: list[tuple[str, str, str]] = [
+    # 上游（信号发起）
+    ("EGF", "EGFR", "binding"),
+    ("EGFR", "Shc", "binding"),
+    ("Shc", "Grb2", "binding"),
+    ("Grb2", "SOS", "binding"),
+    ("SOS", "Ras", "gtp_gdp_exchange"),
+    ("Ras", "Raf", "activation"),
+    # 下游（激酶级联）
     ("Raf_active", "MEK_active", "phosphorylation"),
     ("MEK_active", "ERK_active", "phosphorylation"),
+    # 兼容旧名（部分 case 用 Ras_GTP 而非 Ras_active）
+    ("Ras_GTP", "Raf", "activation"),
+    ("Ras_active", "Raf_active", "activation"),
 ]
 
 # 规范 EGF-EGFR-MAPK 链顺序（用于 edge 方向校正，确保信号流单向传递）

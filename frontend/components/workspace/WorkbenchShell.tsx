@@ -44,6 +44,7 @@ import { ScientificAlignmentPanel } from "@/components/scientific_alignment/Scie
 export function WorkbenchShell() {
   const { t } = useTranslation();
   const aiOpen = useWorkbenchStore((s) => s.uiState.aiAssistantOpen);
+  const setAIPanelOpen = useWorkbenchStore((s) => s.setAIPanelOpen);
   const updateDbStatus = useWorkbenchStore((s) => s.updateDbStatus);
   const refreshRagStatus = useWorkbenchStore((s) => s.refreshRagStatus);
   const refreshModelStatus = useWorkbenchStore((s) => s.refreshModelStatus);
@@ -56,9 +57,25 @@ export function WorkbenchShell() {
     refreshModelStatus();
   }, [refreshRagStatus, refreshModelStatus]);
 
+  // 响应式：中屏（<1280px）自动折叠 AI 面板，避免四栏挤压中心区。
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width: 1279px)");
+    const handler = (e: MediaQueryListEvent) => {
+      if (e.matches) setAIPanelOpen(false);
+    };
+    // 初始进入时若已是中屏，立即折叠
+    if (mql.matches) setAIPanelOpen(false);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, [setAIPanelOpen]);
+
+  // 响应式 grid 模板：
+  //   xl(≥1280): 四栏（左 250 / 中 1fr / 右 300 / AI 320）
+  //   lg(1024-1279): 三栏（左 220 / 中 1fr / 右 280），AI 已折叠
+  //   md(<1024): 单列堆叠，可纵向滚动
   const gridTemplateColumns = aiOpen
-    ? "minmax(200px, 250px) minmax(0, 1fr) 300px minmax(280px, 320px)"
-    : "minmax(200px, 250px) minmax(0, 1fr) 300px";
+    ? "minmax(200px, 250px) minmax(0, 1fr) minmax(260px, 300px) minmax(280px, 320px)"
+    : "minmax(200px, 240px) minmax(0, 1fr) minmax(260px, 300px)";
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
@@ -71,7 +88,7 @@ export function WorkbenchShell() {
       )}
 
       <div
-        className="grid min-h-0 flex-1 overflow-hidden"
+        className="workbench-grid grid min-h-0 flex-1 overflow-hidden"
         style={{ gridTemplateColumns, transition: "grid-template-columns 200ms ease" }}
       >
         {/* ── Left pane: Project / Pathway ── */}

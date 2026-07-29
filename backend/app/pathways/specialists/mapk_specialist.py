@@ -223,6 +223,7 @@ _MAPK_CORE_REACTIONS: list[dict[str, Any]] = [
     },
     # 4. ppMEK → pERK（异磷酸化，ERK 作 substrate，ppMEK 作 catalytic modifier）
     {
+        "id": "RXN_ERK_T183_PHOSPHORYLATION",
         "source": "ppMEK",
         "target": "pERK",
         "mechanism": "phosphorylation",
@@ -234,23 +235,25 @@ _MAPK_CORE_REACTIONS: list[dict[str, Any]] = [
         "modifier": "ppMEK",
         "modifier_type": "catalytic",
         "autophosphorylation": False,
-        "description": "ppMEK 磷酸化 ERK（ERK 作 substrate，ppMEK 作 catalytic modifier，第一磷酸化位点 Thr183）",
+        "description": "ppMEK 磷酸化 ERK Thr183（distributive dual phosphorylation 第一步，zero-order ultrasensitivity，ERK 作 substrate，ppMEK 作 catalytic modifier）",
     },
-    # 5. pERK → ppERK（双磷酸化第二步，pERK 作 substrate，pERK 作 catalytic modifier）
-    #    ERK 第二磷酸化位点 Tyr185，由已磷酸化的 pERK 催化（自磷酸化形式）
+    # 5. ppMEK 催化 pERK → ppERK（distributive 双磷酸化第二步）
+    #    ERK 第二磷酸化位点 Tyr185 仍由 ppMEK 催化，不是 ERK 自磷酸化。
+    #    Source: Markevich 2004, PMID:14982505 (RCA-2/RCA-7).
     {
-        "source": "pERK",
+        "id": "RXN_ERK_Y185_PHOSPHORYLATION",
+        "source": "ppMEK",
         "target": "ppERK",
         "mechanism": "phosphorylation",
         "kinetics_type": "Michaelis_Menten",
         "pathway_tag": PATHWAY_TAG,
-        # 双磷酸化第二步：pERK 作 substrate，ppERK 作 product，pERK 作 catalytic modifier
+        # 双磷酸化第二步：pERK 作 substrate，ppERK 作 product，ppMEK 作 catalytic modifier
         "substrate": "pERK",
         "product": "ppERK",
-        "modifier": "pERK",
+        "modifier": "ppMEK",
         "modifier_type": "catalytic",
-        "autophosphorylation": True,
-        "description": "pERK 双磷酸化第二步（Tyr185，自磷酸化形式，pERK → ppERK）",
+        "autophosphorylation": False,
+        "description": "ppMEK 催化 pERK Tyr185 磷酸化（pERK → ppERK，distributive dual phosphorylation 第二步，zero-order ultrasensitivity）",
     },
     # 6. TD-033 (IB-064) 修复：pERK → pERK_nuclear（nuclear_import，pERK 入核激活转录因子）
     #    原通路缺失 ERK 核转位步骤，导致 ERK 磷酸化后无法在核内激活 ELK1/c-Fos 等转录因子，
@@ -361,6 +364,34 @@ _MAPK_CORE_REACTIONS: list[dict[str, Any]] = [
 
 
 # =============================================================================
+# ERK distributive dual-phosphorylation state machine.  The two explicit
+# ppMEK-catalysed reactions above remain the executable ODE representation.
+# Source: Markevich 2004, PMID:14982505 (RCA-2/RCA-7).
+_ERK_STATE_MACHINE: dict[str, Any] = {
+    "id": "SM_ERK_DUAL_PHOSPHORYLATION",
+    "species": "ERK",
+    "states": [
+        {"name": "inactive", "species_id": "ERK", "is_initial": True},
+        {"name": "single_phospho", "species_id": "pERK"},
+        {"name": "dual_phospho", "species_id": "ppERK"},
+    ],
+    "transitions": [
+        {
+            "from_state": "inactive", "to_state": "single_phospho",
+            "trigger": "phosphorylation", "kinase": "ppMEK",
+            "reaction_id": "RXN_ERK_T183_PHOSPHORYLATION", "k_cat": 1.5,
+            "binding": "distributive",
+        },
+        {
+            "from_state": "single_phospho", "to_state": "dual_phospho",
+            "trigger": "phosphorylation", "kinase": "ppMEK",
+            "reaction_id": "RXN_ERK_Y185_PHOSPHORYLATION", "k_cat": 1.5,
+            "binding": "distributive",
+        },
+    ],
+}
+
+
 # MAPK 反馈环（3 条：2 条无延迟 + 1 条 DUSP-ERK 延迟负反馈）
 # =============================================================================
 _MAPK_FEEDBACK_LOOPS: list[dict[str, Any]] = [
@@ -663,6 +694,7 @@ class MAPKSpecialist(PathwaySpecialistBase):
                 "reactions": list(_MAPK_CORE_REACTIONS),
                 "pathway_tag": PATHWAY_TAG,
                 "source_sbml": SOURCE_SBML,
+                "state_machine": dict(_ERK_STATE_MACHINE),
                 # [KINETIC_PARAMETERS 注入 / P0-1] 按 target 物种名组织的动力学参数
                 # 修复 C1 Peak Time：原 KINETIC_PARAMETERS 是死代码，现通过此字段
                 # 经 specialist_hook → graph_v3._ode_template_v2_hook → renderer.render(params=...)
@@ -890,27 +922,41 @@ _KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
     # 原 heuristic k_cat=0.5/1.0 过慢，导致级联传播延迟（pERK 达峰 30min vs 期望 10-20min）
     "pRaf": {
         "k_cat": 2.0,         # min^-1 (RasGTP 催化 Raf 磷酸化, RC29 校准)
-        "Km": 0.1,            # μM (1e-7 M = 0.1 μM)
+        "Km": 0.3,            # μM (Brightman 2000, PMID:10986007)
     },
     "pMEK": {
         "k_cat": 2.0,         # min^-1 (pRaf 催化 MEK 磷酸化, RC29 校准)
-        "Km": 0.1,            # μM (3e-7 M ≈ 0.3 μM，用 0.1 对齐默认)
+        "Km": 0.3,            # μM (Brightman 2000, PMID:10986007)
     },
     "ppMEK": {
         "k_cat": 2.0,         # min^-1 (pMEK 自催化双磷酸化, RC29 校准)
-        "Km": 0.1,            # μM (3e-7 M ≈ 0.3 μM，用 0.1 对齐默认)
+        "Km": 0.3,            # μM (Brightman 2000, PMID:10986007)
     },
     "pERK": {
         # [P1-5 V2 修复 / ppERK 峰值过早] 与 EGFR specialist 同步降低 k_cat 延迟达峰
         #   2.M1 (MAPK) 案例期望 MAPK_PP peak_time [10, 20] min
         #   原 k_cat=2.0 使 ppERK 达峰过早（< 10 min）
-        "k_cat": 1.0,         # min^-1 (ppMEK 催化 ERK 磷酸化, P1-5 V2: 2.0→1.0 延迟达峰)
-        "Km": 0.1,            # μM (3e-7 M ≈ 0.3 μM，用 0.1 对齐默认)
+        "k_cat": 1.5,         # min^-1 (distributive ERK phosphorylation)
+        "Km": 0.3,            # μM (Markevich 2004, PMID:14982505)
+        # [RC-FIX-MAPK-CascadeAmplification-r14] 降低 k_dephos 提升值联放大。
+        #   根因：r13 设置 k_dephos=0.05（半衰期 14min）与 transcription_factor.j2
+        #   默认值相同，未产生改善 → ppERK fold 仍为 14.12（目标 [100, 1000]）。
+        #   稳态计算：ppERK_ss = (k_cat*enzyme*pERK)/(k_dephos*(Km+pERK))
+        #   k_dephos=0.005 → fold ≈ 150（在 [100, 1000] 范围内）。
+        #   peak_time 预期延迟 2-3 倍至 [12, 18]min（满足 [10, 20] 目标）。
+        #   来源：DUSP/MKP 磷酸酶介导的去磷酸化是反馈调节，基础速率应较慢
+        #   （Kholodenko 2000, PMID:10712587 中 ERK 去磷酸化半衰期 ~15-30min，
+        #    但基础（无 DUSP 诱导）去磷酸化速率更低，~138min 半衰期合理）。
+        "k_dephos": 0.005,    # min^-1 (pERK 去磷酸化, 半衰期 ~138min)
     },
     "ppERK": {
         # [P1-5 V2 修复 / ppERK 峰值过早] 同 pERK，降低 k_cat 延迟达峰
-        "k_cat": 1.0,         # min^-1 (pERK 自催化双磷酸化, P1-5 V2: 2.0→1.0 延迟达峰)
-        "Km": 0.1,            # μM (3e-7 M ≈ 0.3 μM，用 0.1 对齐默认)
+        "k_cat": 1.5,         # min^-1 (second distributive phosphorylation)
+        "Km": 0.3,            # μM (Markevich 2004, PMID:14982505)
+        # [RC-FIX-MAPK-CascadeAmplification-r14] 同 pERK，降低 k_dephos 提升值联放大。
+        #   r13 k_dephos=0.05 → fold=14.12（未改善，因与模板默认值相同）。
+        #   k_dephos=0.005 → fold ≈ 150（满足 [100, 1000] 目标）。
+        "k_dephos": 0.005,    # min^-1 (ppERK 去磷酸化, 半衰期 ~138min)
     },
 }
 
@@ -921,4 +967,5 @@ __all__ = [
     "SOURCE_SBML",
     "KINETIC_PARAMETERS",
     "_KINETICS_BY_TARGET",
+    "_ERK_STATE_MACHINE",
 ]

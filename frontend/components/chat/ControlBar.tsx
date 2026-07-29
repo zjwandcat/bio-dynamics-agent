@@ -30,6 +30,12 @@ export interface ModelStatusData {
     model: string;
     base_url: string;
   } | null;
+  backup2_llm: {
+    provider: string;
+    model: string;
+    base_url: string;
+  } | null;
+  user_selected_llm: string | null;
   embedding: {
     provider: string;
     model: string;
@@ -40,6 +46,21 @@ export interface ModelStatusData {
     provider_priority: string[];
     candidates: Array<{ provider: string; model: string; display_name: string }>;
   };
+}
+
+// LLM 模型可选项（来自 /api/llm/models）
+export interface LlmModelOption {
+  model: string;
+  provider: string;
+  base_url: string;
+  role: "primary" | "backup" | "backup2" | "unknown";
+}
+
+// /api/llm/models 响应
+export interface LlmModelsData {
+  models: LlmModelOption[];
+  current: string;
+  chain: string[];
 }
 
 // RAG 知识库状态接口
@@ -86,7 +107,11 @@ export function ControlBar({ state, onChange, currentNode, tokenUsage, isStreami
   const { mode, manualModules } = state;
   const [tooltip, setTooltip] = useState<string | null>(null);
   const [modelStatus, setModelStatus] = useState<ModelStatusData | null>(null);
+  const [llmModels, setLlmModels] = useState<LlmModelsData | null>(null);
+  const [switchingLlm, setSwitchingLlm] = useState<string | null>(null);
+  const [llmError, setLlmError] = useState<string | null>(null);
 
+  // 拉取模型状态（含三链路 primary / backup / backup2）
   useEffect(() => {
     let cancelled = false;
     fetch(`${API_BASE}/api/models/status`)
@@ -106,6 +131,55 @@ export function ControlBar({ state, onChange, currentNode, tokenUsage, isStreami
       cancelled = true;
     };
   }, []);
+
+  // 拉取可切换的 LLM 模型列表
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/api/llm/models`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data: LlmModelsData) => {
+        if (!cancelled) setLlmModels(data);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error("[ControlBar] 获取 LLM 模型列表失败:", err);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [switchingLlm]);
+
+  // 切换主 LLM 模型
+  const handleSwitchLlm = async (modelName: string) => {
+    if (switchingLlm) return;
+    setSwitchingLlm(modelName);
+    setLlmError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/llm/select`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: modelName }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      // 切换成功后刷新模型状态
+      const statusRes = await fetch(`${API_BASE}/api/models/status`);
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        setModelStatus(statusData);
+      }
+    } catch (err) {
+      setLlmError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSwitchingLlm(null);
+    }
+  };
 
   useEffect(() => {
     if (mode !== "manual") return;
@@ -248,18 +322,35 @@ export function ControlBar({ state, onChange, currentNode, tokenUsage, isStreami
                   <div className="truncate text-zinc-300" title={modelStatus.llm.model}>
                     {modelStatus.llm.model}
                   </div>
+                  {modelStatus.user_selected_llm && (
+                    <div className="text-[10px] text-amber-400">用户已选择覆盖默认</div>
+                  )}
                 </div>
 
                 {modelStatus.backup_llm && (
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
-                      <span className="text-zinc-500">备用 LLM</span>
+                      <span className="text-zinc-500">备用 LLM (二级)</span>
                       <Badge variant="outline" className="text-[10px] border-zinc-700 text-zinc-300">
                         {modelStatus.backup_llm.provider}
                       </Badge>
                     </div>
                     <div className="truncate text-zinc-300" title={modelStatus.backup_llm.model}>
                       {modelStatus.backup_llm.model}
+                    </div>
+                  </div>
+                )}
+
+                {modelStatus.backup2_llm && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-zinc-500">兜底 LLM (三级)</span>
+                      <Badge variant="outline" className="text-[10px] border-zinc-700 text-zinc-300">
+                        {modelStatus.backup2_llm.provider}
+                      </Badge>
+                    </div>
+                    <div className="truncate text-zinc-300" title={modelStatus.backup2_llm.model}>
+                      {modelStatus.backup2_llm.model}
                     </div>
                   </div>
                 )}
@@ -306,6 +397,70 @@ export function ControlBar({ state, onChange, currentNode, tokenUsage, isStreami
                   ) : (
                     <div className="text-zinc-500">未启用模型 rerank</div>
                   )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* LLM 模型选择（前端可切换主 LLM） */}
+          {llmModels && llmModels.models.length > 0 && (
+            <Card className="border-zinc-800 bg-zinc-900">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
+                  <Cpu className="h-4 w-4 text-zinc-400" />
+                  切换主 LLM
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-xs">
+                <div className="text-zinc-500">
+                  容灾链路：{llmModels.chain.join(" → ")}
+                </div>
+                {llmError && (
+                  <div className="flex items-center gap-1.5 rounded-md bg-red-500/10 px-2 py-1.5 text-[11px] text-red-300">
+                    <AlertCircle className="h-3 w-3" />
+                    切换失败：{llmError}
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  {llmModels.models.map((opt) => {
+                    const isCurrent = opt.model === llmModels.current;
+                    const isSwitching = switchingLlm === opt.model;
+                    return (
+                      <button
+                        key={opt.model}
+                        type="button"
+                        disabled={!!switchingLlm || isStreaming}
+                        onClick={() => handleSwitchLlm(opt.model)}
+                        title={`Provider: ${opt.provider}\nBase URL: ${opt.base_url}`}
+                        className={`flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
+                          isCurrent
+                            ? "border-blue-500/50 bg-blue-500/10 text-blue-100"
+                            : "border-zinc-800 bg-zinc-950/50 text-zinc-300 hover:bg-zinc-800"
+                        } ${switchingLlm ? "opacity-60 cursor-not-allowed" : ""}`}
+                      >
+                        <span className="flex-1 truncate">
+                          <div className="truncate font-mono text-[11px]">{opt.model}</div>
+                          <div className="text-[10px] text-zinc-500">
+                            {opt.provider} · {opt.role}
+                          </div>
+                        </span>
+                        {isCurrent && <CheckCircle2 className="h-3.5 w-3.5 text-blue-400" />}
+                        {isSwitching && (
+                          <Activity className="h-3 w-3 animate-pulse text-amber-400" />
+                        )}
+                      </button>
+                    );
+                  })}
+                  {/* 恢复默认链路按钮 */}
+                  <button
+                    type="button"
+                    disabled={!!switchingLlm || isStreaming || !llmModels.current}
+                    onClick={() => handleSwitchLlm("")}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-zinc-700 px-2.5 py-1.5 text-[11px] text-zinc-400 transition-colors hover:bg-zinc-800 disabled:opacity-50"
+                  >
+                    <Settings2 className="h-3 w-3" />
+                    恢复默认链路顺序
+                  </button>
                 </div>
               </CardContent>
             </Card>

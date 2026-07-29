@@ -286,7 +286,20 @@ function interpolate(template: string, vars: Record<string, string | number>) {
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = React.useState<Locale>(() => getInitialLocale());
+  // SSR 与首次 CSR 都用 DEFAULT_LOCALE，保证 hydration 一致；
+  // mount 后再用 useEffect 读取 localStorage 偏好并同步。
+  const [locale, setLocaleState] = React.useState<Locale>(DEFAULT_LOCALE);
+
+  // 客户端 mount 后：读取 localStorage 持久化偏好（若与默认不同则切换）。
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem("biodynamics-locale");
+    if (stored === "zh" || stored === "en") {
+      if (stored !== DEFAULT_LOCALE) {
+        setLocaleState(stored);
+      }
+    }
+  }, []);
 
   const setLocale = useCallback((next: Locale) => {
     setLocaleState(next);

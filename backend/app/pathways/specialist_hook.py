@@ -106,7 +106,7 @@ def specialist_hook_node(state: dict[str, Any]) -> dict[str, Any]:
         flag=false 时返回 {}
         flag=true 时返回 {"v4_specialist_outputs": list[dict]}（每条含
         pathway_class / species / reactions / feedback_loops /
-        crosstalk_reactions / validation_rules 等字段）
+        crosstalk_reactions / validation_rules / state_machine 等字段）
     """
     # 延迟导入 config 避免循环依赖
     from app.config import settings
@@ -181,6 +181,7 @@ def specialist_hook_node(state: dict[str, Any]) -> dict[str, Any]:
                 "pathway_class": pwc,
                 "species": core_output.get("species", []) if isinstance(core_output, dict) else [],
                 "reactions": core_output.get("reactions", []) if isinstance(core_output, dict) else [],
+                "state_machine": core_output.get("state_machine", {}) if isinstance(core_output, dict) else {},
                 "kinetics_overrides": core_output.get("kinetics_overrides", {}) if isinstance(core_output, dict) else {},
                 "feedback_loops": feedback_loops,
                 "crosstalk_reactions": crosstalk_reactions,
@@ -526,10 +527,14 @@ def _specialist_core_to_kg_updates(
     """
     # 收集现有节点名（小写比较，避免大小写差异导致重复）
     existing_node_names: set[str] = set()
-    for n in existing_nodes:
+    # [RC-FIX-IC-Dedup-r21] name → index 映射，供去重时回写 initial_concentration
+    existing_node_map: dict[str, int] = {}
+    for _ni, n in enumerate(existing_nodes):
         name = (n.get("name") or n.get("id") or n.get("entity_id") or "").lower()
         if name:
             existing_node_names.add(name)
+            if name not in existing_node_map:
+                existing_node_map[name] = _ni
 
     # [BENCHMARK CLOSURE / Gap-EGFR-PeakTime] 收集现有边的 (src, tgt) → mechanism 映射。
     #   旧代码仅收集 edge_keys 集合，当 LLM 已生成 (EGFR, pEGFR, activation) 时，
@@ -540,6 +545,7 @@ def _specialist_core_to_kg_updates(
     #   而现有边为 activation 时，REPLACE 现有边而非跳过。
     existing_edge_keys: set[tuple[str, str]] = set()
     existing_edge_mechanisms: dict[tuple[str, str], str] = {}
+    existing_edge_reaction_ids: dict[tuple[str, str], str] = {}
     for e in existing_edges:
         src = (e.get("source") or "").lower()
         tgt = (e.get("target") or "").lower()
@@ -548,6 +554,9 @@ def _specialist_core_to_kg_updates(
             mech = (e.get("mechanism") or e.get("interaction") or "activation").lower()
             if (src, tgt) not in existing_edge_mechanisms:
                 existing_edge_mechanisms[(src, tgt)] = mech
+                existing_edge_reaction_ids[(src, tgt)] = str(
+                    e.get("reaction_id") or e.get("id") or ""
+                )
 
     new_nodes: list[dict[str, Any]] = []
     new_edges: list[dict[str, Any]] = []
@@ -573,6 +582,20 @@ def _specialist_core_to_kg_updates(
                 continue
             name_lower = name.lower()
             if name_lower in existing_node_names or name_lower in added_node_names:
+                # [RC-FIX-IC-Dedup-r21] species 已存在时，仍需更新 initial_concentration。
+                #   根因：LLM 生成 RhebGTP/mTORC1 节点时无 IC（默认 0.0），
+                #   specialist 设置 IC=0.05 但被去重跳过，导致 _extract_y0 回退到
+                #   _default_initial_concentration 返回 1.0（基线蛋白默认），
+                #   使 mTORC1 从 t=0 即高活性，pS6K 在 3.21min 过早达峰
+                #   （目标 [15,30]min），RhebGTP 也无需级联激活即可驱动下游。
+                #   修复：当 specialist 提供 IC > 0 时，回写到已存在的 KG 节点。
+                sp_ic = sp.get("initial_concentration", 0.0)
+                try:
+                    sp_ic = float(sp_ic)
+                except (TypeError, ValueError):
+                    sp_ic = 0.0
+                if sp_ic > 0 and name_lower in existing_node_map:
+                    existing_nodes[existing_node_map[name_lower]]["initial_concentration"] = sp_ic
                 continue
             added_node_names.add(name_lower)
             species_type = sp.get("species_type", "Protein")
@@ -626,6 +649,9 @@ def _specialist_core_to_kg_updates(
                 continue
             ek_lower = (src.lower(), tgt.lower())
             mechanism = (rxn.get("mechanism") or "activation").lower()
+            stable_reaction_id = str(
+                rxn.get("reaction_id") or rxn.get("id") or ""
+            ).strip()
 
             # [BENCHMARK CLOSURE / Gap-EGFR-PeakTime] 边替换策略：
             #   当 (src, tgt) 已存在且现有 mechanism 为 activation（LLM 生成的泛化机制），
@@ -636,8 +662,16 @@ def _specialist_core_to_kg_updates(
             existing_mech = existing_edge_mechanisms.get(ek_lower, "")
             should_replace_existing = (
                 ek_lower in existing_edge_keys
-                and existing_mech == "activation"
-                and mechanism != "activation"
+                and (
+                    (existing_mech == "activation" and mechanism != "activation")
+                    # A semantically equivalent LLM edge still lacks the stable
+                    # ID required by a specialist state-machine transition.
+                    or (
+                        stable_reaction_id
+                        and existing_edge_reaction_ids.get(ek_lower, "")
+                        != stable_reaction_id
+                    )
+                )
             )
 
             if should_replace_existing:
@@ -667,6 +701,9 @@ def _specialist_core_to_kg_updates(
             new_edges.append({
                 "source": src,
                 "target": tgt,
+                # Stable specialist IDs let ReactionIR state-machine transitions
+                # reference executable reactions without depending on edge order.
+                "reaction_id": stable_reaction_id,
                 "interaction": interaction,
                 "mechanism": mechanism,
                 "kinetics_type": kinetics_type,
@@ -766,6 +803,33 @@ def _apply_specialist_core_kg_writeback(
 
     # 合并到 network_json（N6 回退路径使用）
     merged_nj = dict(nj)
+    # [RC-FIX-NJ-IC-r21] 回写 specialist IC 到现有 nj_nodes（与 KG 回写对齐）。
+    #   根因：reaction_builder.build_from_network_json 从 network_json.nodes 读取
+    #   species，而非 knowledge_graph.nodes。旧实现仅回写 IC 到 KG nodes，
+    #   nj_nodes 无 IC 字段，导致 _extract_y0 回退到 _default_initial_concentration
+    #   使 mTORC1=1.0（应 0.05），pS6K 过早达峰（3.21min vs 目标 [15,30]min）。
+    #   修复：构建 nj_node name → index 映射，回写 specialist IC 到现有 nj_nodes。
+    nj_node_map: dict[str, int] = {}
+    for _ni, _n in enumerate(nj_nodes):
+        _n_name = (_n.get("name") or _n.get("id") or "").lower()
+        if _n_name and _n_name not in nj_node_map:
+            nj_node_map[_n_name] = _ni
+    for entry in specialist_outputs:
+        if not isinstance(entry, dict):
+            continue
+        for sp in (entry.get("species", []) or []):
+            if not isinstance(sp, dict):
+                continue
+            _sp_name = (sp.get("name") or "").lower()
+            if not _sp_name:
+                continue
+            _sp_ic = sp.get("initial_concentration", 0.0)
+            try:
+                _sp_ic = float(_sp_ic)
+            except (TypeError, ValueError):
+                _sp_ic = 0.0
+            if _sp_ic > 0 and _sp_name in nj_node_map:
+                nj_nodes[nj_node_map[_sp_name]]["initial_concentration"] = _sp_ic
     merged_nj["nodes"] = list(nj_nodes) + [
         {
             "id": n.get("name") or n.get("id"),
@@ -773,6 +837,8 @@ def _apply_specialist_core_kg_writeback(
             "type": n.get("type", ""),
             "species_type": n.get("species_type", ""),
             "compartment": n.get("compartment", "cytoplasm"),
+            # [RC-FIX-NJ-IC-r21] 新增节点也传递 IC（specialist 新增的物种）
+            "initial_concentration": n.get("initial_concentration", 0.0),
         }
         for n in new_nodes
     ]

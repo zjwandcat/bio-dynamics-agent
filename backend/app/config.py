@@ -31,10 +31,22 @@ class Settings:
     OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
 
-    # 备用 LLM 配置
+    # 备用 LLM 配置（第二级容灾）
     BACKUP_API_KEY: str = os.getenv("BACKUP_API_KEY", "")
     BACKUP_BASE_URL: str = os.getenv("BACKUP_BASE_URL", "")
     BACKUP_MODEL: str = os.getenv("BACKUP_MODEL", "")
+
+    # 备用 LLM 配置（第三级容灾，作为兜底）
+    # 设计意图：当主 LLM 与第二级 LLM 同供应商（如 OpenRouter）同时失败时，
+    # 切换到不同供应商（如 DeepSeek 官网）的第三级 LLM，实现真正跨供应商容灾。
+    BACKUP2_API_KEY: str = os.getenv("BACKUP2_API_KEY", "")
+    BACKUP2_BASE_URL: str = os.getenv("BACKUP2_BASE_URL", "")
+    BACKUP2_MODEL: str = os.getenv("BACKUP2_MODEL", "")
+
+    # LLM 模型选择（前端可切换）
+    # USER_SELECTED_LLM: 用户在前端手动选择的主 LLM 标识，留空则使用默认三链路容灾
+    # 可选值："" (使用默认) | "poolside/laguna-s-2.1:free" | "nvidia/nemotron-3-ultra-550b-a55b:free" | "deepseek-v4-flash"
+    USER_SELECTED_LLM: str = os.getenv("USER_SELECTED_LLM", "")
 
     # 服务配置
     HOST: str = os.getenv("HOST", "0.0.0.0")
@@ -363,6 +375,12 @@ class Settings:
         "V4_DYNAMIC_ROUTING_ENABLED", "false"
     ).lower() == "true"
 
+    # RCA-17: for governed L5 benchmark cases, prefer parameters from the
+    # declared BioModels SBML before the mixed retrieval pool. Default OFF.
+    L5_GROUNDED_RAG_ENABLED: bool = os.getenv(
+        "L5_GROUNDED_RAG_ENABLED", "false"
+    ).lower() == "true"
+
     # =============================================================================
     # Scientific Alignment Loop Feature Flags（Task 0：科学对齐闭环）
     # =============================================================================
@@ -403,6 +421,12 @@ class Settings:
     # SA_SEVEN_AXIS：7 轴验证金字塔（Seven-Axis Validation Pyramid）
     SA_SEVEN_AXIS: bool = os.getenv(
         "SA_SEVEN_AXIS", "false"
+    ).lower() == "true"
+
+    # RCA-15: relax only the legacy seven-axis Discussion threshold.  This is
+    # independently reversible and remains inert unless the SA loop is enabled.
+    SA_AXIS_RELAXED_THRESHOLD_ENABLED: bool = os.getenv(
+        "SA_AXIS_RELAXED_THRESHOLD_ENABLED", "false"
     ).lower() == "true"
 
     # SA_LOOP_TERMINATION：循环终止（Loop Termination Criteria）
@@ -607,6 +631,7 @@ class Settings:
         "BIOMODELS_ORACLE": "SA_BIOMODELS_ORACLE",
         "EVIDENCE_FUSION": "SA_EVIDENCE_FUSION",
         "SEVEN_AXIS": "SA_SEVEN_AXIS",
+        "AXIS_RELAXED_THRESHOLD": "SA_AXIS_RELAXED_THRESHOLD_ENABLED",
         "LOOP_TERMINATION": "SA_LOOP_TERMINATION",
         "CANONICAL": "SA_CANONICAL",
         "CONSISTENCY_CHECKER": "SA_CONSISTENCY_CHECKER",
@@ -804,6 +829,10 @@ class Settings:
             return False
         return bool(getattr(self, attr, False))
 
+    def effective_sa_axis_relaxed_threshold_enabled(self) -> bool:
+        """Return whether the RCA-15 Discussion threshold override is active."""
+        return self.is_sa_feature_enabled("AXIS_RELAXED_THRESHOLD")
+
 
 # =============================================================================
 # 依赖隔离策略（try-import 模板）—— Phase 5 前置（SubTask 5.0.2）
@@ -923,33 +952,63 @@ class _StructuredOutputRunnable(Runnable):
     BACKUP_DELAY_SECONDS: float = 0.5
 
     def __init__(
-        self, primary: Runnable, schema: Any, backup: Runnable | None = None
+        self,
+        primary: Runnable,
+        schema: Any,
+        backup: Runnable | None = None,
+        backup2: Runnable | None = None,
     ) -> None:
         self._primary = primary
         self._backup = backup
+        self._backup2 = backup2
         self._schema = schema
 
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        try:
-            response = self._primary.invoke(input, config=config, **kwargs)
-            return self._parse_response(response)
-        except Exception:
-            if self._backup is None:
-                raise
-            time.sleep(self.BACKUP_DELAY_SECONDS)
-            response = self._backup.invoke(input, config=config, **kwargs)
-            return self._parse_response(response)
+        # 三级容灾：primary → backup → backup2
+        errors: list[Exception] = []
+        for runnable, label in (
+            (self._primary, "primary"),
+            (self._backup, "backup"),
+            (self._backup2, "backup2"),
+        ):
+            if runnable is None:
+                continue
+            try:
+                response = runnable.invoke(input, config=config, **kwargs)
+                return self._parse_response(response)
+            except Exception as exc:  # noqa: BLE001 - 容灾链路需捕获所有异常
+                errors.append(exc)
+                logger.warning(
+                    "structured_output %s LLM failed, trying next: %s",
+                    label,
+                    exc,
+                )
+                time.sleep(self.BACKUP_DELAY_SECONDS)
+        # 所有可用 LLM 均失败，抛出最后一个异常
+        raise errors[-1] if errors else RuntimeError("No LLM available")
 
     async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        try:
-            response = await self._primary.ainvoke(input, config=config, **kwargs)
-            return self._parse_response(response)
-        except Exception:
-            if self._backup is None:
-                raise
-            time.sleep(self.BACKUP_DELAY_SECONDS)
-            response = await self._backup.ainvoke(input, config=config, **kwargs)
-            return self._parse_response(response)
+        # 三级容灾：primary → backup → backup2（异步版本）
+        errors: list[Exception] = []
+        for runnable, label in (
+            (self._primary, "primary"),
+            (self._backup, "backup"),
+            (self._backup2, "backup2"),
+        ):
+            if runnable is None:
+                continue
+            try:
+                response = await runnable.ainvoke(input, config=config, **kwargs)
+                return self._parse_response(response)
+            except Exception as exc:  # noqa: BLE001 - 容灾链路需捕获所有异常
+                errors.append(exc)
+                logger.warning(
+                    "structured_output %s LLM failed (async), trying next: %s",
+                    label,
+                    exc,
+                )
+                time.sleep(self.BACKUP_DELAY_SECONDS)
+        raise errors[-1] if errors else RuntimeError("No LLM available")
 
     def _parse_response(self, response: Any) -> Any:
         """从 AIMessage 提取文本、剥离 markdown、解析为 Pydantic 模型。
@@ -997,32 +1056,62 @@ class _StructuredOutputRunnable(Runnable):
 
 
 class FallbackLLM(Runnable):
-    """主 LLM 调用失败时自动切换到备用 LLM 的包装器。"""
+    """主 LLM 调用失败时自动切换到备用 LLM 的包装器。
+
+    支持最多三级容灾：primary → backup → backup2。
+    - primary：主用 LLM（如 OpenRouter poolside/laguna-s-2.1:free）
+    - backup：第二级 LLM（如 OpenRouter nvidia/nemotron-3-ultra-550b-a55b:free）
+    - backup2：第三级兜底 LLM（如 DeepSeek 官网 deepseek-v4-flash，跨供应商容灾）
+    """
 
     # 主备切换前短暂等待，避免同一 provider 因瞬时限流导致两个 key 连续 burst
     BACKUP_DELAY_SECONDS: float = 0.5
 
-    def __init__(self, primary: Runnable, backup: Runnable | None = None):
+    def __init__(
+        self,
+        primary: Runnable,
+        backup: Runnable | None = None,
+        backup2: Runnable | None = None,
+    ):
         self.primary = primary
         self.backup = backup
+        self.backup2 = backup2
 
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        try:
-            return self.primary.invoke(input, config=config, **kwargs)
-        except Exception:
-            if self.backup is None:
-                raise
-            time.sleep(self.BACKUP_DELAY_SECONDS)
-            return self.backup.invoke(input, config=config, **kwargs)
+        # 三级容灾：primary → backup → backup2
+        errors: list[Exception] = []
+        for runnable, label in (
+            (self.primary, "primary"),
+            (self.backup, "backup"),
+            (self.backup2, "backup2"),
+        ):
+            if runnable is None:
+                continue
+            try:
+                return runnable.invoke(input, config=config, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - 容灾链路需捕获所有异常
+                errors.append(exc)
+                logger.warning("%s LLM failed, trying next: %s", label, exc)
+                time.sleep(self.BACKUP_DELAY_SECONDS)
+        raise errors[-1] if errors else RuntimeError("No LLM available")
 
     async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        try:
-            return await self.primary.ainvoke(input, config=config, **kwargs)
-        except Exception:
-            if self.backup is None:
-                raise
-            time.sleep(self.BACKUP_DELAY_SECONDS)
-            return await self.backup.ainvoke(input, config=config, **kwargs)
+        # 三级容灾：primary → backup → backup2（异步版本）
+        errors: list[Exception] = []
+        for runnable, label in (
+            (self.primary, "primary"),
+            (self.backup, "backup"),
+            (self.backup2, "backup2"),
+        ):
+            if runnable is None:
+                continue
+            try:
+                return await runnable.ainvoke(input, config=config, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - 容灾链路需捕获所有异常
+                errors.append(exc)
+                logger.warning("%s LLM failed (async), trying next: %s", label, exc)
+                time.sleep(self.BACKUP_DELAY_SECONDS)
+        raise errors[-1] if errors else RuntimeError("No LLM available")
 
     def with_structured_output(self, schema: Any, **kwargs: Any) -> Runnable:
         """返回自定义 structured output Runnable，统一处理 BigModel markdown 包裹的 JSON。
@@ -1031,7 +1120,7 @@ class FallbackLLM(Runnable):
         markdown 标记会抛 ValidationError），改为 _StructuredOutputRunnable 直接
         invoke 底层 ChatOpenAI 取原始 AIMessage 后手动清洗解析。
         """
-        return _StructuredOutputRunnable(self.primary, schema, self.backup)
+        return _StructuredOutputRunnable(self.primary, schema, self.backup, self.backup2)
 
 
 # -----------------------------------------------------------------------------
@@ -1580,7 +1669,7 @@ _primary_llm = ChatOpenAI(
     default_headers=_make_openrouter_headers(settings.OPENAI_BASE_URL),
 )
 
-# 全局备用 LLM 实例（仅在配置完整时初始化）
+# 全局第二级 LLM 实例（仅在配置完整时初始化）
 _backup_llm: ChatOpenAI | None = None
 if settings.BACKUP_API_KEY and settings.BACKUP_BASE_URL and settings.BACKUP_MODEL:
     _backup_llm = ChatOpenAI(
@@ -1592,8 +1681,130 @@ if settings.BACKUP_API_KEY and settings.BACKUP_BASE_URL and settings.BACKUP_MODE
         default_headers=_make_openrouter_headers(settings.BACKUP_BASE_URL),
     )
 
+# 全局第三级兜底 LLM 实例（仅在配置完整时初始化）
+# 用于跨供应商容灾：当主 LLM 与第二级 LLM 同供应商（如 OpenRouter）同时失败时，
+# 切换到不同供应商（如 DeepSeek 官网）的第三级 LLM。
+_backup2_llm: ChatOpenAI | None = None
+if settings.BACKUP2_API_KEY and settings.BACKUP2_BASE_URL and settings.BACKUP2_MODEL:
+    _backup2_llm = ChatOpenAI(
+        api_key=settings.BACKUP2_API_KEY,
+        base_url=settings.BACKUP2_BASE_URL,
+        model=settings.BACKUP2_MODEL,
+        temperature=0.2,
+        max_retries=0,
+        default_headers=_make_openrouter_headers(settings.BACKUP2_BASE_URL),
+    )
+
+
+def _build_llm_registry() -> dict[str, ChatOpenAI]:
+    """构建可用 LLM 模型注册表，供前端选择 + 后端动态切换。
+
+    注册表 key 为 model 名称，value 为对应的 ChatOpenAI 实例。
+    包含 primary / backup / backup2 三个已初始化实例（如有）。
+    """
+    registry: dict[str, ChatOpenAI] = {}
+    if settings.OPENAI_MODEL:
+        registry[settings.OPENAI_MODEL] = _primary_llm
+    if settings.BACKUP_MODEL and _backup_llm is not None:
+        registry[settings.BACKUP_MODEL] = _backup_llm
+    if settings.BACKUP2_MODEL and _backup2_llm is not None:
+        registry[settings.BACKUP2_MODEL] = _backup2_llm
+    return registry
+
+
+# LLM 注册表：{model_name: ChatOpenAI 实例}
+# 前端可通过 GET /api/llm/models 获取可选项，POST /api/llm/select 切换主 LLM
+LLM_REGISTRY: dict[str, ChatOpenAI] = _build_llm_registry()
+
+
+def _resolve_chain_order(user_selected: str | None) -> tuple[Any, Any, Any]:
+    """根据用户选择解析 LLM 容灾链路顺序。
+
+    规则：
+    - 若 user_selected 为空或不在 registry 中，按默认顺序返回 (primary, backup, backup2)
+    - 若 user_selected 指定了某个模型，将其作为 primary，其他两个按原顺序作为容灾
+    """
+    if not user_selected or user_selected not in LLM_REGISTRY:
+        return _primary_llm, _backup_llm, _backup2_llm
+
+    # 用户选定的模型作为 primary
+    selected = LLM_REGISTRY[user_selected]
+    # 其他模型按原 primary → backup → backup2 顺序作为容灾
+    others: list[Any] = []
+    for model_name, instance in (
+        (settings.OPENAI_MODEL, _primary_llm),
+        (settings.BACKUP_MODEL, _backup_llm),
+        (settings.BACKUP2_MODEL, _backup2_llm),
+    ):
+        if instance is None or model_name == user_selected:
+            continue
+        others.append(instance)
+
+    backup = others[0] if len(others) >= 1 else None
+    backup2 = others[1] if len(others) >= 2 else None
+    return selected, backup, backup2
+
+
 # 供所有 LangGraph 节点复用的带故障转移 LLM
-llm: FallbackLLM = FallbackLLM(_primary_llm, _backup_llm)
+# 启动时根据 USER_SELECTED_LLM 决定主备顺序
+_initial_primary, _initial_backup, _initial_backup2 = _resolve_chain_order(
+    settings.USER_SELECTED_LLM
+)
+llm: FallbackLLM = FallbackLLM(_initial_primary, _initial_backup, _initial_backup2)
+
+
+def set_active_llm(model_name: str) -> dict[str, str]:
+    """运行时切换主 LLM，重新组合三链路容灾顺序。
+
+    供 /api/llm/select 端点调用。线程安全说明：仅替换 FallbackLLM 内部引用，
+    不重建 ChatOpenAI 实例；正在进行的请求继续使用旧引用完成调用。
+
+    Args:
+        model_name: 模型名称（必须在 LLM_REGISTRY 中）；
+            空字符串或 "default" 表示恢复默认链路顺序。
+
+    Returns:
+        切换后的链路状态 {"primary": ..., "backup": ..., "backup2": ...}
+    """
+    # 空字符串或 "default" 恢复默认链路顺序
+    if not model_name or model_name.lower() == "default":
+        llm.primary = _primary_llm
+        llm.backup = _backup_llm
+        llm.backup2 = _backup2_llm
+        settings.USER_SELECTED_LLM = ""
+        logger.info("LLM chain restored to default order")
+        return {
+            "primary": settings.OPENAI_MODEL,
+            "backup": settings.BACKUP_MODEL,
+            "backup2": settings.BACKUP2_MODEL,
+        }
+
+    if model_name not in LLM_REGISTRY:
+        raise ValueError(
+            f"Model '{model_name}' not in LLM_REGISTRY. "
+            f"Available: {list(LLM_REGISTRY.keys())}"
+        )
+
+    new_primary, new_backup, new_backup2 = _resolve_chain_order(model_name)
+    llm.primary = new_primary
+    llm.backup = new_backup
+    llm.backup2 = new_backup2
+    settings.USER_SELECTED_LLM = model_name
+    logger.info(
+        "LLM chain reordered: primary=%s, backup=%s, backup2=%s",
+        getattr(new_primary, "model_name", None) or settings.OPENAI_MODEL,
+        getattr(new_backup, "model_name", None) if new_backup else None,
+        getattr(new_backup2, "model_name", None) if new_backup2 else None,
+    )
+    return {
+        "primary": model_name,
+        "backup": settings.BACKUP_MODEL if new_backup == _backup_llm else (
+            settings.BACKUP2_MODEL if new_backup == _backup2_llm else settings.OPENAI_MODEL
+        ),
+        "backup2": settings.BACKUP2_MODEL if new_backup2 == _backup2_llm else (
+            settings.BACKUP_MODEL if new_backup2 == _backup_llm else settings.OPENAI_MODEL
+        ),
+    }
 
 # 全局 Embedding 模型实例，供 RAG 向量检索复用。
 # 支持五种模式：

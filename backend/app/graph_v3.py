@@ -1437,12 +1437,21 @@ def _reaction_ir_v2_hook(state: BioDynamicsState) -> dict[str, Any] | None:
         )
         return None
 
+    specialist_outputs = state.get("v4_specialist_outputs") or []
+    if specialist_outputs:
+        from app.reaction_ir_v2.reaction_builder import (
+            attach_specialist_state_machines,
+        )
+
+        ir = attach_specialist_state_machines(ir, specialist_outputs)
+
     result: dict[str, Any] = {}
     # Task B.2: 双写 v4_reaction_ir → v4_state["reaction_ir"]["ir"]
     set_v4_state(result, "reaction_ir", "ir", ir.to_dict())
     logger.info(
-        "_reaction_ir_v2_hook: v4_reaction_ir 生成成功，%d species, %d reactions",
-        len(ir.species), len(ir.reactions),
+        "_reaction_ir_v2_hook: v4_reaction_ir 生成成功，%d species, %d reactions, "
+        "%d state machines",
+        len(ir.species), len(ir.reactions), len(ir.state_machines),
     )
 
     # 可选：通过 v4_to_v3 Adapter 同步 network_json
@@ -1625,17 +1634,78 @@ def _ode_template_v2_hook(state: BioDynamicsState) -> dict[str, Any] | None:
                 _dur_match.group(1), _dur_match.group(2), _rc20_t_end,
             )
         else:
-            # 根据 pathway_class 推断：含 EGFR_RTK/MAPK_ERK 的信号级联用 120min
-            _pc_lower = pathway_class.lower() if pathway_class else ""
-            _signal_cascade_markers = ("egfr", "mapk", "erk", "rtk", "signaling")
-            if any(_m in _pc_lower for _m in _signal_cascade_markers):
-                _rc20_t_end = 120.0
-            else:
-                _rc20_t_end = 60.0
-            logger.info(
-                "[RC20] t_end 推断: pathway_class=%s → t_end=%.1f (ode_model.t_end 未设置，N6 尚未运行)",
-                pathway_class, _rc20_t_end,
+            # [RCA-20 修复 E] 通路特异性时间网格（Feature Flag 控制）
+            # 根因：所有信号级联通路硬编码 T_END=120, N_EVAL=300，导致跨通路
+            #   ppERK 峰值时间同质化（均收敛到 8.428min）
+            # 修复：按通路生物学时间尺度设置不同 T_END
+            # Feature Flag: V4_PATHWAY_SPECIFIC_TIMEGRID_ENABLED（默认 OFF，回退安全）
+            import os as _os_rc20e
+            _V4_PATHWAY_TIMEGRID_ENABLED = (
+                _os_rc20e.environ.get("V4_PATHWAY_SPECIFIC_TIMEGRID_ENABLED", "false").lower() == "true"
             )
+            # [RCA-37 修复 C1] _PATHWAY_TIMEGRID 键名与 pathway_registry.py 标准对齐
+            # 根因：旧键名（如 "NF_kB"/"Wnt"/"p53_signaling"）与 PATHWAY_REGISTRY 标准键不匹配
+            #       （应为 "NF_KB"/"WNT"/"p53"），导致 6 个通路 lookup miss，回退默认 t_end=120
+            # 修复：统一为全大写键名（与 ontology/pathway_registry.py 一致）
+            # [RCA-38 P1 修复 RC-1c] 修复三重 Bug：
+            #   1. 字典键 "PI3K_AKT_mTOR"→"PI3K_AKT_MTOR"（全大写，与 _pc_norm.upper() 一致）
+            #   2. 字典键 "p53"→"P53"（全大写，与 _pc_norm.upper() 一致）
+            #   3. _PC_ALIASES 补充 PI3K_AKT_MTOR 别名（虽然冗余但显式）
+            #   根因：pathway_class="PI3K_AKT_mTOR" 经 .upper() 后变为 "PI3K_AKT_MTOR"，
+            #         但字典键是 "PI3K_AKT_mTOR"（m 小写），lookup 失败回退默认 t_end=120，
+            #         实际 else 分支 t_end=60 更短，导致 pAKT peak_time 偏早/过晚。
+            _PATHWAY_TIMEGRID = {
+                "EGFR_RTK":      {"t_end": 60.0,   "n_eval": 300},   # 受体信号快速，1-5min 达峰
+                "MAPK_ERK":      {"t_end": 90.0,   "n_eval": 300},   # 级联传播，5-15min
+                # [S1.3 t_end 扩展] PI3K 120→180: pAKT 120min(t_end边界)→期望 15-30min 有余量
+                "PI3K_AKT_MTOR": {"t_end": 180.0,  "n_eval": 300},   # 代谢通路较慢，10-30min
+                "P53":           {"t_end": 240.0,  "n_eval": 300},   # 转录延迟，30-120min
+                "APOPTOSIS":     {"t_end": 180.0,  "n_eval": 300},   # 凋亡级联，60-180min
+                "CELL_CYCLE":    {"t_end": 1440.0, "n_eval": 300},   # 细胞周期，1-24h
+                "JAK_STAT":      {"t_end": 120.0,  "n_eval": 300},   # 细胞因子信号，10-60min
+                "NF_KB":         {"t_end": 180.0,  "n_eval": 300},   # 炎症信号，10-60min
+                "WNT":           {"t_end": 240.0,  "n_eval": 300},   # 发育信号，30-120min
+                "TGF_BETA":      {"t_end": 240.0,  "n_eval": 300},   # 生长因子，30-120min
+                "CROSS_PATHWAY": {"t_end": 120.0,  "n_eval": 300},   # 跨通路，默认 120
+            }
+            if _V4_PATHWAY_TIMEGRID_ENABLED:
+                # [RCA-37 修复 C2] pathway_class 归一化：strip + upper 处理大小写/空格差异
+                _pc_norm = (pathway_class or "").strip().upper()
+                # 兼容常见别名（如 "NF-kB"→"NF_KB"、"Wnt"→"WNT"）
+                # [RCA-38 P1 修复 RC-1c] 补充 PI3K 大小写别名映射
+                _PC_ALIASES = {
+                    "P53": "P53", "P53_SIGNALING": "P53", "TP53": "P53",
+                    "NF-KB": "NF_KB", "NFKB": "NF_KB",
+                    "TGF-BETA": "TGF_BETA", "TGF-B": "TGF_BETA",
+                    "PI3K_AKT_MTOR": "PI3K_AKT_MTOR",  # 显式映射（虽冗余但防 lookup miss）
+                    "PI3KAKTMTOR": "PI3K_AKT_MTOR",   # 去下划线变体
+                }
+                _pc_norm = _PC_ALIASES.get(_pc_norm, _pc_norm)
+                grid = _PATHWAY_TIMEGRID.get(_pc_norm, {"t_end": 120.0, "n_eval": 300})
+                _rc20_t_end = grid["t_end"]
+                _rc20_n_eval = grid["n_eval"]
+                logger.info(
+                    "[RC20-E] 通路特异性时间网格: pathway_class=%s → t_end=%.1f, n_eval=%d",
+                    pathway_class, _rc20_t_end, _rc20_n_eval,
+                )
+            else:
+                # 原逻辑：含 EGFR_RTK/MAPK_ERK 的信号级联用 120min，其他 60min
+                # [RCA-38 P1 修复 RC-1c] 扩展信号级联标记词，包含 PI3K/AKT/mTOR/JAK/STAT
+                #   根因：PI3K_AKT_mTOR 不含原标记词（egfr/mapk/erk/rtk/signaling），
+                #         导致 PI3K 通路 t_end=60（过短），pAKT peak_time 偏早/过晚。
+                _pc_lower = pathway_class.lower() if pathway_class else ""
+                _signal_cascade_markers = (
+                    "egfr", "mapk", "erk", "rtk", "signaling",
+                    "pi3k", "akt", "mtor", "jak", "stat",  # 扩展信号级联
+                )
+                if any(_m in _pc_lower for _m in _signal_cascade_markers):
+                    _rc20_t_end = 120.0
+                else:
+                    _rc20_t_end = 60.0
+                logger.info(
+                    "[RC20] t_end 推断: pathway_class=%s → t_end=%.1f (ode_model.t_end 未设置，N6 尚未运行)",
+                    pathway_class, _rc20_t_end,
+                )
 
     # [KINETIC_PARAMETERS 注入 / P0-1] 从 specialist_outputs 提取 kinetics_overrides
     # 修复 C1 Peak Time 全局失败（10/10 通路失败）：

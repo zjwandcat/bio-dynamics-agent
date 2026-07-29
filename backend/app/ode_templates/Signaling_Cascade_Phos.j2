@@ -39,10 +39,41 @@ N_SP = len(SPECIES_NAMES)
 SP_IDX = {name: i for i, name in enumerate(SPECIES_NAMES)}
 
 
+# [RCA-20 修复 B] _get_param clamp 机制
+# 根因：_get_param 无 clamp/clip，SBML 原生参数（如 633,250）原样返回导致数值爆炸
+# 修复：按 param_key 类型设置上限，超界值截断到上限
+# Feature Flag: V4_GET_PARAM_CLAMP_ENABLED（默认 OFF，回退安全）
+_V4_GET_PARAM_CLAMP_ENABLED = {{ v4_get_param_clamp_enabled }}
+_PARAM_CLAMP_MAX = {
+    "k_cat": 10.0, "kcat": 10.0, "k_act": 10.0, "kact": 10.0,
+    "k_phos": 10.0, "kphos": 10.0, "k1": 10.0, "k1f": 10.0, "kf": 10.0, "k": 10.0,
+    "k_inhibit": 10.0, "ki": 10.0, "koff": 10.0, "k1b": 10.0, "kb": 10.0,
+    "k_deg": 1.0, "kdeg": 1.0, "k_dephos": 1.0, "kdephos": 1.0, "k2": 1.0,
+    "vmax": 100.0, "Vmax": 100.0, "km": 100.0, "Km": 100.0,
+    "kon": 100.0, "kd": 100.0, "ic50": 100.0,
+}
+
+# [RCA-20 修复 C] activation fallback MM 饱和 Feature Flag
+# 根因：activation fallback 使用无饱和一阶动力学（k_cat * src），
+# 当 k_cat 过大时导致 fold_change 爆炸（57~605x，期望 5~15x）
+# 修复：引入 Michaelis-Menten 饱和，使速率有上限
+# Feature Flag: V4_ACTIVATION_MM_SATURATION_ENABLED（默认 OFF，回退安全）
+_V4_ACTIVATION_MM_SATURATION_ENABLED = {{ v4_activation_mm_saturation_enabled }}
+
+
 def _get_param(target_name, param_key, default):
-    """从 PARAMS 中获取指定 target 的参数值。"""
+    """从 PARAMS 中获取指定 target 的参数值。
+
+    [RCA-20 修复 B] 当 V4_GET_PARAM_CLAMP_ENABLED=true 时，
+    对超界参数值做 clamp（截断到生物学合理上限）。
+    """
     eparams = PARAMS.get(target_name, {})
-    return eparams.get(param_key, default)
+    value = eparams.get(param_key, default)
+    if _V4_GET_PARAM_CLAMP_ENABLED and isinstance(value, (int, float)):
+        max_val = _PARAM_CLAMP_MAX.get(param_key)
+        if max_val is not None and value > max_val:
+            return float(max_val)
+    return value
 
 
 # =============================================================================
@@ -178,8 +209,19 @@ def _ode(t, y):
 
         else:  # activation / unknown → 降级为 mass-action conversion（TASK 4: 禁止 gene-expression-like）
             # TASK 4: 原 k_cat * src - k_degr * tgt（无守恒）改为 mass-action conversion
+            # [RCA-20 修复 C] 引入 Michaelis-Menten 饱和（Feature Flag 控制）
+            # 根因：activation fallback 无饱和，k_cat × src 的乘积可溢出导致 fold_change 爆炸
+            # 修复：v = Vmax * src / (Km + src)，速率有上限 Vmax = k_cat * src
+            # Feature Flag: V4_ACTIVATION_MM_SATURATION_ENABLED（默认 OFF，回退安全）
             k_cat = _get_param(tgt_name, "k_cat", _get_param(tgt_name, "k1", 0.1))
-            _act_rate = k_cat * src
+            if _V4_ACTIVATION_MM_SATURATION_ENABLED:
+                # Michaelis-Menten 饱和形式：避免 k_cat × src 乘积溢出
+                # _Km_act 从 PARAMS 读取，默认 0.1（与 phosphorylation 一致）
+                _Km_act = _get_param(tgt_name, "Km_act", _get_param(tgt_name, "Km", 0.1))
+                _denom_act = _Km_act + src if (_Km_act + src) > 0 else 1.0
+                _act_rate = k_cat * src * src / _denom_act
+            else:
+                _act_rate = k_cat * src  # 原始一阶质量作用
             dy[t_idx] += _act_rate
             dy[s_idx] -= _act_rate  # 严格守恒：消耗源物种
 

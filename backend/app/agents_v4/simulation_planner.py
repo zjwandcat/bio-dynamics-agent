@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 # app.config 无循环依赖风险（不导入 agents_v4），可在模块级导入
@@ -118,8 +119,11 @@ class SimulationPlannerAgent:
             is_multi_pathway = self._is_multi_pathway(pathway_class)
             is_low_molecule = self._check_low_molecule(reaction_ir)
 
-            # 优先级：DDE > stochastic > ode
-            if is_oscillatory:
+            declared_dde = float(ode_system.get("dde_delay_minutes", 0.0) or 0.0) > 0.0
+
+            # 优先级：显式 DDE/振荡 > stochastic > ode。Wnt 等非振荡通路也可
+            # 通过 PathwayGraph.temporal 声明转录反馈延迟。
+            if declared_dde or is_oscillatory:
                 simulation_type = "dde"
             elif is_low_molecule:
                 simulation_type = "stochastic"
@@ -130,11 +134,15 @@ class SimulationPlannerAgent:
             solver = _SIM_TYPE_TO_SOLVER.get(simulation_type, "scipy.solve_ivp")
 
             # 5. 确定时间范围
-            t_start, t_end = self._determine_time_range(ode_system, is_multi_pathway)
+            explicit_duration = self._extract_duration_minutes(state)
+            t_start, t_end = self._determine_time_range(
+                ode_system, is_multi_pathway, explicit_duration
+            )
             n_points = 200
 
             # 6. 确定时间尺度
             time_scales = self._build_time_scales(is_multi_pathway, t_end)
+            rtol, atol = self._solver_tolerances(state)
 
             # 7. 构建计划
             sim_plan: dict[str, Any] = {
@@ -145,6 +153,8 @@ class SimulationPlannerAgent:
                 "n_points": n_points,
                 "time_scales": time_scales,
                 "multi_pathway": is_multi_pathway,
+                "rtol": rtol,
+                "atol": atol,
             }
 
             logger.info(
@@ -211,14 +221,63 @@ class SimulationPlannerAgent:
         return False
 
     @staticmethod
-    def _determine_time_range(ode_system: dict, is_multi_pathway: bool) -> tuple[float, float]:
+    def _extract_duration_minutes(state: dict) -> float | None:
+        """Read a governed benchmark/user duration without coupling to one schema."""
+        candidates: list[Any] = [
+            state.get("benchmark_duration"),
+            state.get("simulation_duration"),
+        ]
+        for container_name in ("benchmark_case", "benchmark_spec", "benchmark_input"):
+            container = state.get(container_name)
+            if not isinstance(container, dict):
+                continue
+            candidates.append(container.get("duration"))
+            input_spec = container.get("input")
+            if isinstance(input_spec, dict):
+                candidates.append(input_spec.get("duration"))
+        user_input = str(state.get("user_input") or "")
+        match = re.search(r"\bduration\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*min\b", user_input, re.I)
+        if match:
+            candidates.insert(0, match.group(1))
+        for candidate in candidates:
+            try:
+                duration = float(candidate)
+            except (TypeError, ValueError):
+                continue
+            if duration > 0:
+                return duration
+        return None
+
+    @staticmethod
+    def _solver_tolerances(state: dict) -> tuple[float, float]:
+        """Use high precision for L5/C4-guided runs and preserve legacy defaults otherwise."""
+        difficulty = str(state.get("benchmark_difficulty") or state.get("difficulty") or "")
+        hints: list[str] = [str(state.get("optimization_hints") or "")]
+        for container_name in ("benchmark_case", "benchmark_spec"):
+            container = state.get(container_name)
+            if not isinstance(container, dict):
+                continue
+            difficulty = difficulty or str(container.get("difficulty") or "")
+            hints.append(str(container.get("optimization_hints") or ""))
+        hint_text = " ".join(hints).lower()
+        high_precision = difficulty.upper() == "L5" or (
+            "c4" in hint_text and "precision" in hint_text
+        )
+        return (1e-6, 1e-9) if high_precision else (1e-3, 1e-6)
+
+    @staticmethod
+    def _determine_time_range(
+        ode_system: dict,
+        is_multi_pathway: bool,
+        explicit_duration: float | None = None,
+    ) -> tuple[float, float]:
         """确定仿真时间范围。
 
         多通路场景使用更长时间（120 min），单通路默认 60 min。
         若 ode_system 中有 dde_delay_minutes > 0，延长 t_end 以覆盖延迟效应。
         """
         t_start = 0.0
-        t_end = 120.0 if is_multi_pathway else 60.0
+        t_end = explicit_duration or (120.0 if is_multi_pathway else 60.0)
 
         # 从 ode_system 提取时间信息
         if ode_system:
@@ -282,6 +341,8 @@ class SimulationPlannerAgent:
                 },
             ],
             "multi_pathway": False,
+            "rtol": 1e-3,
+            "atol": 1e-6,
         }
 
 

@@ -1105,9 +1105,20 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => {
           onEvent: (event) => get().ingestSSEEvent(event),
           onError: (err) => {
             removeTrailingStatus();
+            // 友好化网络错误：浏览器 fetch 失败通常是 "Failed to fetch"，
+            // 对用户无意义；转为可操作的中文提示。
+            const raw = err.message || "";
+            let friendly = raw;
+            if (/failed to fetch|networkerror|load failed/i.test(raw)) {
+              friendly = "无法连接到后端服务（localhost:8000）。请确认后端已启动。";
+            } else if (/refused/i.test(raw)) {
+              friendly = "后端服务拒绝连接，请确认服务正在运行。";
+            } else if (/abort/i.test(raw)) {
+              friendly = "请求已中断。";
+            }
             appendMessage({
               role: "agent",
-              content: err.message,
+              content: friendly,
               type: "text",
             });
           },

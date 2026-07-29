@@ -110,14 +110,16 @@ _LITERATURE_MIN_TOTAL: int = 5
 # Experiment 轴：通过阈值（至少 2 个实验）
 _EXPERIMENT_MIN_COUNT: int = 2
 
-# Discussion 轴：通过阈值（启发式得分 >= 0.7）
+# Discussion 轴：默认阈值保持 v3 行为；RCA-15 flag 开启时使用 0.4。
 _DISCUSSION_PASS_THRESHOLD: float = 0.7
+_DISCUSSION_RELAXED_PASS_THRESHOLD: float = 0.4
 
 # Discussion 轴：10 问关键词（启发式检查讨论是否覆盖关键科学问题）
 # 注：spec 提及"10 问关键词"，此处列出 8 个核心关键词，每命中 +0.1，最高 1.0
 _DISCUSSION_KEYWORDS: tuple[str, ...] = (
     "peak", "decline", "feedback", "experiment",
     "literature", "limitation", "sensitivity", "next step",
+    "磷酸化", "级联", "负反馈", "二聚化", "核转位",
 )
 
 # Discussion 轴：每命中一个关键词的加分
@@ -143,6 +145,13 @@ _EVIDENCE_REVIEW_THRESHOLD: int = 2
 
 # 降级轴的默认得分（不影响 passed 判定，但参与 min 拖累）
 _DEGRADED_SCORE: float = 0.5
+
+
+def _discussion_pass_threshold() -> float:
+    """Resolve the flag-gated Discussion threshold without import-time caching."""
+    if settings.effective_sa_axis_relaxed_threshold_enabled():
+        return _DISCUSSION_RELAXED_PASS_THRESHOLD
+    return _DISCUSSION_PASS_THRESHOLD
 
 
 # =============================================================================
@@ -538,13 +547,42 @@ def _evaluate_literature_axis(
     review_count = 0
     mech_count = 0
 
-    if evidence_docs:
+    ranked_input = list(evidence_docs or [])
+    if not ranked_input and cited_pmids and len(cited_pmids) >= _LITERATURE_MIN_REVIEWS:
+        # RCA-15: callers may have citation IDs but no EvidenceDoc objects.  Reuse
+        # the existing PubMed client so publication types can still identify reviews.
+        try:
+            from app.rag_client import RagClient
+
+            pmids = [str(pmid).split(":", 1)[-1].strip() for pmid in cited_pmids]
+            client = object.__new__(RagClient)
+            metadata_records = client._fetch_pubmed_by_pmids(pmids, top_k=len(pmids))
+            for metadata in metadata_records:
+                pmid = str(metadata.get("pmid") or "").strip()
+                if not pmid:
+                    continue
+                doc_type = ranker.classify(pmid, metadata=metadata)
+                try:
+                    year = int(metadata.get("pub_year") or metadata.get("year") or 0)
+                except (TypeError, ValueError):
+                    year = 0
+                ranked_input.append(EvidenceDoc(
+                    pmid=pmid,
+                    title=str(metadata.get("title") or ""),
+                    year=year,
+                    journal=str(metadata.get("journal") or ""),
+                    evidence_type=doc_type,
+                ))
+        except Exception as exc:
+            logger.warning("PubMed metadata fallback failed for Literature axis: %s", exc)
+
+    if ranked_input:
         # 用 EvidenceRanker 排序（确保经典文献优先，同时利用 Gold Standard 分类）
         try:
-            ranked_docs = ranker.rank(evidence_docs)
+            ranked_docs = ranker.rank(ranked_input)
         except Exception:
             # 排序失败时直接用原始列表
-            ranked_docs = list(evidence_docs)
+            ranked_docs = ranked_input
 
         for doc in ranked_docs:
             try:
@@ -721,15 +759,15 @@ def _evaluate_discussion_axis(discussion_content: str) -> AxisScore:
         1 for tag in _DISCUSSION_CITATION_TAGS if tag in discussion_content
     )
 
-    # status: passed if score >= 0.7
-    passed = score >= _DISCUSSION_PASS_THRESHOLD
+    pass_threshold = _discussion_pass_threshold()
+    passed = score >= pass_threshold
     status = "passed" if passed else "failed"
 
     # 失败原因
     failure_reasons: list[str] = []
     if not passed:
         failure_reasons.append(
-            f"讨论启发式得分 {score:.2f} 低于阈值 {_DISCUSSION_PASS_THRESHOLD}"
+            f"讨论启发式得分 {score:.2f} 低于阈值 {pass_threshold}"
             f"（命中关键词: {matched_keywords}）"
         )
 

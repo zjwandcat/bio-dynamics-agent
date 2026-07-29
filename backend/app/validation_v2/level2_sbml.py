@@ -791,6 +791,16 @@ class Level2SBMLValidator:
     ) -> dict[str, dict[str, float]]:
         """从仿真数据中提取每个 species 的 peak / peak_time / amplification。
 
+        [RC-FIX-PeakTime-Plateau-r28b] 平台型曲线 peak_time 误报修复（与 evaluator._trajectory_metrics / feature_extractor._peak 对齐）
+          根因：原实现 `peak_idx = concs.index(max(concs))` 使用全局 max 索引，
+          对快速达峰后保持平台的曲线（如 pAKT 在 t=13min 达峰后保持至 t=120min），
+          由于数值漂移使全局 max 出现在平台期后期（如 t=105min），导致 C4 track_a_error
+          虚高（pAKT peak_time_diff=101min），C4 失败。
+          修复：增加平台型检测，仅对平台型曲线用 95% 阈值首次达峰时间：
+            1. 先用全局 max 找 peak_value 和 idx_global
+            2. 平台型检测：peak 之后是否所有点 ≥ 95% peak
+            3. 平台型 → 95% 阈值首次达峰；非平台型 → 全局 max 索引
+
         Args:
             sim_data: {species_id: [(time, concentration), ...]}
 
@@ -806,7 +816,24 @@ class Level2SBMLValidator:
             baseline = concs[0]
             peak = max(concs)
             peak_idx = concs.index(peak)
-            peak_time = times[peak_idx]
+            # [RC-FIX-PeakTime-Plateau-r28b] 平台型检测 + 95% 阈值首次达峰
+            threshold = 0.95 * peak
+            is_plateau = True
+            for i in range(peak_idx, len(concs)):
+                if concs[i] < threshold:
+                    is_plateau = False
+                    break
+            if is_plateau:
+                # 平台型：找首次达到 95% peak 的时间
+                peak_time_idx = peak_idx  # 默认回退
+                for i in range(peak_idx + 1):
+                    if concs[i] >= threshold:
+                        peak_time_idx = i
+                        break
+                peak_time = times[peak_time_idx]
+            else:
+                # 非平台型：用全局 max 索引
+                peak_time = times[peak_idx]
             amplification = peak - baseline
             peaks[sp_id] = {
                 "peak": peak,

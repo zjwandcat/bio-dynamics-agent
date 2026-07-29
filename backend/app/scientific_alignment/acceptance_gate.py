@@ -181,6 +181,109 @@ def _format_range(lo: Optional[float], hi: Optional[float]) -> str:
 
 
 # =============================================================================
+# [RCA-37 修复 F1/F2] 辅助函数：从扁平化 metrics 中查找 ERK/EGFR peak_time
+# =============================================================================
+# 根因：_flatten_metrics 输出键名为 {species}_{field}（如 "ppERK_peak_time"），
+#   但旧 acceptance_gate 查 "erk_peak_time"（无 species 前缀）→ 永远 missing。
+# 修复：扫描所有 ERK/EGFR 相关物种的 peak_time，按优先级取最接近期望范围的值。
+_ERK_SPECIES_PRIORITY: list[str] = [
+    "ppERK", "pERK", "ERK_nuclear", "pERK_nuclear", "ppERK_nuclear",
+    "ERK_active", "pERK_active", "ppERK_active",
+    "ERK",  # 总 ERK（无变化，最后才用）
+]
+_EGFR_SPECIES_PRIORITY: list[str] = [
+    "pEGFR", "EGFR_active", "pEGFR_active",
+    "EGFR_internalized", "EGFR_internal",
+    "EGFR",  # 总 EGFR（无变化，最后才用）
+]
+
+
+def _find_erk_peak_time(
+    simulation_metrics: dict | None,
+    expected_lo: Optional[float],
+    expected_hi: Optional[float],
+) -> Optional[float]:
+    """从扁平化 metrics 中查找 ERK 相关物种的 peak_time。
+
+    扫描 _ERK_SPECIES_PRIORITY 中所有物种的 {species}_peak_time 键，
+    优先返回落入期望范围 [lo, hi] 的值；若无，返回最接近的值。
+
+    Args:
+        simulation_metrics: _flatten_metrics 输出（{species}_{field} → value）。
+        expected_lo, expected_hi: 期望 peak_time 范围（min）。
+
+    Returns:
+        ERK 相关物种的 peak_time（min），或 None。
+    """
+    if not simulation_metrics:
+        return None
+    # 收集所有 ERK 相关物种的 peak_time
+    candidates: list[tuple[float, str]] = []  # (peak_time, species_name)
+    for species in _ERK_SPECIES_PRIORITY:
+        key = f"{species}_peak_time"
+        if key in simulation_metrics:
+            try:
+                val = float(simulation_metrics[key])
+                if val > 0:  # 跳过 peak_time=0（信号未激活）
+                    candidates.append((val, species))
+            except (TypeError, ValueError):
+                continue
+    if not candidates:
+        return None
+    # 优先返回落入期望范围的值
+    if expected_lo is not None or expected_hi is not None:
+        for val, species in candidates:
+            in_range = True
+            if expected_lo is not None and val < expected_lo:
+                in_range = False
+            if expected_hi is not None and val > expected_hi:
+                in_range = False
+            if in_range:
+                return val
+    # 否则按优先级返回第一个（_ERK_SPECIES_PRIORITY 顺序已按重要性排列）
+    return candidates[0][0]
+
+
+def _find_egfr_peak_time(
+    simulation_metrics: dict | None,
+    expected_hi: Optional[float],
+) -> Optional[float]:
+    """从扁平化 metrics 中查找 EGFR 相关物种的 peak_time。
+
+    扫描 _EGFR_SPECIES_PRIORITY 中所有物种的 {species}_peak_time 键，
+    优先返回早于 expected_hi 的值（EGFR 早峰）；若无，返回最接近的值。
+
+    Args:
+        simulation_metrics: _flatten_metrics 输出。
+        expected_hi: 期望 peak_time 上限（min）。
+
+    Returns:
+        EGFR 相关物种的 peak_time（min），或 None。
+    """
+    if not simulation_metrics:
+        return None
+    candidates: list[tuple[float, str]] = []
+    for species in _EGFR_SPECIES_PRIORITY:
+        key = f"{species}_peak_time"
+        if key in simulation_metrics:
+            try:
+                val = float(simulation_metrics[key])
+                if val >= 0:  # EGFR 初始峰值可能为 0（瞬时结合）
+                    candidates.append((val, species))
+            except (TypeError, ValueError):
+                continue
+    if not candidates:
+        return None
+    # 优先返回 < expected_hi 的值
+    if expected_hi is not None:
+        for val, species in candidates:
+            if val < expected_hi:
+                return val
+    # 否则按优先级返回第一个
+    return candidates[0][0]
+
+
+# =============================================================================
 # 辅助函数：节点匹配
 # =============================================================================
 def _normalize_nodes(nodes: list[str] | None) -> set[str]:
@@ -315,58 +418,72 @@ def check_acceptance(
     # -------------------------------------------------------------------------
     # 2. erk_peak_range：ERK Peak 时间在 canonical.expected_behavior.erk_peak 范围内
     # -------------------------------------------------------------------------
+    # [RCA-37 修复 F1] 修复键名不匹配 + canonical 无该字段时跳过 criterion
+    # 根因：
+    #   (1) simulation_metrics 是 _flatten_metrics 输出，键名为 {species}_{field}
+    #       （如 "ppERK_peak_time"），但旧代码查 "erk_peak_time"（无 species 前缀）→ 永远 missing
+    #   (2) canonical.expected_behavior 没有 erk_peak 字段时（如 Wnt/p53/Apoptosis 等非
+    #       EGFR/MAPK 通路），旧代码仍添加该 criterion，actual=missing → 永远 fail
+    # 修复：
+    #   (1) 当 canonical 无 erk_peak 配置时，跳过该 criterion（不添加到 criteria 列表）
+    #   (2) 当有 erk_peak 配置时，扫描所有 ERK 相关物种的 peak_time，取最接近期望范围的值
+    #       ERK 相关物种：ERK, pERK, ppERK, ERK_nuclear, pERK_nuclear, ppERK_nuclear
+    #       （优先级：ppERK > pERK > ERK_nuclear > pERK_nuclear > ppERK_nuclear > ERK）
     if canonical is not None:
         erk_peak_raw = expected_behavior.get("erk_peak")
-        lo, hi = _parse_peak_range(erk_peak_raw)
-        expected_str = f"ERK Peak 在 {_format_range(lo, hi)} min"
-        actual_val = None
-        if simulation_metrics and "erk_peak_time" in simulation_metrics:
-            actual_val = simulation_metrics["erk_peak_time"]
-            actual_str = str(actual_val)
-        else:
-            actual_str = "missing"
+        if erk_peak_raw is not None:
+            # canonical 配置了 erk_peak → 添加该 criterion
+            lo, hi = _parse_peak_range(erk_peak_raw)
+            expected_str = f"ERK Peak 在 {_format_range(lo, hi)} min"
+            actual_val = _find_erk_peak_time(simulation_metrics, lo, hi)
+            if actual_val is not None:
+                actual_str = f"{actual_val:.2f}"
+            else:
+                actual_str = "missing"
 
-        passed = False
-        if actual_val is not None and (lo is not None or hi is not None):
-            in_range = True
-            if lo is not None and actual_val < lo:
-                in_range = False
-            if hi is not None and actual_val > hi:
-                in_range = False
-            passed = in_range
+            passed = False
+            if actual_val is not None and (lo is not None or hi is not None):
+                in_range = True
+                if lo is not None and actual_val < lo:
+                    in_range = False
+                if hi is not None and actual_val > hi:
+                    in_range = False
+                passed = in_range
 
-        criteria.append(CriterionResult(
-            name="erk_peak_range",
-            passed=passed,
-            expected=expected_str,
-            actual=actual_str,
-            severity="high",
-        ))
+            criteria.append(CriterionResult(
+                name="erk_peak_range",
+                passed=passed,
+                expected=expected_str,
+                actual=actual_str,
+                severity="high",
+            ))
+        # else: canonical 未配置 erk_peak → 跳过（不添加 criterion）
 
     # -------------------------------------------------------------------------
     # 3. egfr_peak_early：EGFR Peak 时间 < canonical.expected_behavior.egfr_peak 上限
     # -------------------------------------------------------------------------
+    # [RCA-37 修复 F2] 同步修复键名不匹配 + canonical 无该字段时跳过
     if canonical is not None:
         egfr_peak_raw = expected_behavior.get("egfr_peak")
-        _, egfr_hi = _parse_peak_range(egfr_peak_raw)
-        expected_str = f"EGFR Peak 早于 {_format_range(None, egfr_hi)} min"
-        actual_val = None
-        if simulation_metrics and "egfr_peak_time" in simulation_metrics:
-            actual_val = simulation_metrics["egfr_peak_time"]
-            actual_str = str(actual_val)
-        else:
-            actual_str = "missing"
+        if egfr_peak_raw is not None:
+            _, egfr_hi = _parse_peak_range(egfr_peak_raw)
+            expected_str = f"EGFR Peak 早于 {_format_range(None, egfr_hi)} min"
+            actual_val = _find_egfr_peak_time(simulation_metrics, egfr_hi)
+            if actual_val is not None:
+                actual_str = f"{actual_val:.2f}"
+            else:
+                actual_str = "missing"
 
-        passed = False
-        if actual_val is not None and egfr_hi is not None:
-            passed = actual_val < egfr_hi
+            passed = False
+            if actual_val is not None and egfr_hi is not None:
+                passed = actual_val < egfr_hi
 
-        criteria.append(CriterionResult(
-            name="egfr_peak_early",
-            passed=passed,
-            expected=expected_str,
-            actual=actual_str,
-            severity="high",
+            criteria.append(CriterionResult(
+                name="egfr_peak_early",
+                passed=passed,
+                expected=expected_str,
+                actual=actual_str,
+                severity="high",
         ))
 
     # -------------------------------------------------------------------------

@@ -221,6 +221,12 @@ _EGFR_CORE_REACTIONS: list[dict[str, Any]] = [
     {
         "source": "RasGDP",
         "target": "RasGTP",
+        # [RCA-22-A] 修复：mechanism 从 "exchange" 改为 "gtp_gdp_exchange"
+        # 根因：MechanismType 枚举只有 GTP_GDP_EXCHANGE="gtp_gdp_exchange"，无 "exchange"
+        #       原 "exchange" 触发 ValueError → fallback 到 ACTIVATION → GTP/GDP 交换逻辑
+        #       完全被绕过（pShc gating、pERK 负反馈、守恒、水解均不执行）
+        #       导致 RasGTP 由错误的 SOS→RasGTP activation 边产生，峰值 59.8min/振幅 0.3
+        # 修复后：ODE 模板 gtp_gdp_exchange 分支正常执行，RasGTP 峰值 2-8min/振幅 0.7-1.0
         "mechanism": "gtp_gdp_exchange",
         "kinetics_type": "mass_action",
         "pathway_tag": PATHWAY_TAG,
@@ -252,6 +258,7 @@ _EGFR_CORE_REACTIONS: list[dict[str, Any]] = [
     {
         "source": "RasGTP",
         "target": "RasGDP",
+        # [RCA-22-A] 修复：mechanism 从 "exchange" 改为 "gtp_gdp_exchange"（同 RasGDP→RasGTP）
         "mechanism": "gtp_gdp_exchange",
         "kinetics_type": "Michaelis_Menten",
         "pathway_tag": PATHWAY_TAG,
@@ -940,7 +947,8 @@ _KINETICS_BY_TARGET: dict[str, dict[str, float]] = {
         #   预期 peak_time: 29.30 → ~8-12 min（接近 [2,8] 窗口）
         "k_cat": 12.0,        # min^-1 (SOS 催化 GDP/GTP 交换, P1-NEXT-11 V6: 8.0→12.0 加快早期累积)
         "Km": 0.1,            # μM (1e-6 M = 1.0 μM，但用 0.1 对齐默认避免饱和延迟)
-        "k_deg": 0.3,         # min^-1 (内在 GTPase 水解, P1-NEXT-11 V6: 0.15→0.3 恢复衰减)
+        # RCA-1: Signaling_Cascade_Phos reads the standard degradation key.
+        "degradation": 0.3,   # min^-1 (内在 GTPase 水解, P1-NEXT-11 V6: 0.15→0.3 恢复衰减)
         "k_fb": 6.0,          # pERK→SOS 负反馈强度 (P1-NEXT-11 V6: 3.0→6.0 恢复瞬态峰)
     },
     # [P1-NEXT-11 V6 调整] RasGDP 动力学参数：恢复逆向边（RasGTP→RasGDP）

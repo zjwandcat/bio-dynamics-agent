@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from app.reaction_ir_v2.constraints import auto_generate_mass_conservation
@@ -33,6 +34,28 @@ from app.reaction_ir_v2.schema import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _edge_reaction_id(
+    edge: dict[str, Any],
+    index: int,
+    used_ids: set[str],
+) -> str:
+    """Return a stable, unique ReactionIR ID for an input edge."""
+    requested = str(edge.get("reaction_id") or edge.get("id") or "").strip()
+    base = re.sub(r"[^A-Za-z0-9_]", "_", requested).strip("_")
+    if not base:
+        base = f"RXN_{index + 1:03d}"
+    if base[0].isdigit():
+        base = f"RXN_{base}"
+
+    reaction_id = base
+    suffix = 2
+    while reaction_id in used_ids:
+        reaction_id = f"{base}_{suffix}"
+        suffix += 1
+    used_ids.add(reaction_id)
+    return reaction_id
 
 
 def _normalize_go_terms(raw: Any) -> list[str]:
@@ -164,6 +187,7 @@ def build_from_network_json(
 
     # —— 2. edges → reactions ——
     reactions: list[ReactionV2] = []
+    used_reaction_ids: set[str] = set()
     for i, edge in enumerate(edges):
         source_name = edge.get("source", "")
         target_name = edge.get("target", "")
@@ -228,9 +252,13 @@ def build_from_network_json(
         # [BENCHMARK CLOSURE / Gap-EGFR-PeakOrder] 传递 edge.modifier 字段供
         #   gtp_gdp_exchange 等机制使用真实酶（如 SOS/RasGAP），而非 source 占位符。
         edge_modifier = (edge.get("modifier") or "").strip()
+        # [RC-FIX-PI3K-Activation-r17] 传递 edge.substrate 字段供 activation 等机制
+        #   使用真实底物（如 PIP2），而非 source 占位符。
+        edge_substrate = (edge.get("substrate") or "").strip()
         reactants, products, modifiers = _build_reaction_for_mechanism(
             mechanism, source_id, target_id, source_name, target_name,
             name_to_species_id, edge_modifier=edge_modifier,
+            edge_substrate=edge_substrate,
         )
 
         # compartments：从 species 查询
@@ -249,7 +277,7 @@ def build_from_network_json(
         _kegg = edge.get("kegg_id") or _edge_prov.get("kegg_id")
 
         reactions.append(ReactionV2(
-            id=f"RXN_{i+1:03d}",
+            id=_edge_reaction_id(edge, i, used_reaction_ids),
             reaction_type=mechanism_str,  # [RC25] 保留原始机制名（含 feedback_regulation 等）
             kinetics_type=kinetics_type,
             reactants=reactants,
@@ -348,6 +376,7 @@ def _build_reaction_for_mechanism(
     target_name: str,
     name_to_species_id: dict[str, str],
     edge_modifier: str = "",
+    edge_substrate: str = "",
 ) -> tuple[list, list, list]:
     """根据机制类型构建 (reactants, products, modifiers)。
 
@@ -360,6 +389,8 @@ def _build_reaction_for_mechanism(
         name_to_species_id: 名称→species_id 映射（用于推导未磷酸化形式等）
         edge_modifier: edge.modifier 字段（如 SOS/RasGAP），供 gtp_gdp_exchange
             等机制使用真实酶而非 source 占位符。空字符串表示无显式 modifier。
+        edge_substrate: edge.substrate 字段（如 PIP2），供 activation 等机制使用
+            真实底物而非 source 占位符。空字符串表示无显式 substrate。
 
     Returns:
         (reactants, products, modifiers) 三个列表
@@ -397,9 +428,17 @@ def _build_reaction_for_mechanism(
             products.append(SpeciesRef(species_id=target_id, role="product"))
         else:
             # 异磷酸化：未磷酸化形式作 substrate，target (p-form) 作 product，source 作 catalytic modifier
-            substrate_id = _derive_substrate_id(
-                target_name, target_id, name_to_species_id
-            )
+            # [RC-FIX-PIP3-SubstrateLost-r19] 优先使用 edge.substrate 字段（specialist 显式声明），
+            #   否则降级到 _derive_substrate_id（从 target 名推导，仅适用 pX→X 模式）。
+            #   根因：PI3K→PIP3 的 target="PIP3" 不符合 pX 模式（大写 P + PIP2≠IP3），
+            #   _derive_substrate_id 返回 target_id 自身（PIP3），导致 substrate=product 无意义。
+            #   修复：当 edge.substrate 显式声明且在 species 列表中时，优先使用。
+            if edge_substrate and edge_substrate in name_to_species_id:
+                substrate_id = name_to_species_id[edge_substrate]
+            else:
+                substrate_id = _derive_substrate_id(
+                    target_name, target_id, name_to_species_id
+                )
             reactants.append(SpeciesRef(species_id=substrate_id, role="substrate"))
             products.append(SpeciesRef(species_id=target_id, role="product"))
             modifiers.append(_make_modifier(source_id, "catalytic"))
@@ -407,9 +446,20 @@ def _build_reaction_for_mechanism(
     elif mechanism == MechanismType.DEPHOSPHORYLATION:
         # 去磷酸化：磷酸酶（source）作 catalytic modifier，target 为去磷酸化产物
         # 底物应为 target 的磷酸化前体（如 pTSC2 → TSC2，底物为 pTSC2）
-        substrate_id = _derive_phosphorylated_substrate_id(
-            target_name, target_id, name_to_species_id
-        )
+        # [RC-FIX-PTEN-SubstrateLost-r20] 优先使用 edge.substrate 字段（specialist 显式声明），
+        #   否则降级到 _derive_phosphorylated_substrate_id（从 target 名推导，仅适用 pX→X 模式）。
+        #   根因：PTEN→PIP2 的 target="PIP2" 不符合 pX 模式（p+PIP2="pPIP2" 不存在），
+        #   _derive_phosphorylated_substrate_id 返回 target_id 自身（PIP2），
+        #   导致 substrate=product=PIP2 的无意义边（source 被错误推导为 PIP2 而非 PTEN），
+        #   PTEN 催化剂丢失，PIP3 底物未被消耗，PIP2/PIP3 守恒破坏。
+        #   修复：当 edge.substrate 显式声明且在 species 列表中时，优先使用（与
+        #   phosphorylation 分支 [RC-FIX-PIP3-SubstrateLost-r19] 修复模式一致）。
+        if edge_substrate and edge_substrate in name_to_species_id:
+            substrate_id = name_to_species_id[edge_substrate]
+        else:
+            substrate_id = _derive_phosphorylated_substrate_id(
+                target_name, target_id, name_to_species_id
+            )
         reactants.append(SpeciesRef(species_id=substrate_id, role="substrate"))
         products.append(SpeciesRef(species_id=target_id, role="product"))
         modifiers.append(_make_modifier(source_id, "catalytic"))
@@ -500,8 +550,25 @@ def _build_reaction_for_mechanism(
     else:
         # ACTIVATION 及其他调控类：source → target（通用调控，1:1 语义合理）
         # 这是唯一的 1:1 兜底，仅用于 activation 机制
-        reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
-        products.append(SpeciesRef(species_id=target_id, role="product"))
+        # [RC-FIX-PI3K-Activation-r17] 修复 specialist 显式 substrate 字段丢失：
+        #   旧代码用 source_id 作 substrate（如 PI3K→PIP3 把 PI3K 当底物消耗），
+        #   完全无视 specialist 在 edge.substrate 中显式声明的真实底物（如 PIP2），
+        #   导致 ODE 模板的 activation 分支进入"新物种质量转移"子分支（消耗 source），
+        #   而非"异磷酸化"子分支（消耗真实底物 PIP2 + 守恒池），
+        #   使 PIP3 peak 被限制在 0.3（max_pool=Y0_PIP3*3=0）且 peak_time=120min 不达峰。
+        #   修复：当 edge.substrate 显式声明且在 species 列表中时，
+        #   保持 source(PI3K) 在 reactants[0]（供 _extract_edges 解析为 source），
+        #   但用 role="enzyme" 标记；真实底物(PIP2) 作为第二个 reactant（role="substrate"）。
+        #   _extract_edges 从 reactants 中按 role="substrate" 提取真实底物。
+        if edge_substrate and edge_substrate in name_to_species_id:
+            sub_id = name_to_species_id[edge_substrate]
+            reactants.append(SpeciesRef(species_id=source_id, role="enzyme"))
+            reactants.append(SpeciesRef(species_id=sub_id, role="substrate"))
+            products.append(SpeciesRef(species_id=target_id, role="product"))
+            modifiers.append(_make_modifier(source_id, "catalytic"))
+        else:
+            reactants.append(SpeciesRef(species_id=source_id, role="substrate"))
+            products.append(SpeciesRef(species_id=target_id, role="product"))
 
     return reactants, products, modifiers
 
@@ -618,11 +685,11 @@ def _derive_substrate_id(
     若 species 列表中找不到未磷酸化形式（如未提供 TSC2 节点），
     回退为 target_id 自身（不阻断流程，但语义可能不精确）。
     """
-    if (
-        len(target_name) >= 2
-        and target_name[0] == "p"
-        and target_name[1].isupper()
-    ):
+    # Remove exactly one phosphorylation-state prefix.  Looking the candidate
+    # up in the species index prevents ordinary names beginning with ``p``
+    # from being rewritten, while supporting both pERK -> ERK and
+    # ppERK -> pERK (likewise ppAKT -> pAKT).
+    if len(target_name) >= 2 and target_name[0] == "p":
         unphos_name = target_name[1:]
         if unphos_name in name_to_species_id:
             return name_to_species_id[unphos_name]
@@ -720,6 +787,7 @@ def build_from_pathway_graph(
 
     # —— 2. edges → reactions（B4 修复：直接构造 MechanismType，不走 v3 反查表）——
     reactions: list[ReactionV2] = []
+    used_reaction_ids: set[str] = set()
     all_edges = list(edges) + list(cross_talk_edges)
     for i, edge in enumerate(all_edges):
         source_name = edge.get("source", "")
@@ -748,9 +816,13 @@ def build_from_pathway_graph(
         # [BENCHMARK CLOSURE / Gap-EGFR-PeakOrder] 传递 edge.modifier 字段供
         #   gtp_gdp_exchange 等机制使用真实酶（如 SOS/RasGAP），而非 source 占位符。
         edge_modifier = (edge.get("modifier") or "").strip()
+        # [RC-FIX-PI3K-Activation-r17] 传递 edge.substrate 字段供 activation 等机制
+        #   使用真实底物（如 PIP2），而非 source 占位符。
+        edge_substrate = (edge.get("substrate") or "").strip()
         reactants, products, modifiers = _build_reaction_for_mechanism(
             mechanism, source_id, target_id, source_name, target_name,
             name_to_species_id, edge_modifier=edge_modifier,
+            edge_substrate=edge_substrate,
         )
 
         # compartments：从 species 查询
@@ -769,7 +841,7 @@ def build_from_pathway_graph(
         _kegg = _edge_prov.get("kegg_id") or edge.get("kegg_id")
 
         reactions.append(ReactionV2(
-            id=f"RXN_{i+1:03d}",
+            id=_edge_reaction_id(edge, i, used_reaction_ids),
             reaction_type=mechanism.value,
             kinetics_type=kinetics_type,
             reactants=reactants,
@@ -818,7 +890,163 @@ def build_from_pathway_graph(
     return ir
 
 
+def _species_id_index(ir: ReactionIRv2) -> dict[str, str]:
+    """Index ReactionIR species by canonical/display/schema identifiers."""
+    index: dict[str, str] = {}
+    for species in ir.species:
+        for value in (species.id, species.canonical_name, species.display_name):
+            key = str(value or "").strip().casefold()
+            if key:
+                # Specialist nodes are appended after sparse LLM nodes.  When
+                # canonical names collide, prefer the later specialist-backed
+                # species because its reactions carry the executable topology.
+                index[key] = species.id
+                if key.startswith("sp_"):
+                    index[key[3:]] = species.id
+    return index
+
+
+def _resolve_species_id(raw_id: Any, species_index: dict[str, str]) -> str | None:
+    key = str(raw_id or "").strip().casefold()
+    if not key:
+        return None
+    return species_index.get(key) or species_index.get(key.removeprefix("sp_"))
+
+
+def _resolve_transition_reaction_id(
+    ir: ReactionIRv2,
+    transition: dict[str, Any],
+    from_species_id: str,
+    to_species_id: str,
+    species_index: dict[str, str],
+) -> str:
+    """Resolve a specialist transition to the executable ReactionIR reaction."""
+    requested = str(transition.get("reaction_id") or "").strip()
+    if requested and ir.reaction_by_id(requested) is not None:
+        return requested
+
+    candidates = [
+        reaction
+        for reaction in ir.reactions
+        if any(ref.species_id == from_species_id for ref in reaction.reactants)
+        and any(ref.species_id == to_species_id for ref in reaction.products)
+    ]
+    kinase_id = _resolve_species_id(
+        transition.get("kinase") or transition.get("modifier"),
+        species_index,
+    )
+    if kinase_id:
+        kinase_matches = [
+            reaction
+            for reaction in candidates
+            if any(mod.species_id == kinase_id for mod in reaction.modifiers)
+        ]
+        if kinase_matches:
+            candidates = kinase_matches
+
+    if len(candidates) == 1:
+        return candidates[0].id
+    return requested
+
+
+def attach_specialist_state_machines(
+    ir: ReactionIRv2,
+    specialist_outputs: list[dict[str, Any]],
+) -> ReactionIRv2:
+    """Map specialist state-machine metadata into ReactionIR and validate closure.
+
+    Specialist metadata uses canonical species names while ReactionIR assigns
+    runtime ``SP_*`` identifiers.  This adapter resolves both species and
+    transition reactions, then admits only state machines whose transitions
+    close over the executable IR.
+    """
+    from app.reaction_ir_v2.state_machine import (
+        StateMachineBuilder,
+        validate_state_machine,
+    )
+
+    species_index = _species_id_index(ir)
+    existing_ids = {state_machine.id for state_machine in ir.state_machines}
+
+    for entry in specialist_outputs:
+        if not isinstance(entry, dict):
+            continue
+        raw_items: list[dict[str, Any]] = []
+        raw_single = entry.get("state_machine")
+        if isinstance(raw_single, dict) and raw_single:
+            raw_items.append(raw_single)
+        raw_many = entry.get("state_machines")
+        if isinstance(raw_many, list):
+            raw_items.extend(item for item in raw_many if isinstance(item, dict))
+
+        for raw_sm in raw_items:
+            sm_id = str(raw_sm.get("id") or "").strip()
+            if not sm_id or sm_id in existing_ids:
+                continue
+            builder = StateMachineBuilder(
+                sm_id,
+                str(raw_sm.get("species") or ""),
+            )
+            state_species: dict[str, str] = {}
+            missing_species: list[str] = []
+            for raw_state in raw_sm.get("states", []) or []:
+                if not isinstance(raw_state, dict):
+                    continue
+                state_name = str(raw_state.get("name") or "").strip()
+                mapped_id = _resolve_species_id(raw_state.get("species_id"), species_index)
+                if not state_name or not mapped_id:
+                    missing_species.append(str(raw_state.get("species_id") or state_name))
+                    continue
+                state_species[state_name] = mapped_id
+                builder.add_state(
+                    state_name,
+                    mapped_id,
+                    bool(raw_state.get("is_initial", False)),
+                )
+
+            if missing_species:
+                ir.warnings.append(
+                    f"StateMachine {sm_id}: unresolved species {sorted(missing_species)}"
+                )
+                continue
+
+            for raw_transition in raw_sm.get("transitions", []) or []:
+                if not isinstance(raw_transition, dict):
+                    continue
+                from_state = str(raw_transition.get("from_state") or "")
+                to_state = str(raw_transition.get("to_state") or "")
+                reaction_id = _resolve_transition_reaction_id(
+                    ir,
+                    raw_transition,
+                    state_species.get(from_state, ""),
+                    state_species.get(to_state, ""),
+                    species_index,
+                )
+                builder.add_transition(
+                    from_state,
+                    to_state,
+                    reaction_id,
+                    str(raw_transition.get("trigger") or "phosphorylation"),
+                )
+
+            state_machine = builder.build()
+            violations = validate_state_machine(state_machine, ir)
+            if violations:
+                ir.warnings.extend(violations)
+                logger.warning(
+                    "attach_specialist_state_machines: %s rejected: %s",
+                    sm_id,
+                    "; ".join(violations),
+                )
+                continue
+            ir.state_machines.append(state_machine)
+            existing_ids.add(sm_id)
+
+    return ir
+
+
 __all__ = [
+    "attach_specialist_state_machines",
     "build_from_network_json",
     "build_from_pathway_graph",
 ]

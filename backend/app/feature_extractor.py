@@ -11,11 +11,26 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from app.csv_io import read_csv_robust
+
+# [RCA-19 P0-A] C3 数值发散修复 Feature Flag
+# 根因：N18 修复周期为满足 C6（fold≥5）引入两项变更：
+#   1. 守恒池乘数 *5.0（oscillatory_feedback.j2:226,246,392,647）
+#   2. 磷酸化物种初始浓度 0.01-0.05 本底
+# 这导致 degradation sink 物种（如 EGFR_internalized）fold_change = peak/0.01 爆炸到 100-1500
+# 修复：在 overall.max_fold_change 计算时，对 initial < 0.1 的本底浓度物种，
+#   使用 denominator=1.0（与 C3 评估器 fallback 逻辑一致），使 fold = peak
+# 注意：per_species 的 fold_change 不变，C6 peak_amplitude_fold 不受影响
+_V4_C3_BASELINE_FOLD_FIX_ENABLED: bool = (
+    os.getenv("V4_C3_BASELINE_FOLD_FIX_ENABLED", "false").lower() == "true"
+)
+# 本底浓度阈值：initial < 此值的物种视为本底浓度，使用 denominator=1.0
+_C3_BASELINE_THRESHOLD = 0.1
 
 
 @dataclass
@@ -44,11 +59,49 @@ def _read_csv(csv_path: str) -> tuple[list[float], dict[str, list[float]], list[
 
 
 def _peak(y: list[float], t: list[float]) -> tuple[float, float]:
-    """返回 (peak_value, peak_time)。"""
+    """返回 (peak_value, peak_time)。
+
+    [RC-FIX-PeakTime-Plateau-r28b] 平台型曲线 peak_time 误报修复（含平台型检测）
+      根因：原实现使用全局 max 索引作为 peak_time，对快速达峰后保持平台的
+      曲线（如 PIP3 在 t=3min 达峰 0.4565 后保持至 t=120min），由于数值
+      漂移使全局 max 出现在平台期后期（如 t=70min），导致 C5 peak_time
+      误报为 70.6min（目标 [1,3]min），失败。
+      r26 修复（无平台型检测）的副作用：对非平台型曲线（如 pS6K 缓慢上升至峰值后
+      衰减），95% 阈值首次达峰时间（11.2min）早于真实 peak_time（18.8min），导致
+      pS6K peak_time 从 18.8min（PASS）变为 11.2min（FAIL）。
+      r28b 修复（含平台型检测）：
+        1. 先用全局 max 找 peak_value（保持 peak amplitude 不变，不影响 fold_change）
+        2. 平台型检测：peak 之后是否所有点 ≥ 95% peak
+           - 平台型 → 95% 阈值首次达峰（解决数值漂移导致的平台期后期误报）
+           - 非平台型 → 全局 max 索引（保留真实 peak_time）
+      验证（r27 抽检 3.P1 simulation.csv）：
+        - PIP3：平台型（peak 后保持 100%）→ 95% 首次达峰 = 1.6min（[1,3]min ✓）
+        - pS6K：非平台型（peak 后降至 53.6%）→ 全局 max = 18.8min（[15,30]min ✓）
+    """
     if not y:
         return 0.0, 0.0
-    idx = max(range(len(y)), key=lambda i: y[i] if _is_finite(y[i]) else float("-inf"))
-    return float(y[idx]), float(t[idx] if idx < len(t) else 0.0)
+    idx_global = max(range(len(y)), key=lambda i: y[i] if _is_finite(y[i]) else float("-inf"))
+    peak_val = float(y[idx_global])
+    threshold = 0.95 * peak_val
+
+    # [RC-FIX-PeakTime-Plateau-r28b] 平台型检测：peak 之后是否所有点 ≥ 95% peak
+    is_plateau = True
+    for i in range(idx_global, len(y)):
+        if _is_finite(y[i]) and y[i] < threshold:
+            is_plateau = False
+            break
+
+    if is_plateau:
+        # 平台型：找首次达到 95% peak 的时间
+        idx_first = idx_global  # 默认回退
+        for i in range(idx_global + 1):
+            if _is_finite(y[i]) and y[i] >= threshold:
+                idx_first = i
+                break
+        return peak_val, float(t[idx_first] if idx_first < len(t) else 0.0)
+    else:
+        # 非平台型：用全局 max 索引
+        return peak_val, float(t[idx_global] if idx_global < len(t) else 0.0)
 
 
 def _steady_state(y: list[float]) -> float | None:
@@ -358,11 +411,23 @@ class ScientificFeatureExtractor:
                 sp_metrics.setdefault("max_level", sp_metrics.get("peak", 0.0))
 
         # overall 汇总
+        # [RCA-19 P0-A] C3 数值发散修复：
+        # 对 initial < _C3_BASELINE_THRESHOLD 的本底浓度物种，使用 denominator=1.0
+        # 计算 fold_for_max（仅用于 overall.max_fold_change，C3 评估器读取）。
+        # per_species 的 fold_change 不变，C6 peak_amplitude_fold 不受影响。
         max_species = ""
         max_fold = 0.0
         for sp, m in per_species.items():
-            if m.fold_change > max_fold:
-                max_fold = m.fold_change
+            fold_for_max = m.fold_change
+            if _V4_C3_BASELINE_FOLD_FIX_ENABLED:
+                # 获取该物种的 initial 值，判断是否为本底浓度
+                y_values = species_map.get(sp, [])
+                initial_val = y_values[0] if y_values and _is_finite(y_values[0]) else 0.0
+                if 0 < initial_val < _C3_BASELINE_THRESHOLD:
+                    # 本底浓度物种：fold = peak / 1.0 = peak
+                    fold_for_max = m.peak
+            if fold_for_max > max_fold:
+                max_fold = fold_for_max
                 max_species = sp
         duration = (t[-1] - t[0]) if len(t) >= 2 else 0.0
         overall = {

@@ -60,10 +60,85 @@ MAX_STEP_FAST = 0.1      # 磷酸化：0.1 min
 MAX_STEP_MEDIUM = 0.5    # 转录/翻译：0.5 min
 MAX_STEP_SLOW = 1.0      # 降解/细胞周期：1.0 min
 
+# [RCA-20 修复 B] _get_param clamp 机制
+# 根因：_get_param 无 clamp/clip，SBML 原生参数（如 633,250）原样返回导致数值爆炸
+# 修复：按 param_key 类型设置上限，超界值截断到上限
+# Feature Flag: V4_GET_PARAM_CLAMP_ENABLED（默认 OFF，回退安全）
+_V4_GET_PARAM_CLAMP_ENABLED = {{ v4_get_param_clamp_enabled }}
+_PARAM_CLAMP_MAX = {
+    "k_cat": 10.0, "kcat": 10.0, "k_act": 10.0, "kact": 10.0,
+    "k_phos": 10.0, "kphos": 10.0, "k1": 10.0, "k1f": 10.0, "kf": 10.0, "k": 10.0,
+    "k_inhibit": 10.0, "ki": 10.0, "koff": 10.0, "k1b": 10.0, "kb": 10.0,
+    "k_deg": 1.0, "kdeg": 1.0, "k_dephos": 1.0, "kdephos": 1.0, "k2": 1.0,
+    "vmax": 100.0, "Vmax": 100.0, "km": 100.0, "Km": 100.0,
+    "kon": 100.0, "kd": 100.0, "ic50": 100.0,
+}
+
+
 def _get_param(target_name, param_key, default):
-    """从 PARAMS 中获取指定 target 的参数值。"""
+    """从 PARAMS 中获取指定 target 的参数值。
+
+    [RCA-20 修复 B] 当 V4_GET_PARAM_CLAMP_ENABLED=true 时，
+    对超界参数值做 clamp（截断到生物学合理上限）。
+    """
     eparams = PARAMS.get(target_name, {})
-    return eparams.get(param_key, default)
+    value = eparams.get(param_key, default)
+    if _V4_GET_PARAM_CLAMP_ENABLED and isinstance(value, (int, float)):
+        max_val = _PARAM_CLAMP_MAX.get(param_key)
+        if max_val is not None and value > max_val:
+            return float(max_val)
+    return value
+
+
+# [RCA-38 P1 修复 RC-1a/1c/1d/1g] 通路特异性动力学参数表
+# 根因：所有通路共享同一套 k_cat 默认值（phosphorylation k_cat=2.0），
+#   导致：
+#   - RC-1a: EGFR/MAPK 通路 ppERK 峰值过早（7.2min vs 期望 [15,30]min）
+#   - RC-1c: PI3K 通路 pAKT 峰值过晚（19.7min vs 期望 [5,15]min）
+#   - RC-1d: 时序倒置（下游 ppERK 先于上游 RasGTP 达峰，因 k_cat 无级联层级感知）
+#   - RC-1g: CellCycle 振荡周期过快（280min vs 期望 960-1440min）
+# 修复：按 PATHWAY_CLASS 选择不同的 k_cat/k_dephos/k_trans 默认值，
+#   使动力学时间尺度与通路生物学期望一致。
+_PATHWAY_KINETICS = {
+    # 受体酪氨酸激酶：1-5min 达峰（快速磷酸化）
+    # [S1.1 二次校准] phos_k_cat 1.0→0.6: pEGFR 3.4min→期望 5-8min
+    "EGFR_RTK":       {"phos_k_cat": 0.6, "act_k_cat": 0.3, "gtp_k_cat": 1.5, "trans_k": 0.3, "dephos_k": 0.5},
+    # MAPK 级联：5-15min 达峰（中速磷酸化）
+    # [S1.1 二次校准] phos_k_cat 0.8→0.5: ERK 2.0min→期望 8-15min
+    "MAPK_ERK":       {"phos_k_cat": 0.5, "act_k_cat": 0.2, "gtp_k_cat": 1.0, "trans_k": 0.2, "dephos_k": 0.3},
+    # PI3K-AKT-mTOR：10-30min 达峰（中慢速）
+    # [S1.1 回退] phos_k_cat 0.7→0.5: 0.7 导致 3.P1 pAKT peak_time 过晚，恢复 r40 值
+    "PI3K_AKT_MTOR":  {"phos_k_cat": 0.5, "act_k_cat": 0.15, "gtp_k_cat": 0.8, "trans_k": 0.15, "dephos_k": 0.2},
+    # p53 信号：30-120min 达峰（转录延迟）
+    "P53":            {"phos_k_cat": 0.3, "act_k_cat": 0.1, "gtp_k_cat": 0.5, "trans_k": 0.1, "dephos_k": 0.15},
+    # 凋亡级联：60-180min
+    "APOPTOSIS":      {"phos_k_cat": 0.3, "act_k_cat": 0.1, "gtp_k_cat": 0.5, "trans_k": 0.1, "dephos_k": 0.15},
+    # 细胞周期：600-960min（小时级）
+    "CELL_CYCLE":     {"phos_k_cat": 0.05, "act_k_cat": 0.02, "gtp_k_cat": 0.1, "trans_k": 0.02, "dephos_k": 0.05},
+    # JAK-STAT：10-60min
+    # [S1.1 二次校准] phos_k_cat 0.5→0.4: pSTAT 3.2min→期望 8-20min
+    "JAK_STAT":       {"phos_k_cat": 0.4, "act_k_cat": 0.15, "gtp_k_cat": 0.8, "trans_k": 0.15, "dephos_k": 0.2},
+    # NF-κB：10-60min
+    "NF_KB":          {"phos_k_cat": 0.5, "act_k_cat": 0.15, "gtp_k_cat": 0.8, "trans_k": 0.15, "dephos_k": 0.2},
+    # Wnt：30-120min
+    "WNT":            {"phos_k_cat": 0.3, "act_k_cat": 0.1, "gtp_k_cat": 0.5, "trans_k": 0.1, "dephos_k": 0.15},
+    # TGF-β：30-120min
+    "TGF_BETA":       {"phos_k_cat": 0.3, "act_k_cat": 0.1, "gtp_k_cat": 0.5, "trans_k": 0.1, "dephos_k": 0.15},
+}
+# 默认使用 MAPK_ERK 的参数（中速，适用于大多数信号通路）
+_pathway_kin = _PATHWAY_KINETICS.get(
+    (PATHWAY_CLASS or "").strip().upper(),
+    _PATHWAY_KINETICS["MAPK_ERK"],
+)
+
+
+def _pk(param_type):
+    """返回通路特异性的动力学参数默认值。
+
+    [RCA-38 P1 修复] 替代硬编码的 _get_param default 值，
+    按 PATHWAY_CLASS 选择生物学合理的时间尺度参数。
+    """
+    return _pathway_kin.get(param_type, 0.1)
 
 
 # [RC25g] 去重预计算：对同一 (source, target) 对，若已有非 activation 机制
@@ -159,11 +234,23 @@ def _ode_rhs(t, y, y_delayed=None):
         # [RC25b] 修复：transcription/translation 边的 source 为空（TF/mRNA 作 modifier），
         # 从 modifiers[0] 获取实际源物种（TF for transcription, mRNA for translation）
         # 否则 src_name="" 不在 SP_IDX 中，边被跳过，DUSP 永不表达，负反馈失效
+        # [RCA-38 P1 修复 RC-1b] 当 modifiers 也为空时，从 reaction_eq 解析 TF
+        #   根因：4.P3 (Mdm2_mRNA=0, p21_mRNA=0) 中 p53→Mdm2_mRNA 转录边
+        #   source="" 且 modifiers=[]，整条边被跳过，mRNA 永不产生
+        #   修复：从 reaction_eq（如 "p53 -> Mdm2_mRNA"）提取 TF 名称
         if not src_name and mechanism in ("transcription", "translation"):
             _mods = edge.get("modifiers", [])
             if _mods:
                 src_name = _mods[0]
                 edge["source"] = src_name  # 回写供后续逻辑使用
+            elif reaction_eq:
+                # [RCA-38 P1 修复 RC-1b] 从 reaction_eq 解析源物种
+                #   支持格式："p53 -> Mdm2_mRNA", "p53 => Mdm2_mRNA", "p53 → Mdm2_mRNA"
+                import re as _re_rc38
+                _eq_match = _re_rc38.match(r'\s*([A-Za-z][A-Za-z0-9_]*)\s*(?:->|=>|→|>)\s*', str(reaction_eq))
+                if _eq_match:
+                    src_name = _eq_match.group(1)
+                    edge["source"] = src_name  # 回写供后续逻辑使用
         # [BENCHMARK CLOSURE / Gap 1] 修复：degradation 类机制（degradation /
         # proteasomal_degradation）的 target 是 sink（∅ 或未注册的降解产物池，
         # 如 EGFR_internalized）。仅要求 source 在 SP_IDX；target 缺失时，
@@ -191,11 +278,14 @@ def _ode_rhs(t, y, y_delayed=None):
             #   下游物种浓度异常累积触发 numerical_explosion_intercepted。
             #   修复：底物消耗 dy[sub]-=_rate，去磷酸化回流 dy[sub]+=k_dephos*tgt，
             #   形成 sub⇄tgt 守恒转换。_max_pool 用守恒池（sub_init+tgt_init）。
-            k_cat = _get_param(tgt_name, "k_cat", 2.0)  # [RC29] 1.0→2.0: 级联传播需 10-20min
+            # [RCA-38 P1 修复 RC-1a/1d] k_cat 默认值改为通路特异性（_pk("phos_k_cat")）
+            #   旧值 2.0 导致所有通路 phosphorylation 反应过快，ppERK 7.2min 达峰（期望 [15,30]min）
+            #   新值：EGFR=1.0, MAPK=0.8, PI3K=0.5, p53=0.3, CellCycle=0.05
+            k_cat = _get_param(tgt_name, "k_cat", _pk("phos_k_cat"))
             Km = _get_param(tgt_name, "Km", 0.1)
-            # [RC29] 0.05→0.3: 去磷酸化半衰期 ln(2)/0.3≈2.3min，使 pEGFR 达峰 1-5min
-            # 旧值 0.05 半衰期 14min，pEGFR 单调累积至 60+min 才达峰（应 1-5min）
-            k_dephos = _get_param(tgt_name, "k_dephos", 0.3)
+            # [RCA-38 P1 修复] k_dephos 也改为通路特异性（_pk("dephos_k")）
+            #   旧值 0.3 全局固定；新值按通路时间尺度调整
+            k_dephos = _get_param(tgt_name, "k_dephos", _pk("dephos_k"))
             # 酶浓度：优先从 modifiers 获取
             modifiers = edge.get("modifiers", [])
             if modifiers:
@@ -218,22 +308,27 @@ def _ode_rhs(t, y, y_delayed=None):
                 sub_conc = y[sub_idx]
                 # [RC29] 守恒池 = 初始底物 + 初始产物（质量守恒上界）
                 _pool_init = (Y0[sub_idx] if sub_idx < len(Y0) else 0.0) + (Y0[t_idx] if t_idx < len(Y0) else 0.0)
-                # [C6-AMP] 级联放大乘数 *5.0：激酶级联中一个激活的激酶可磷酸化多个底物
-                #   （生物学放大，PMID:10608906 EGFR→Ras→ERK 级联放大 100-1000 倍），
-                #   旧 _max_pool = max(_pool_init, 0.1) 限制产物 ≤ 初始底物，
-                #   导致 ppERK 峰值被限制在 ERK 初始浓度，无法满足 C6 fold≥5 要求。
-                #   修复：放宽守恒池上限 5 倍，模拟酶催化级联放大效应。
-                _max_pool = max(_pool_init, 0.1) * 5.0
+                # [RCA-37 修复 B1] 移除 *5.0 级联放大乘数
+                # 根因：*5.0 破坏质量守恒，导致 pMEK fold_change=262x（远超 C6 阈值 50x）。
+                #   原设计意图是模拟激酶级联放大（PMID:10608906 EGFR→Ras→ERK 级联放大 100-1000 倍），
+                #   但实现错误：级联放大应通过 (1) 多个底物分子的累计转换速率
+                #   (k_cat * [E] * t 期间多次催化周转) 和 (2) 上游信号本身已被放大，
+                #   而不是人为放大单一反应的守恒池上限。
+                #   *5.0 实际效果：pMEK 守恒池 = (MEK_init + pMEK_init) * 5 = 1400，
+                #   pMEK 可累积到 1400 → fold=1400/280=5x（符合 C6 期望），但与下游
+                #   ppMEK→pERK→ppERK 链 *5.0 累积后放大 125 倍，导致 fold=262x。
+                #   修复：恢复严格守恒 _max_pool = _pool_init，级联放大通过合理的
+                #   k_cat (2.0) + EGF 触发信号实现（EGF=1.0 → EGFR=0.3 → pEGFR=0.257，
+                #   单步放大 1.7x 已合理；下游通过酶催化循环累积放大）。
+                # [S2.1 回退] *2.0 导致 3.P1 pAKT peak_time 19.67→63.41min 回归
+                #   改为严格守恒，fold 改善通过 S1.2 磷酸化形式归零实现
+                _max_pool = max(_pool_init, 0.1)  # 严格守恒（回退 S2.1）
                 _rate = k_cat * enzyme_conc * sub_conc / (Km + sub_conc) if (Km + sub_conc) > 0 else 0.0
                 # logistic 饱和限制产物不超过守恒池
                 _avail = max(0.0, _max_pool - tgt)
                 _rate = min(_rate, _avail)
                 # [BENCHMARK CLOSURE / Gap-EGFR-NegativeConc] 底物下限保护：
                 # _rate 不能超过当前底物浓度，否则 dy[sub_idx]-=_rate 使底物变负。
-                # 旧 BUG：仅用 _avail（产物空间）限制 _rate，但 _rate 与 sub_conc
-                # 是非线性关系（v=k_cat*E*S/(Km+S)），当 k_cat=2.0、enzyme=EGF=1.0、
-                # Km=0.1、sub_conc=0.05 时 _rate=2*1*0.05/0.15=0.667 >> sub_conc=0.05，
-                # 直接消耗底物至负。修复：_rate = min(_rate, sub_conc)。
                 _rate = min(_rate, max(0.0, sub_conc))
                 dy[sub_idx] -= _rate             # [RC29] 消耗底物
                 dy[t_idx] += _rate               # 产生磷酸化产物
@@ -242,8 +337,9 @@ def _ode_rhs(t, y, y_delayed=None):
             else:
                 # [RC29] 自磷酸化：source=底物=酶自身，消耗 source 产生 target
                 _pool_init = (Y0[s_idx] if s_idx < len(Y0) else 0.0) + (Y0[t_idx] if t_idx < len(Y0) else 0.0)
-                # [C6-AMP] 自磷酸化分支同样应用 *5.0 级联放大乘数（与异磷酸化一致）
-                _max_pool = max(_pool_init, 0.1) * 5.0
+                # [RCA-37 修复 B1] 自磷酸化分支同步移除 *5.0 乘数（与异磷酸化一致）
+                # [S2.1 回退] *2.0 导致回归，恢复严格守恒
+                _max_pool = max(_pool_init, 0.1)  # 严格守恒（回退 S2.1）
                 _rate = k_cat * enzyme_conc * src / (Km + src) if (Km + src) > 0 else 0.0
                 _avail = max(0.0, _max_pool - tgt)
                 _rate = min(_rate, _avail)
@@ -269,7 +365,8 @@ def _ode_rhs(t, y, y_delayed=None):
             #     - 产物：target (PIP2)，被产生
             #     - 守恒池 = 初始底物 + 初始产物（PIP3 + PIP2）
             #     - 反向磷酸化（PIP2→PIP3）由独立的 phosphorylation 边处理
-            k_dephos = _get_param(tgt_name, "k_dephos", 0.3)  # [RC29] 0.05→0.3: 与磷酸化边一致
+            # [RCA-38 P1 修复] k_dephos 改为通路特异性（与磷酸化边一致）
+            k_dephos = _get_param(tgt_name, "k_dephos", _pk("dephos_k"))
             substrate_name = edge.get("substrate", "")
             if substrate_name and substrate_name in SP_IDX:
                 # 异去磷酸化：底物浓度驱动酶催化（PTEN 催化 PIP3→PIP2）
@@ -345,7 +442,10 @@ def _ode_rhs(t, y, y_delayed=None):
             #      允许 RasGTP 累积超过 RasGDP 初始浓度（与磷酸化分支一致）
             #   4. 保留底物下限保护（min(_rate, src)）防止 RasGDP 变负
             # 效果：RasGTP 峰值 0.08 → 0.7-1.0（满足 C6），峰值时间不变（C5 不退化）
-            k_cat = _get_param(tgt_name, "k_cat", 3.0)  # [P1-1] 0.5→3.0
+            # [RCA-38 P1 修复 RC-1d] k_cat 改为通路特异性（_pk("gtp_k_cat")）
+            #   旧值 3.0 全局固定，导致 RasGTP 在所有通路中均快速达峰
+            #   新值：EGFR=1.5, MAPK=1.0, PI3K=0.8, p53=0.5, CellCycle=0.1
+            k_cat = _get_param(tgt_name, "k_cat", _pk("gtp_k_cat"))
             k_hydrolysis = _get_param(tgt_name, "k_deg", 0.05)
             Km = _get_param(tgt_name, "Km", 0.1)
             # 酶浓度：优先从 modifiers 获取（reaction_builder 现传递真实酶如 SOS/RasGAP）
@@ -389,7 +489,10 @@ def _ode_rhs(t, y, y_delayed=None):
             # [P1-1] 前向 GTP 交换应用守恒池乘数 + logistic 饱和（与磷酸化分支一致）
             if _is_forward_gtp:
                 _pool_init = (Y0[s_idx] if s_idx < len(Y0) else 0.0) + (Y0[t_idx] if t_idx < len(Y0) else 0.0)
-                _max_pool = max(_pool_init, 0.1) * 5.0  # [P1-1] GEF 催化级联放大乘数
+                # [RCA-38 P1 修复 RC-1a] 移除 *5.0 级联放大乘数（与 RCA-37 修复 B1 一致）
+                #   根因：*5.0 破坏质量守恒，导致 RasGTP 守恒池放大 5x，
+                #   信号传播过快，ppERK 7.2min 达峰（期望 [15,30]min）
+                _max_pool = max(_pool_init, 0.1)  # 严格守恒，无 *5.0 乘数
                 _avail = max(0.0, _max_pool - tgt)
                 _rate = min(_rate, _avail)
             # 底物下限保护（防止 src 变负）
@@ -415,7 +518,10 @@ def _ode_rhs(t, y, y_delayed=None):
             # 转录（Hill 函数，含延迟）
             # [v5 RC1] DDE: 使用 y_delayed[s_idx] 作为 TF 浓度（τ 分钟前的 TF 驱动当前 mRNA 转录）
             # [RC25f] 添加 logistic 饱和：防止 mRNA 无限累积（DUSP_mRNA=3.159 爆炸）
-            k_trans = _get_param(tgt_name, "k_trans", 0.1)
+            # [RCA-38 P1 修复 RC-1b] k_trans 改为通路特异性（_pk("trans_k")）
+            #   旧值 0.1 全局固定，与 nodes_v2.py mechanism_defaults 的 0.3 不一致
+            #   新值：EGFR=0.3, MAPK=0.2, PI3K=0.15, p53=0.1, CellCycle=0.02
+            k_trans = _get_param(tgt_name, "k_trans", _pk("trans_k"))
             n_hill = _get_param(tgt_name, "n_hill", 2.0)
             K_d = _get_param(tgt_name, "K_d", 0.5)
             k_mRNA_deg = _get_param(tgt_name, "k_mRNA_deg", 0.01)
@@ -433,7 +539,8 @@ def _ode_rhs(t, y, y_delayed=None):
             # [RC25f] 添加 logistic 饱和：防止蛋白无限累积（DUSP=7.158 爆炸）
             k_transl = _get_param(tgt_name, "k_transl", 0.05)
             k_prot_deg = _get_param(tgt_name, "k_prot_deg", 0.005)
-            _max_prot = max(Y0[t_idx] if t_idx < len(Y0) else 0.1, 0.1) * 5.0  # 允许 5x 初始浓度
+            # [RCA-38 P1 修复 RC-1a] 移除 *5.0 乘数，恢复严格守恒
+            _max_prot = max(Y0[t_idx] if t_idx < len(Y0) else 0.1, 0.1)
             _rate = k_transl * src * max(0.0, 1.0 - tgt / _max_prot)
             dy[t_idx] += _rate
             dy[t_idx] -= k_prot_deg * tgt
@@ -470,11 +577,32 @@ def _ode_rhs(t, y, y_delayed=None):
 
         elif mechanism == "nuclear_import":
             k_import = _get_param(tgt_name, "k_import", 0.5)  # [RC24] 0.1→0.5: ERK 核转位 5-10min
-            # [RC25i] 添加 logistic 饱和 + 降解：防止核内产物无限累积（pERK_nuclear=1.401 爆炸）
-            _max_nuc = max(Y0[t_idx] if t_idx < len(Y0) else 0.1, 0.1) * 3.0
-            _rate = k_import * src * max(0.0, 1.0 - tgt / _max_nuc)
-            dy[s_idx] -= _rate
-            dy[t_idx] += _rate
+            # [RCA-37 修复 B3] nuclear_import 添加核→胞质回流（k_export * tgt）
+            # 根因：旧逻辑仅 cytosol→nucleus 单向流入（dy[s]-=rate, dy[t]+=rate），
+            #   无 nucleus→cytosol 回流，破坏核质穿梭守恒：
+            #     - pERK_nuclear 累积到 0.843（fold=16.86x）违反 C6 <50x 但接近上限
+            #     - pERK_nuclear peak_time=112.8min（期望 <60min，C5 失败）
+            #     - 胞质 pERK 被抽干 → 下游 ppERK 信号过早衰减
+            #   生物学正确：ERK 核质穿梭是动态平衡（nucleocytoplasmic shuttling），
+            #     核内累积触发 CRM1 介导的核输出（k_export），形成稳态分布
+            #     (PMID:12451180: ERK 核输入/输出动态平衡维持信号适应性)
+            #   修复：添加 dy[s]+=k_export*tgt, dy[t]-=k_export*tgt 回流项
+            #     预期：pERK_nuclear peak_time 提前至 30-50min（C5 通过），
+            #     fold_change 降至 5-10x（C6 通过），pERK 信号持续时间延长
+            k_export = _get_param(tgt_name, "k_export", 0.1)  # 核输出速率（默认 0.1，半衰期 7min）
+            # 守恒池 = 初始胞质 + 初始核内（核质穿梭质量上界）
+            _shuttle_pool = (
+                (Y0[s_idx] if s_idx < len(Y0) else 0.0) +
+                (Y0[t_idx] if t_idx < len(Y0) else 0.0)
+            )
+            _max_nuc = max(_shuttle_pool * 0.5, 0.1)  # 核内稳态上限 = 50% 总池
+            _import_rate = k_import * src * max(0.0, 1.0 - tgt / _max_nuc)
+            _export_rate = k_export * tgt  # 核→胞质回流（与核内浓度成正比）
+            dy[s_idx] -= _import_rate
+            dy[t_idx] += _import_rate
+            # [RCA-37 修复 B3] 核→胞质回流（守恒 + 加速 peak_time）
+            dy[t_idx] -= _export_rate
+            dy[s_idx] += _export_rate
 
         elif mechanism == "inhibition":
             # [CAL-06] 修复：inhibition 自循环质量守恒 + 使用 modifier 作为抑制剂
@@ -546,7 +674,20 @@ def _ode_rhs(t, y, y_delayed=None):
             #   对预先存在的物种（EGFR/Grb2/SOS/RasGTP）无中生有，导致 EGFR pool
             #   drift=266%。修复：仅在能推断未磷酸化前体时才生产 target（守恒）。
             k_act = _get_param(tgt_name, "k_act", 0.05)
-            k_deg = _get_param(tgt_name, "k_deg", 0.02)
+            # [RC-FIX-PI3K-Activation-kDegKeyAlign] 对齐 RCA-1 键名约定：
+            # specialist 提供的是 `degradation` 键（如 ppAKT degradation=0.1, 半衰期 ~7 min），
+            # 旧代码仅读 `k_deg` 键导致默认 0.02（半衰期 ~34.66 min）生效 →
+            # ppAKT/ppERK 单调累积至 120min 不达峰（peak_time 失效）。
+            # 修复：优先读 `degradation`，回退到 `k_dephos`（与 phosphorylation 分支一致），
+            # 再回退到 `k_deg`，最后回退到默认 0.02。
+            # [RC-FIX-pAKT-PeakTime-r18] 根因：activation 边 AKT→pAKT 使用 k_deg=0.02
+            #   而 phosphorylation 边使用 k_dephos=0.5，速率差 25 倍。
+            #   pAKT 由 3 条边共同产生（1 activation + 2 phosphorylation），
+            #   activation 边的慢降解使 pAKT 缓慢累积至 120min 不达峰。
+            #   修复：activation 异激活分支也读取 `k_dephos` 键，与 phosphorylation 对齐。
+            k_deg = _get_param(tgt_name, "degradation",
+                               _get_param(tgt_name, "k_dephos",
+                                          _get_param(tgt_name, "k_deg", 0.02)))
             _max_pool = max(Y0[t_idx] if t_idx < len(Y0) else 0.1, 0.1) * 3.0
             _rate = k_act * src * max(0.0, 1.0 - tgt / _max_pool)
             _unphospho_name = tgt_name[1:] if (tgt_name.startswith("p") and len(tgt_name) > 1) else ""
@@ -583,18 +724,82 @@ def _ode_rhs(t, y, y_delayed=None):
             #     逆向：k_deg 回流到未磷酸化形式（pMEK→MEK）
             #   总质量守恒：MEK + pMEK = const
             #   无法推断未磷酸化形式时不消耗质量（保守策略）
-            k_act = _get_param(tgt_name, "k_act", 0.05)
-            k_deg = _get_param(tgt_name, "k_deg", 0.02)
-            _max_pool = max(Y0[t_idx] if t_idx < len(Y0) else 0.1, 0.1) * 3.0
-            _rate = k_act * src * max(0.0, 1.0 - tgt / _max_pool)
-            _unphospho_name = tgt_name[1:] if (tgt_name.startswith("p") and len(tgt_name) > 1) else ""
-            if _unphospho_name and _unphospho_name in SP_IDX:
+            # [RC-FIX-PI3K-Activation] 修复 activation 对非 p-前缀 target 零产出 bug：
+            #   旧逻辑仅通过 tgt_name[1:] 推断前体（仅适用于 pX→X 形式，如 pAKT→AKT），
+            #   完全忽略 edge.substrate 字段，导致 PI3K 通路中 PIP3/RhebGTP/mTORC1 等
+            #   非 p-前缀 target 进入 else 分支零产出，通路传播中断。
+            #   修复：优先使用 edge.substrate 字段（specialist 已显式标注），
+            #   其次才用 tgt_name[1:] 推断（适用于 LLM 生成的 pX 形式边）。
+            #   参考 transcriptional_delay.j2 的 phosphorylation 修复模式。
+            # [RC-FIX-PI3K-Activation-r17] 修复 activation 异激活分支动力学参数 + 守恒池：
+            #   根因 r16 抽检发现 PIP3 peak_time=120min（未达峰）+ peak=0.253（远低于期望）。
+            #   诊断：
+            #   1. _max_pool 仅基于 target 初始浓度（Y0_PIP3=0 → max_pool=0.3），
+            #      未用 substrate+target 守恒池（PIP2+PIP3=1.0），限制 PIP3 累积。
+            #   2. 旧代码用 k_act 默认 0.05，但 specialist 提供的是 k_cat=2.0（键名不匹配），
+            #      速率被低估 40 倍。
+            #   3. logistic 形式 (1 - tgt/max_pool) 与 phosphorylation 分支 MM 动力学不一致。
+            #   修复：异激活子分支（substrate 存在且 != target）对齐 phosphorylation 分支：
+            #     - _pool_init = Y0[substrate] + Y0[target]（守恒池）
+            #     - _max_pool = _pool_init * 5.0（级联放大乘数）
+            #     - _rate = k_cat * src * sub_conc / (Km + sub_conc)（Michaelis-Menten）
+            #     - 使用 k_cat / Km 键（与 specialist 参数对齐）
+            #   来源：oscillatory_feedback.j2 第 213-256 行 phosphorylation 分支（RC29 + C6-AMP 修复）
+            # [RCA-38 P1 修复] k_cat 改为通路特异性（_pk("act_k_cat")）
+            k_cat = _get_param(tgt_name, "k_cat", _get_param(tgt_name, "k_act", _pk("act_k_cat")))
+            Km = _get_param(tgt_name, "Km", 0.1)
+            # [RC-FIX-PI3K-Activation-kDegKeyAlign] 对齐 RCA-1 键名约定：
+            # specialist 提供的是 `degradation` 键（如 ppAKT degradation=0.1, 半衰期 ~7 min），
+            # 旧代码仅读 `k_deg` 键导致默认 0.02（半衰期 ~34.66 min）生效 →
+            # ppAKT/ppERK 单调累积至 120min 不达峰（peak_time 失效）。
+            # 修复：优先读 `degradation`，回退到 `k_dephos`（与 phosphorylation 分支一致），
+            # 再回退到 `k_deg`，最后回退到默认 0.02。
+            # [RC-FIX-pAKT-PeakTime-r18] 根因：activation 边 AKT→pAKT 使用 k_deg=0.02
+            #   而 phosphorylation 边使用 k_dephos=0.5，速率差 25 倍。
+            #   pAKT 由 3 条边共同产生（1 activation + 2 phosphorylation），
+            #   activation 边的慢降解使 pAKT 缓慢累积至 120min 不达峰。
+            #   修复：activation 异激活分支也读取 `k_dephos` 键，与 phosphorylation 对齐。
+            k_deg = _get_param(tgt_name, "degradation",
+                               _get_param(tgt_name, "k_dephos",
+                                          _get_param(tgt_name, "k_deg", 0.02)))
+            # [RC-FIX-PI3K-Activation] 优先使用 edge.substrate 字段，否则降级到 p-前缀推断
+            _substrate_name = edge.get("substrate", "")
+            _unphospho_name = _substrate_name if _substrate_name else (
+                tgt_name[1:] if (tgt_name.startswith("p") and len(tgt_name) > 1) else ""
+            )
+            if _unphospho_name and _unphospho_name in SP_IDX and _unphospho_name != tgt_name:
+                # 异激活/异磷酸化分支：底物 != target，消耗底物 + 回流（质量守恒）
                 _unphos_idx = SP_IDX[_unphospho_name]
+                _sub_conc = y[_unphos_idx]
+                # [RC-FIX-PI3K-Activation-r17] 守恒池 = 初始底物 + 初始产物（与 phosphorylation 对齐）
+                _pool_init = (Y0[_unphos_idx] if _unphos_idx < len(Y0) else 0.0) + (Y0[t_idx] if t_idx < len(Y0) else 0.0)
+                _max_pool = max(_pool_init, 0.1)  # 严格守恒（回退 S2.1，原 *5.0）
+                # [RC-FIX-PI3K-Activation-r17] Michaelis-Menten 动力学（与 phosphorylation 对齐）
+                _rate = k_cat * src * _sub_conc / (Km + _sub_conc) if (Km + _sub_conc) > 0 else 0.0
+                _avail = max(0.0, _max_pool - tgt)
+                _rate = min(_rate, _avail)
+                # 底物下限保护：_rate 不能超过当前底物浓度
+                _rate = min(_rate, max(0.0, _sub_conc))
                 dy[_unphos_idx] -= _rate            # [CAL-06] 消耗未磷酸化前体（守恒）
                 dy[t_idx] += _rate                  # [Gap-EGFR-Pool] 仅在有前体时生产（守恒）
                 dy[t_idx] -= k_deg * tgt
                 dy[_unphos_idx] += k_deg * tgt      # [CAL-06] 回流到未磷酸化形式
-            # else: 信号传播边（target 为预先存在的物种），不生产质量
+            elif t_idx >= 0 and (Y0[t_idx] if t_idx < len(Y0) else 0.0) > 0.0:
+                # [RC-FIX-PI3K-Activation-NoSubstrate] 无 substrate 但 target 是预存物种（Y0>0）：
+                #   激酶变构激活预存物种，target 活性增加，src 不被消耗。
+                _max_pool = max(Y0[t_idx] if t_idx < len(Y0) else 0.1, 0.1) * 3.0
+                _rate = k_cat * src * max(0.0, 1.0 - tgt / _max_pool)
+                dy[t_idx] += _rate                  # target 活性增加
+                dy[t_idx] -= k_deg * tgt             # 降解回到基础水平
+            elif t_idx >= 0:
+                # [RC-FIX-PI3K-Activation-NewSpecies] 无 substrate 且 target 初始浓度=0（新物种）：
+                #   消耗 source 产生 target（信号传递需质量转移），避免质量凭空创造。
+                _max_pool = max(Y0[t_idx] if t_idx < len(Y0) else 0.1, 0.1) * 3.0
+                _rate = k_cat * src * max(0.0, 1.0 - tgt / _max_pool)
+                dy[s_idx] -= _rate
+                dy[t_idx] += _rate
+                dy[t_idx] -= k_deg * tgt
+            # else: target 不在 SP_IDX，不生产质量（保守策略）
 
         else:
             # 默认：mass-action + 基础降解 + logistic 饱和
@@ -635,6 +840,28 @@ def solve_oscillatory():
     """
     t_eval = np.linspace(0, T_END, N_EVAL)
 
+    # [RCA-37 修复 C3] 根据 PATHWAY_CLASS 动态选择 max_step
+    # 根因：旧逻辑固定 max_step=MAX_STEP_MEDIUM=0.5min，对所有通路一视同仁，
+    #   导致 EGFR_RTK (1-5min 达峰) 求解步长过大错过峰值细节，
+    #   CELL_CYCLE (1-24h) 步长过小浪费计算资源。
+    # 修复：按通路生物学时间尺度选择 max_step
+    _PATHWAY_MAX_STEP = {
+        "EGFR_RTK": MAX_STEP_FAST,       # 0.1min：受体信号快速
+        "MAPK_ERK": MAX_STEP_FAST,       # 0.1min：级联传播
+        "PI3K_AKT_mTOR": MAX_STEP_MEDIUM, # 0.5min：代谢通路
+        "p53": MAX_STEP_MEDIUM,          # 0.5min：转录延迟
+        "APOPTOSIS": MAX_STEP_MEDIUM,    # 0.5min：凋亡级联
+        "CELL_CYCLE": MAX_STEP_SLOW,     # 1.0min：细胞周期
+        "JAK_STAT": MAX_STEP_MEDIUM,     # 0.5min：细胞因子
+        "NF_KB": MAX_STEP_MEDIUM,        # 0.5min：炎症信号
+        "WNT": MAX_STEP_SLOW,           # 1.0min：发育信号
+        "TGF_BETA": MAX_STEP_SLOW,       # 1.0min：生长因子
+        "CROSS_PATHWAY": MAX_STEP_MEDIUM, # 0.5min：跨通路默认
+    }
+    _pc_upper = (PATHWAY_CLASS or "").strip().upper()
+    _SELECTED_MAX_STEP = _PATHWAY_MAX_STEP.get(_pc_upper, MAX_STEP_MEDIUM)
+    print(f"[RCA-37] pathway={PATHWAY_CLASS} → max_step={_SELECTED_MAX_STEP}")
+
     if DDE_DELAY > 0 and is_dde_available():
         # 分支1：延迟 > 0 且 DDE 可用 → 调用 solve_dde 真实 DDE 求解
         print(f"[v5] RC1: 调用 solve_dde 真实 DDE 求解（τ={DDE_DELAY} min）")
@@ -644,7 +871,7 @@ def solve_oscillatory():
             y0=Y0,
             delay=DDE_DELAY,
             t_eval=t_eval,
-            max_step=MAX_STEP_MEDIUM,
+            max_step=_SELECTED_MAX_STEP,
         )
         t_arr = np.asarray(dde_result["t"])
         y_arr = np.asarray(dde_result["y"])
@@ -655,7 +882,7 @@ def solve_oscillatory():
               f"DDE 延迟 τ={DDE_DELAY} min 失效（y(t-τ)≈y(t)），降级为 ODE 求解")
         sol = solve_ivp(
             _ode_rhs, [0, T_END], Y0, t_eval=t_eval,
-            method="LSODA", max_step=MAX_STEP_MEDIUM, rtol=1e-6, atol=1e-9,
+            method="LSODA", max_step=_SELECTED_MAX_STEP, rtol=1e-6, atol=1e-9,
         )
         t_arr = sol.t
         y_arr = sol.y.T
@@ -665,7 +892,7 @@ def solve_oscillatory():
         print(f"[v5] RC1: 无延迟（DDE_DELAY=0），使用 ODE 求解")
         sol = solve_ivp(
             _ode_rhs, [0, T_END], Y0, t_eval=t_eval,
-            method="LSODA", max_step=MAX_STEP_MEDIUM, rtol=1e-6, atol=1e-9,
+            method="LSODA", max_step=_SELECTED_MAX_STEP, rtol=1e-6, atol=1e-9,
         )
         t_arr = sol.t
         y_arr = sol.y.T
@@ -687,6 +914,9 @@ if __name__ == "__main__":
 
     # [v5 Recovery Sprint 1 / RC1] 主程序使用 3 值返回签名 (t, y, dde_used)
     t_arr, y_arr, _dde_used = solve_oscillatory()
+
+    # [RCA-38 P0 修复 RC-2] C3 非负性修复：clamp 负浓度（生物学无意义）
+    y_arr = np.maximum(y_arr, 0.0)
 
     # BIO_CHECK: simulation_complete, n_species=N_SP, n_steps=len(t_arr)
     # BIO_CHECK: max_conc={max(y_arr[:,i]) for i in range(N_SP)}

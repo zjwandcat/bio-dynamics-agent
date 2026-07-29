@@ -177,3 +177,20 @@
     font-size: 0.8125rem;
   }
 }
+
+/* ── Workbench 响应式：小屏（<1024px）单列堆叠 ── */
+@media (max-width: 1023px) {
+  .workbench-grid {
+    display: flex !important;
+    flex-direction: column;
+    overflow-y: auto !important;
+    overflow-x: hidden;
+  }
+  .workbench-grid > * {
+    width: 100%;
+    min-height: auto;
+    border-right: none !important;
+    border-left: none !important;
+    border-bottom: 1px solid oklch(0.37 0 0);
+  }
+}
