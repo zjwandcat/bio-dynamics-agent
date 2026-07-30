@@ -79,32 +79,25 @@ pytest.ini
 backend/test_api.py
 backend/test_bigmodel_keys.py
 
-# --- Markdown reports (keep only README.md) ---
+# --- Markdown reports (keep only root README.md) ---
+# 所有其他 .md 文件（docs/、AGENTS.md、各类报告）均为本地开发文档，不上传
 *.md
 !README.md
-!AGENTS.md
-!docs/CODEX_MAINTENANCE_GUIDE.md
-!docs/00_PROJECT_OVERVIEW.md
-!docs/01_ARCHITECTURE.md
-!docs/02_CODE_STRUCTURE.md
-!docs/03_DATA_FLOW.md
-!docs/04_RAG_PIPELINE.md
-!docs/05_SIMULATION_PIPELINE.md
-!docs/06_VALIDATION_SYSTEM.md
-!docs/07_BENCHMARK_SYSTEM.md
-!docs/08_KNOWN_PROBLEMS.md
-!docs/09_TECH_DEBT.md
-!docs/10_DEVELOPMENT_RULES.md
-!docs/11_NEXT_STEPS.md
-!docs/CONFIG_REFERENCE.md
-!docs/PROMPT_INDEX.md
-!docs/DEPENDENCY_GRAPH.md
-!docs/DESIGN_DECISIONS.md
-!docs/PROJECT_PHILOSOPHY.md
 
-# --- Generated JSON reports ---
+# --- 项目历史文档 / 状态快照（不上传） ---
+docs/
+AGENTS.md
+PROJECT_STATE.json
+*.md.bak
+
+# --- Generated JSON reports / 历史基准结果 ---
 audit_report_*.json
 validation_report_*.json
+backend/benchmarks/golden/*/expected_metrics.json
+backend/benchmarks/regression/baseline.json
+backend/benchmarks/regression/regression_report.json
+backend/benchmarks/regression/actual.json.example
+backend/benchmarks/regression/README.md
 
 # --- Text files (keep only requirements.txt) ---
 *.txt
