@@ -369,9 +369,63 @@ def extract_sbml_kinetic_parameters(
                     cache_timestamp=provenance["cache_timestamp"],
                     sbml_version=provenance["sbml_version"],
                     cache_stale=provenance["cache_stale"],
-                )
+                ),
             )
     return extracted
+
+
+def extract_sbml_initial_conditions(
+    sbml_text: str,
+    model_id: str,
+) -> dict[str, float]:
+    """从 SBML <listOfSpecies> 提取物种初始浓度。
+
+    支持 SBML L2/L3 的 initialConcentration 和 initialAmount 属性。
+    返回 {species_name_or_id: value} 字典，同时包含 name 和 id 两种键以便下游匹配。
+
+    Feature Flag: V4_INITIAL_CONC_FROM_SBML_ENABLED（默认 OFF）
+    关闭时此函数不被调用（N5 节点跳过），行为等价 r40。
+    """
+    if not sbml_text.strip():
+        return {}
+    root = fromstring(sbml_text)
+    model = next((e for e in root.iter() if _local_name(e.tag) == "model"), None)
+    if model is None:
+        return {}
+
+    initial_conditions: dict[str, float] = {}
+    for child in model:
+        if _local_name(child.tag) != "listOfSpecies":
+            continue
+        for species in child:
+            if _local_name(species.tag) != "species":
+                continue
+            species_id = species.get("id", "")
+            species_name = species.get("name", "") or species_id
+            # 优先 initialConcentration (SBML L2/L3 continuous)
+            ic = species.get("initialConcentration")
+            if ic is not None:
+                try:
+                    value = float(ic)
+                    if species_name:
+                        initial_conditions[species_name] = value
+                    if species_id and species_id != species_name:
+                        initial_conditions[species_id] = value
+                    continue
+                except (ValueError, TypeError):
+                    pass
+            # 回退 initialAmount (SBML L1 discrete)
+            ia = species.get("initialAmount")
+            if ia is not None:
+                try:
+                    value = float(ia)
+                    if species_name:
+                        initial_conditions[species_name] = value
+                    if species_id and species_id != species_name:
+                        initial_conditions[species_id] = value
+                except (ValueError, TypeError):
+                    pass
+    return initial_conditions
 
 
 def _parse_parameter(element: Any) -> tuple[str, float, str] | None:
@@ -513,6 +567,7 @@ def _parameter_preference(param_name: str, mechanism: str) -> int:
 __all__ = [
     "SBMLKineticParameter",
     "compute_sbml_cache_provenance",
+    "extract_sbml_initial_conditions",
     "extract_sbml_kinetic_parameters",
     "ground_sbml_parameters_to_edges",
 ]

@@ -306,12 +306,16 @@ def _ode_rhs(t, y, y_delayed=None):
             _driver = max(_driver, y[_plrp6_idx])
         if _pdvl_idx >= 0:
             _driver = max(_driver, y[_pdvl_idx])
-        _k_release = 5.0  # [P0-FIX] 3.0→5.0: bCatenin fold=2.19（3.0 不足）
+        _k_release = _get_param("destruction_complex", "k_release", 5.0)
+        # [Batch 3 / LLM_PARAM_INFERENCE_PLAN.md §5.3] 原 _k_release=5.0 硬编码（含 3.0→5.0 反推校准历史）
+        #   改为 _get_param 可覆盖。Flag OFF 时 _get_param 返回 default=5.0（等价 r40）。
         #   根因：SBML k10=206（nuclear_import）/ k16=500（TCF_LEF binding）极快，
         #   bCatenin 被快速消耗到下游池（nuclear+TCF_LEF 总=0.587>>cytosolic=0.110）。
         #   3.0 的释放速率不足以抵消消耗，bCatenin fold=2.19<3（C6 失败）。
         #   5.0 提升释放速率 ~1.67x，预期 bCatenin fold≥3（C6 通过）。
-        _max_pool = max(Y0[_bcat_idx] if _bcat_idx < len(Y0) else 0.1, 0.1) * 10.0  # [P1-9] 5.0→10.0
+        _max_pool_mult = _get_param("destruction_complex", "max_pool_mult", 10.0)
+        # [Batch 3] 原 * 10.0 硬编码乘数改为可覆盖（[P1-9] 5.0→10.0 校准历史）
+        _max_pool = max(Y0[_bcat_idx] if _bcat_idx < len(Y0) else 0.1, 0.1) * _max_pool_mult
         _avail = max(0.0, _max_pool - y[_bcat_idx])
         _release_rate = _k_release * _driver * _avail / _max_pool
         dy[_bcat_idx] += _release_rate

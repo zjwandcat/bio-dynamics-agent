@@ -731,15 +731,58 @@ async def root() -> Dict[str, str]:
     return {"status": "ok", "service": "BioDynamics Agent", "version": "v3"}
 
 
+# 知识库更新全局状态：供前端轮询判断刷新是否完成
+# 状态取值：idle（空闲）/ running（刷新中）/ success（上次成功）/ failed（上次失败）
+_kb_update_status: Dict[str, Any] = {
+    "status": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "message": "",
+    "stats": None,
+}
+
+
 @app.post("/api/admin/update-vector-db")
 async def update_vector_db_endpoint(background_tasks: BackgroundTasks) -> Dict[str, Any]:
-    """接收前端手动触发请求，在后台更新 ChromaDB 知识库。"""
+    """接收前端手动触发请求，在后台更新 ChromaDB 知识库。
+
+    通过全局 _kb_update_status 跟踪进度，前端可调用
+    GET /api/admin/kb-update-status 轮询状态（running → success/failed）。
+    """
+
+    # 已有刷新任务在运行时拒绝重复触发
+    if _kb_update_status.get("status") == "running":
+        return {
+            "status": "already_running",
+            "message": "知识库更新进行中，请等待完成",
+        }
+
+    # 重置为 running 状态
+    _kb_update_status.update({
+        "status": "running",
+        "started_at": time.time(),
+        "finished_at": None,
+        "message": "知识库更新已启动，后台处理中...",
+        "stats": None,
+    })
 
     async def _background_task() -> None:
         try:
-            await asyncio.to_thread(update_vector_db, RAW_DATA_DIR)
-            logger.info("知识库后台更新完成")
+            stats = await asyncio.to_thread(update_vector_db, RAW_DATA_DIR)
+            _kb_update_status.update({
+                "status": "success",
+                "finished_at": time.time(),
+                "message": "知识库更新完成",
+                "stats": stats,
+            })
+            logger.info("知识库后台更新完成: %s", stats)
         except Exception as exc:
+            _kb_update_status.update({
+                "status": "failed",
+                "finished_at": time.time(),
+                "message": f"知识库更新失败：{exc}",
+                "stats": None,
+            })
             logger.error("知识库后台更新失败：%s", exc)
 
     background_tasks.add_task(_background_task)
@@ -747,6 +790,20 @@ async def update_vector_db_endpoint(background_tasks: BackgroundTasks) -> Dict[s
         "status": "started",
         "message": "知识库更新已启动，后台处理中...",
     }
+
+
+@app.get("/api/admin/kb-update-status")
+async def kb_update_status() -> Dict[str, Any]:
+    """返回知识库更新的当前状态，供前端轮询刷新进度。
+
+    返回字段：
+    - status: idle / running / success / failed
+    - started_at: 任务开始时间戳（秒）
+    - finished_at: 任务结束时间戳（秒）
+    - message: 状态描述文案
+    - stats: 完成时的统计信息（files_processed / chunks_inserted 等）
+    """
+    return dict(_kb_update_status)
 
 
 @app.get("/api/admin/rag-status")
@@ -1128,14 +1185,40 @@ def _v3_event_stream(request: ChatRequest):  # type: ignore[no-untyped-def]
             yield _sse_event(
                 {"event": "config", "data": {"model_name": settings.OPENAI_MODEL}}
             )
-            async for event in compiled_workflow_v3.astream_events(
+            # 心跳机制：RAG 阶段单次 LLM 调用 15-20s，多条边累计 5-8 分钟，
+            # 期间无 SSE 事件，浏览器/代理可能因 TCP 空闲超时断开连接（ERR_CONNECTION_RESET）。
+            # [P0-1] wait_for 包装 __anext__()：超时会取消协程，导致迭代器关闭 → 工作流提前终止。
+            # [P0-2] asyncio.shield + wait_for：wait_for 超时会取消 shield 包装 future，
+            #        随后 await _shielded 会抛 CancelledError → SSE 生成器提前返回。
+            # [P0-3 最终方案] asyncio.wait(timeout)：超时不会取消 task，task 继续运行，
+            #        只返回 (done, pending)。在同一个 task 上周期性发送心跳直到它完成。
+            import asyncio as _asyncio
+            _aiter = compiled_workflow_v3.astream_events(
                 initial_state,
                 # [P0-1 修复] recursion_limit 默认 25 不足以走完 12 节点 workflow
                 # (pre_router → supervisor → worker_mcp → ... → worker_report)，
                 # 导致 RecursionError 在 n11 之前崩溃。提升到 50。
                 {"configurable": {"thread_id": thread_id}, "recursion_limit": 50},
                 version="v2",
-            ):
+            ).__aiter__()
+            while True:
+                # 每次循环创建一个新的 __anext__() task
+                _next_task = _asyncio.ensure_future(_aiter.__anext__())
+                # 心跳内循环：在同一个 task 上周期性等待，超时则发心跳，task 不被取消
+                while True:
+                    _done, _pending = await _asyncio.wait(
+                        {_next_task}, timeout=15.0
+                    )
+                    if _done:
+                        break  # task 已完成，退出内循环处理事件
+                    # 超时：task 仍在运行（asyncio.wait 不会取消它），发送心跳保活
+                    logger.debug("[SSE] 发送心跳保活（RAG/LLM 调用进行中）")
+                    yield _sse_event({"event": "heartbeat", "data": ""})
+                # task 已完成，获取结果（可能抛出 StopAsyncIteration 表示迭代器耗尽）
+                try:
+                    event = _next_task.result()
+                except StopAsyncIteration:
+                    break  # 迭代器结束，退出外循环
                 event_name = event.get("event", "")
                 event_chain_name = event.get("name", "")
                 metadata = event.get("metadata", {}) or {}
@@ -1748,4 +1831,5 @@ def _v4_benchmark_event_stream():
 if __name__ == "__main__":
     import uvicorn
 
+    # 触发 uvicorn --reload 重新加载新增的 /api/admin/kb-update-status 接口
     uvicorn.run(app, host=settings.HOST, port=settings.PORT)

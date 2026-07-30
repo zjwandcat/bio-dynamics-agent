@@ -20,6 +20,10 @@ EC50 = {{ ec50 }}
 EMAX = {{ emax }}
 GAMMA = {{ gamma }}
 K10 = {{ k10 }}
+# [Batch 3 / LLM_PARAM_INFERENCE_PLAN.md §5.3] 原 0.5*(1-effect)-0.05*target 硬编码改为可覆盖
+#   Flag OFF 时 default 等价 r40（与 PKPD_OneCompartment.j2 改造保持一致）
+K_PROD = {{ k_prod | default(0.5) }}
+K_DEG = {{ k_deg | default(0.05) }}
 CONC_MIN_FACTOR = {{ conc_min_factor }}
 CONC_MAX_FACTOR = {{ conc_max_factor }}
 N_POINTS = {{ n_points }}
@@ -28,7 +32,7 @@ def _simulate(dose):
     def _ode(t, y):
         drug_conc, target = y
         effect = EMAX * (drug_conc ** GAMMA) / (EC50 ** GAMMA + drug_conc ** GAMMA + 1e-12)
-        return [-K10 * drug_conc, 0.5 * (1.0 - effect) - 0.05 * target]
+        return [-K10 * drug_conc, K_PROD * (1.0 - effect) - K_DEG * target]
     sol = solve_ivp(
         _ode, (0.0, T_END), [dose, Y0[1] if len(Y0) > 1 else 0.0],
         method="LSODA", t_eval=np.linspace(0.0, T_END, N_EVAL), vectorized=False,

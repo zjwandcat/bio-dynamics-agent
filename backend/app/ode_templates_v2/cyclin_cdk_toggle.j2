@@ -41,6 +41,10 @@ N_EVAL = {{ n_eval }}
 Y0 = {{ y0 }}
 EDGES = {{ edges_json }}
 PARAMS = {{ params_json }}
+# [Batch 2 / LLM_PARAM_INFERENCE_PLAN.md §5.2] LLM 推理的通路级别参数
+# 结构: {"pathway_kinetics": {param_type: {value, source, confidence, origin, evidence_sources, reasoning}}}
+# None/空 dict 时 _pk() 回退到 _PATHWAY_KINETICS 硬编码字典
+LLM_INFERRED_PARAMS = {{ llm_inferred_params | default({}) }}
 DDE_DELAY = {{ dde_delay_minutes }}
 REQUIRES_DDE = {{ requires_dde | default(false) }}
 PATHWAY_CLASS = "{{ pathway_class | default('') }}"
@@ -115,12 +119,29 @@ _pathway_kin = _PATHWAY_KINETICS.get(
 
 
 def _pk(param_type):
-    """返回通路特异性的动力学参数默认值。
+    """返回通路特异性的动力学参数默认值（三层查询）。
 
-    [RCA-38 P1 修复 RC-1g] 替代硬编码的 _get_param default 值，
-    按 PATHWAY_CLASS 选择生物学合理的时间尺度参数。
-    CellCycle 通路使用小时级参数（k_trans=0.005 等）。
+    [Batch 2 / LLM_PARAM_INFERENCE_PLAN.md §5.2 改动 4] 优先级链：
+      1. LLM_INFERRED_PARAMS.pathway_kinetics[param_type].value
+         （LLM 推理值，confidence ≤ 0.4，source="Inferred"）
+      2. _PATHWAY_KINETICS[PATHWAY_CLASS][param_type]
+         （硬编码字典，CellCycle 小时级 / DEFAULT 分钟级）
+      3. 0.05（最后 default）
+
+    Flag OFF 时 LLM_INFERRED_PARAMS = {} → 自动回退到 _PATHWAY_KINETICS（等价 r40）。
+    Flag ON 且 LLM 推理成功时覆盖硬编码字典，消除过拟合。
     """
+    # 1. LLM 推理值（Batch 2）
+    if isinstance(LLM_INFERRED_PARAMS, dict):
+        _b2_pk_dict = LLM_INFERRED_PARAMS.get("pathway_kinetics", {})
+        if isinstance(_b2_pk_dict, dict):
+            _b2_entry = _b2_pk_dict.get(param_type)
+            if isinstance(_b2_entry, dict) and "value" in _b2_entry:
+                try:
+                    return float(_b2_entry["value"])
+                except (TypeError, ValueError):
+                    pass  # value 无效，回退
+    # 2. 硬编码字典 fallback（r40 baseline）
     return _pathway_kin.get(param_type, 0.05)
 
 

@@ -899,6 +899,163 @@ def _get_prefer_biomd_id_for_case(case_id: str) -> str | None:
     return None
 
 
+# =============================================================================
+# [Batch 2 / LLM_PARAM_INFERENCE_PLAN.md §4.2-4.3] 通路级别动力学参数 LLM 推理
+# =============================================================================
+# 用途：当 _PATHWAY_KINETICS 硬编码字典导致 C5 峰时过早/过晚时，由 LLM 基于通路
+#       生物学时间尺度推理合理默认值，覆盖硬编码字典。
+# 优先级链：SBML(0.95) > RAG(0.8) > LLM_Inferred(≤0.4) > Default(0.2)
+# Feature Flag: V4_LLM_PARAM_INFERENCE_ENABLED（默认 OFF，关闭时跳过本函数）
+# =============================================================================
+async def _llm_infer_pathway_kinetics(
+    pathway_class: str,
+    species: list[str],
+    edges: list[dict],
+    rag_candidates: dict,
+    rag_missed: list[str],
+    pathway_context: str,
+) -> dict[str, dict]:
+    """Batch 2: LLM 推理通路级别动力学参数（phos_k_cat / act_k_cat / gtp_k_cat / trans_k / dephos_k）。
+
+    按 PARAM_INFERENCE_PROMPT 推理规则，基于通路生物学时间尺度输出合理默认值。
+    严格禁止创造科学事实，必须标注 source="Inferred" + confidence ≤ 0.4 + evidence_sources。
+
+    Returns:
+        dict: {"pathway_kinetics": {param_type: {value, source, confidence, origin, evidence_sources, reasoning}}}
+              若 LLM 调用失败或输出无效，返回空 dict（回退到 _PATHWAY_KINETICS 硬编码）
+    """
+    if not pathway_class:
+        return {}
+
+    from app.prompts import PARAM_INFERENCE_PROMPT
+
+    # 提取边摘要（避免传入完整 edges 太长）
+    edges_summary = []
+    for e in edges[:8]:  # 仅前 8 条边避免 token 过长
+        edges_summary.append({
+            "source": str(e.get("source", ""))[:30],
+            "target": str(e.get("target", ""))[:30],
+            "mechanism": str(e.get("mechanism", ""))[:20],
+        })
+
+    # 提取 RAG 候选摘要
+    rag_summary: dict[str, list] = {}
+    if isinstance(rag_candidates, dict):
+        for k, v in list(rag_candidates.items())[:5]:
+            if isinstance(v, list):
+                rag_summary[str(k)[:30]] = [
+                    {"param_name": str(item.get("param_name", ""))[:20],
+                     "value": item.get("value")}
+                    for item in v[:2] if isinstance(item, dict)
+                ]
+
+    prompt_text = PARAM_INFERENCE_PROMPT.format(
+        pathway_class=pathway_class,
+        species=species[:10] if isinstance(species, list) else [],
+        edges=edges_summary,
+        rag_candidates=rag_summary,
+        rag_missed=rag_missed[:10] if isinstance(rag_missed, list) else [],
+        pathway_context=str(pathway_context)[:300],
+    )
+
+    try:
+        from langchain_core.messages import HumanMessage
+        # [RCA] 修复：原为 `from app.config import settings` + `llm = settings.openai_llm`
+        #   但 Settings 对象无 openai_llm 属性（应为 app.config.llm 模块级 FallbackLLM）。
+        #   该错误导致 Batch 2 LLM 推理在所有 case 上抛出 AttributeError，从未执行。
+        #   修复：直接使用模块顶部行 32 已导入的 `llm`（FallbackLLM 实例）。
+        #   llm 已在行 32 由 `from app.config import llm` 导入。
+        if llm is None:
+            logger.warning("Batch 2 LLM 推理跳过：llm 不可用")
+            return {}
+        response = await llm.ainvoke([HumanMessage(content=prompt_text)])
+        raw_text = response.content if hasattr(response, "content") else str(response)
+    except Exception as exc:
+        logger.warning("Batch 2 LLM 推理调用失败（pathway=%s）：%s", pathway_class, exc)
+        return {}
+
+    # 解析 JSON（容错：剥离 markdown 代码块标记）
+    import json as _json
+    import re as _re
+    json_match = _re.search(r"\{[\s\S]*\}", raw_text)
+    if not json_match:
+        logger.warning("Batch 2 LLM 推理无 JSON 输出（pathway=%s）", pathway_class)
+        return {}
+    try:
+        parsed = _json.loads(json_match.group(0))
+    except _json.JSONDecodeError as exc:
+        logger.warning("Batch 2 LLM 推理 JSON 解析失败（pathway=%s）：%s", pathway_class, exc)
+        return {}
+
+    # 校验：confidence ≤ 0.4 + evidence_sources 非空
+    confidence = float(parsed.get("confidence", 0.0))
+    if confidence > 0.4:
+        logger.warning(
+            "Batch 2 LLM 推理 confidence=%.2f > 0.4，拒绝（pathway=%s）",
+            confidence, pathway_class,
+        )
+        return {}
+    evidence_sources = parsed.get("evidence_sources", [])
+    if not evidence_sources or not isinstance(evidence_sources, list):
+        logger.warning(
+            "Batch 2 LLM 推理 evidence_sources 为空，拒绝（pathway=%s）",
+            pathway_class,
+        )
+        return {}
+
+    # 转换为溯源四元组结构
+    inferred_params = parsed.get("inferred_params", {})
+    if not isinstance(inferred_params, dict) or not inferred_params:
+        return {}
+
+    pathway_kinetics: dict[str, dict] = {}
+    for param_type, param_data in inferred_params.items():
+        if not isinstance(param_data, dict):
+            continue
+        value = param_data.get("value")
+        if not isinstance(value, (int, float)):
+            continue
+        # 生物学合理性 clamp（与 PARAM_INFERENCE_PROMPT Rules 范围对齐）
+        # phos_k_cat ∈ [0.02, 1.0]，act_k_cat ∈ [0.01, 0.7]，
+        # gtp_k_cat ∈ [0.05, 3.0]，trans_k ∈ [0.001, 0.3]，dephos_k ∈ [0.01, 0.5]
+        _B2_CLAMP = {
+            "phos_k_cat": (0.02, 1.0),
+            "act_k_cat": (0.01, 0.7),
+            "gtp_k_cat": (0.05, 3.0),
+            "trans_k": (0.001, 0.3),
+            "dephos_k": (0.01, 0.5),
+            "transl_k": (0.001, 0.1),
+            "ubi_k": (0.001, 0.2),
+            "deg_k": (0.001, 0.2),
+            "bind_k": (0.001, 0.3),
+            "inhib_k": (0.001, 0.2),
+        }
+        lo, hi = _B2_CLAMP.get(param_type, (0.001, 1.0))
+        clamped_value = max(lo, min(hi, float(value)))
+        if clamped_value != float(value):
+            logger.info(
+                "Batch 2 LLM 推理 %s=%g 超界 clamp 到 %g（pathway=%s）",
+                param_type, value, clamped_value, pathway_class,
+            )
+        pathway_kinetics[param_type] = {
+            "value": clamped_value,
+            "source": "Inferred",
+            "confidence": confidence,
+            "origin": f"Inferred:{pathway_class}:{param_data.get('reasoning', '')[:50]}",
+            "evidence_sources": evidence_sources,
+            "reasoning": str(param_data.get("reasoning", ""))[:200],
+        }
+
+    if not pathway_kinetics:
+        return {}
+
+    logger.info(
+        "Batch 2 LLM 推理通路级别参数成功（pathway=%s, confidence=%.2f, params=%s）",
+        pathway_class, confidence, sorted(pathway_kinetics.keys()),
+    )
+    return {"pathway_kinetics": pathway_kinetics}
+
+
 async def n5_parameter_rag(state: BioDynamicsState) -> dict:
     """为 KG 中每条边查询最佳动力学参数（程序注入，LLM 禁止修改）。
 
@@ -977,6 +1134,69 @@ async def n5_parameter_rag(state: BioDynamicsState) -> dict:
             grounded, decisions, grounding = ground_sbml_parameters_to_edges(
                 edges, sbml_models
             )
+        # Batch 1: Flag ON 时从 SBML 提取物种初始浓度
+        # RCA 依据：r40 baseline C6 振幅 PASS 仅 14/43，根因之一是初始浓度被
+        # 强制排除 RAG 检索 + 硬编码 default（EGF=0.008/EGFR=0.3/RasGDP=1.0）。
+        # Flag ON 时从 SBML listOfSpecies 提取 initialConcentration/initialAmount，
+        # 写入 state["sbml_initial_conditions"] 供 N6 节点合并。
+        # Flag OFF 时此块被跳过，行为等价 r40 baseline。
+        if settings.effective_v4_initial_conc_from_sbml_enabled():
+            from app.sbml_parameters import extract_sbml_initial_conditions
+            _b1_sbml_ic: dict[str, float] = {}
+            for _b1_model in grounding_models:
+                _b1_sbml_text = str(_b1_model.get("sbml_text", "") or "")
+                _b1_model_id = str(_b1_model.get("model_id", "") or "")
+                if _b1_sbml_text:
+                    try:
+                        _b1_ic = extract_sbml_initial_conditions(_b1_sbml_text, _b1_model_id)
+                        _b1_sbml_ic.update(_b1_ic)
+                    except Exception as _b1_exc:
+                        logger.warning("Batch 1 SBML 初始浓度提取失败（model=%s）：%s", _b1_model_id, _b1_exc)
+            if _b1_sbml_ic:
+                state["sbml_initial_conditions"] = _b1_sbml_ic
+                logger.info(
+                    "Batch 1 SBML 初始浓度提取成功：%d 个物种（model=%s）",
+                    len(_b1_sbml_ic),
+                    str(state.get("sbml_model_id", "")),
+                )
+        # Batch 2: Flag ON 时调用 LLM 推理通路级别动力学参数（phos_k_cat / act_k_cat 等）
+        # RCA 依据：r42 抽检 6/11 case C5 失败（峰时过早/过晚），根因是 _PATHWAY_KINETICS
+        # 硬编码字典的反推校准值（注释有 "1.0→0.6" 反推历史）构成过拟合。
+        # Flag ON 时由 LLM 基于通路生物学时间尺度推理合理 default，写入
+        # state["llm_inferred_params"]["pathway_kinetics"]，覆盖 _PATHWAY_KINETICS 字典。
+        # 优先级链：SBML(0.95) > RAG(0.8) > LLM_Inferred(≤0.4) > Default(0.2)
+        # Flag OFF 时此块被跳过，行为等价 r40 baseline（_PATHWAY_KINETICS 硬编码）。
+        _b2_llm_inferred: dict[str, dict] = {}
+        if settings.effective_v4_llm_param_inference_enabled():
+            _b2_pathway_class = str(state.get("v4_pathway_class") or "")
+            if not _b2_pathway_class:
+                # 从 KG edges 推断 pathway_class（fallback）
+                _b2_pathway_class = str(state.get("pathway_class") or "")
+            _b2_species = list(state.get("species_names") or [])
+            if not _b2_species:
+                _b2_species = list({str(e.get("source", "")) for e in edges} | {str(e.get("target", "")) for e in edges})
+            _b2_pathway_context = str(state.get("user_input", ""))[:300]
+            _b2_rag_candidates = {
+                str(value.get("edge_key", "")): [{"param_name": value.get("param_name"), "value": value.get("value")}]
+                for value in grounded.values() if isinstance(value, dict)
+            }
+            try:
+                _b2_llm_inferred = await _llm_infer_pathway_kinetics(
+                    pathway_class=_b2_pathway_class,
+                    species=_b2_species,
+                    edges=edges,
+                    rag_candidates=_b2_rag_candidates,
+                    rag_missed=[],
+                    pathway_context=_b2_pathway_context,
+                )
+                if _b2_llm_inferred:
+                    state["llm_inferred_params"] = _b2_llm_inferred
+                    logger.info(
+                        "Batch 2 LLM 推理写入 state[llm_inferred_params]（pathway=%s, params=%s）",
+                        _b2_pathway_class, sorted(_b2_llm_inferred.get("pathway_kinetics", {}).keys()),
+                    )
+            except Exception as _b2_exc:
+                logger.warning("Batch 2 LLM 推理调用异常（pathway=%s）：%s", _b2_pathway_class, _b2_exc)
         if edges and len(grounded) == len(edges):
             latency_ms = (time.time() - start_ts) * 1000
             logger.info(
@@ -1024,6 +1244,8 @@ async def n5_parameter_rag(state: BioDynamicsState) -> dict:
                 "missing_parameters": [],
                 "degradation_mode": "full",
                 "sbml_parameter_grounding": grounding,
+                # Batch 2: 传递 LLM 推理的通路级别参数到 state（供模板 _pk() 查询）
+                "llm_inferred_params": _b2_llm_inferred if _b2_llm_inferred else {},
                 "agent_dispatches": [orchestrator.complete_dispatch(
                     "n5_parameter_rag", latency_ms=latency_ms
                 )],
@@ -1436,26 +1658,35 @@ async def n5_parameter_rag(state: BioDynamicsState) -> dict:
         # 1. ChromaDB 高阶 hybrid 检索（查询重写 + BM25 + 语义 + rerank）
         if rag_client.available:
             try:
+                # Batch 1: Flag ON 时不排除 initial_concentration 类型参数
+                # Flag OFF 时保持原 r40 行为（exclude:initial_concentration）
+                _b1_type_filter = (
+                    None if settings.effective_v4_initial_conc_from_sbml_enabled()
+                    else "exclude:initial_concentration"
+                )
                 reranked, edge_insights = rag_client.search_params_hybrid(
                     query, species_context=species_context, top_k=5,
                     prefer_biomd_id=_prefer_biomd_id,
+                    type_filter=_b1_type_filter,
                 )
                 # 保留 _rerank_score 供排序，剥离其他内部字段后做污染过滤
                 candidates = _filter_contaminated_evidence(reranked, user_input)
-                # 过滤掉 initial_concentration_* 类型参数（不是动力学常数）
-                # 原因：initial_concentration 是物种初始浓度（如 EGFR=0.3 nM），
-                # 不是反应速率常数 k1/k2/Kd，错误采纳会导致 ODE 参数完全错误
-                _before_filter = len(candidates)
-                candidates = [
-                    c for c in candidates
-                    if not str(c.get("param_name", "")).lower().startswith("initial_concentration")
-                    and str(c.get("source_type", "")).lower() != "species"
-                ]
-                if _before_filter != len(candidates):
-                    logger.info(
-                        "N5 边 %s：过滤掉 %d 条 initial_concentration 候选，剩余 %d 条",
-                        edge_key, _before_filter - len(candidates), len(candidates),
-                    )
+                # Batch 1: Flag ON 时保留 initial_concentration 候选；Flag OFF 时保持原过滤
+                if not settings.effective_v4_initial_conc_from_sbml_enabled():
+                    # 过滤掉 initial_concentration_* 类型参数（不是动力学常数）
+                    # 原因：initial_concentration 是物种初始浓度（如 EGFR=0.3 nM），
+                    # 不是反应速率常数 k1/k2/Kd，错误采纳会导致 ODE 参数完全错误
+                    _before_filter = len(candidates)
+                    candidates = [
+                        c for c in candidates
+                        if not str(c.get("param_name", "")).lower().startswith("initial_concentration")
+                        and str(c.get("source_type", "")).lower() != "species"
+                    ]
+                    if _before_filter != len(candidates):
+                        logger.info(
+                            "N5 边 %s：过滤掉 %d 条 initial_concentration 候选，剩余 %d 条",
+                            edge_key, _before_filter - len(candidates), len(candidates),
+                        )
                 # 聚合洞察数据
                 if edge_insights.get("rewritten_query"):
                     aggregated_rewritten_queries.append(edge_insights["rewritten_query"])
@@ -2364,6 +2595,65 @@ def n6_ode_generator(state: BioDynamicsState) -> dict:
         return None
 
     _initial_conditions = _parse_initial_conditions(state.get("user_input", ""))
+    # Batch 1: Flag ON 时合并 SBML 提取的初始浓度（用户输入优先，SBML 次之，硬编码最后兜底）
+    # 重要：只对上游激活源（配体/受体/骨架蛋白）用 SBML IC，
+    #       排除下游产物（磷酸化/激活形式），因为它们应初始为 0 由上游激活产生
+    # RCA 依据：r40 硬编码 default（EGF=0.008/EGFR=0.3/RasGDP=1.0）导致 C6 振幅
+    # 偏差。Flag ON 时用 SBML 提取的真实初始浓度补充 _initial_conditions。
+    # 优先级：用户输入 > SBML 提取 > 硬编码 default（最后兜底，保持原逻辑）。
+    # Flag OFF 时此块被跳过，_initial_conditions 仅含用户输入，行为等价 r40。
+    # 回归修复（3.P1 PI3K）：PIP3 在 SBML 中有非零 initialConcentration，
+    # 但 PIP3 是 PI3K 激活后的下游产物（PIP2 → PIP3），仿真中应初始为 0。
+    if settings.effective_v4_initial_conc_from_sbml_enabled():
+        _b1_sbml_ic = state.get("sbml_initial_conditions", {})
+
+        # 下游产物过滤：排除磷酸化/激活形式物种
+        # 原因：SBML 模型的 initialConcentration 可能是稳态后的值，
+        # 而仿真需要刺激前的初始条件（下游产物应为 0）
+        # 参考：nodes_v2.py phos_cascade 分支的 y0 设置逻辑（行 2413-2416）
+        def _b1_is_downstream_product(name: str) -> bool:
+            """判断物种是否是下游产物（磷酸化/激活形式），应初始为 0。"""
+            lower = str(name).lower().strip()
+            # 排除磷酸化形式（pEGFR, pAKT, pS6K1, PIP3 等）
+            # 注意：p53 长度=3 不匹配（len > 3 条件），PTEN 需要单独处理
+            if lower.startswith("p") and len(lower) > 3 and not lower.startswith("p5"):
+                return True
+            # 排除激活/GTP/GDP 形式
+            if any(suffix in lower for suffix in ("_active", "_gtp", "_gdp", "phospho")):
+                return True
+            # 排除已知下游产物（与 nodes_v2.py:2413-2416 一致 + PIP3/PIP2）
+            _known_downstream = {
+                "pegfr", "pshc", "praf", "pmek", "pmapk", "rasgtp", "egf_egfr",
+                "pip3", "pip2", "pakt", "ps6k1", "pperk", "perk",
+                "bcatenin", "bcat_degraded", "nfkb_nuclear",
+            }
+            if lower in _known_downstream:
+                return True
+            return False
+
+        _b1_merged_count = 0
+        _b1_skipped_count = 0
+        for _b1_sp, _b1_val in _b1_sbml_ic.items():
+            if _b1_is_downstream_product(_b1_sp):
+                _b1_skipped_count += 1
+                continue
+            # 用 ODE 标识符形式匹配（_raw_name_to_ode 在行 2260 定义，此处可访问）
+            try:
+                _b1_sp_ode = _raw_name_to_ode(_b1_sp)
+                if _b1_sp_ode and _b1_sp_ode not in _initial_conditions:
+                    _initial_conditions[_b1_sp_ode] = _b1_val
+                    _b1_merged_count += 1
+            except Exception:
+                pass
+            # 原始名也存一份（覆盖范围更广）
+            if _b1_sp not in _initial_conditions:
+                _initial_conditions[_b1_sp] = _b1_val
+                _b1_merged_count += 1
+        if _b1_sbml_ic:
+            logger.info(
+                "Batch 1 N6 合并 SBML 初始浓度（排除下游产物）：原 %d 个，合并 %d 个，跳过 %d 个下游产物",
+                len(_b1_sbml_ic), _b1_merged_count, _b1_skipped_count,
+            )
 
     if template_name in pkpd_templates and pkpd_active:
         # PK/PD 房室模板：变量 = [药物房室..., 靶点]

@@ -16,6 +16,12 @@ N_EVAL = {{ n_eval }}
 Y0 = {{ y0 }}
 EDGES = {{ edges_json }}
 PARAMS = {{ params_json }}
+# [Batch 3 / LLM_PARAM_INFERENCE_PLAN.md §5.3] 原内联 default 0.1/1.0/2.0/1.0 硬编码改为可覆盖
+#   Flag OFF 时 default 等价 r40
+_DEGRADATION_DEFAULT = {{ degradation | default(0.1) }}
+_KD_DEFAULT = {{ kd | default(1.0) }}
+_N_HILL_DEFAULT = {{ n_hill | default(2.0) }}
+_PRODUCTION_DEFAULT = {{ production | default(1.0) }}
 N_SP = len(SPECIES_NAMES)
 
 def _hill_act(x, kd, n):
@@ -27,15 +33,15 @@ def _ode(t, y):
     y = np.maximum(y, 0.0)
     dy = np.zeros_like(y)
     for i in range(N_SP):
-        deg = PARAMS.get(SPECIES_NAMES[i], {}).get("degradation", 0.1)
+        deg = PARAMS.get(SPECIES_NAMES[i], {}).get("degradation", _DEGRADATION_DEFAULT)
         dy[i] = -deg * y[i]
     for e in EDGES:
         s_idx = SPECIES_NAMES.index(e["source"])
         t_idx = SPECIES_NAMES.index(e["target"])
         eparams = PARAMS.get(SPECIES_NAMES[t_idx], {})
-        kd = eparams.get("kd", eparams.get("Kd", 1.0))
-        n = eparams.get("n", eparams.get("hill", 2.0))
-        prod = eparams.get("production", 1.0)
+        kd = eparams.get("kd", eparams.get("Kd", _KD_DEFAULT))
+        n = eparams.get("n", eparams.get("hill", _N_HILL_DEFAULT))
+        prod = eparams.get("production", _PRODUCTION_DEFAULT)
         if e["interaction"] == "activation":
             factor = _hill_act(y[s_idx], kd, n)
         else:

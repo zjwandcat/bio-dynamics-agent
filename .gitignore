@@ -109,3 +109,52 @@ validation_report_*.json
 # --- Text files (keep only requirements.txt) ---
 *.txt
 !requirements.txt
+
+# --- Temporary debug / diagnosis / experiment scripts (Batch 1-7 修复周期产物) ---
+backend/_*.py
+backend/_*.ps1
+backend/_*.cmd
+backend/_*.json
+backend/_*.csv
+backend/_*.png
+backend/_*.log
+backend/_*.txt
+backend/_bm_e2e/
+backend/_output_*/
+backend/_tmp_*/
+backend/benchmarks/_*/
+backend/benchmarks/_*.py
+backend/compare_r36_r39.py
+backend/analyze_*.py
+backend/diag_ode.py
+backend/simulation.csv
+backend/simulation.png
+backend/uvicorn.err
+backend/qa_benchmark_results.json
+backend/experiments/
+backend/logs/
+backend/scripts/_diag_v2.py
+
+# --- Ontology cache (rebuildable, TTL 7 days) ---
+backend/app/ontology/cache/
+
+# --- BioModels raw SBML cache (rebuildable via biomodels_client.py) ---
+backend/data/raw/
+backend/data/processed/
+backend/data/pmid_cache/
+backend/data/sa_logs/
+backend/data/sandbox_logs/
+backend/data/benchmark_runs/
+backend/data/vector_db_corrupted_*/
+backend/data/vector_db_export_*/
+backend/data/sandbox_probe_test/
+
+# --- Frontend build artifacts & test results ---
+frontend/test-results/
+frontend/dist/
+
+# --- Benchmark QA Collection (root-level, kept local) ---
+Benchmark_QA_Collection.md
+BENCHMARK_FRAMEWORK_REVIEW.md
+BIOLOGICAL_REASONING_REVIEW.md
+*.md.bak

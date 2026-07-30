@@ -375,6 +375,45 @@ class Settings:
         "V4_DYNAMIC_ROUTING_ENABLED", "false"
     ).lower() == "true"
 
+    # =============================================================================
+    # v4 参数推理与 SBML 提取 Feature Flags（Batch 1-4）
+    # 详见 r40 → v4 迁移计划：初始浓度提取 / LLM 参数推理 / 硬编码参数改造 / 时间网格推理
+    # 设计原则：4 个 flag 默认全部 false，全 false 时系统行为完全等价 r40 baseline。
+    # 每个 flag 独立控制一个迁移分支，可单独开启进行增量验证，互不依赖。
+    # 有效值通过 Settings.effective_v4_*_enabled() 方法解析，见类末尾聚合逻辑。
+    # =============================================================================
+    # V4_INITIAL_CONC_FROM_SBML_ENABLED: 控制初始浓度从 SBML 提取（Batch 1）
+    #   - false（默认）：初始浓度走原 r40 路径（LLM 推断或默认值），不从 SBML 提取
+    #   - true：从 SBML 文件的 initialConcentration/initialAmount 提取物种初始浓度
+    # 铁律：flag=false 时初始浓度行为完全等价 r40 baseline
+    V4_INITIAL_CONC_FROM_SBML_ENABLED: bool = os.getenv(
+        "V4_INITIAL_CONC_FROM_SBML_ENABLED", "false"
+    ).lower() == "true"
+
+    # V4_LLM_PARAM_INFERENCE_ENABLED: 控制 LLM 参数推理分支（Batch 2）
+    #   - false（默认）：参数获取走原 r40 路径（RAG 检索 + 模板默认值）
+    #   - true：启用 LLM 参数推理分支，由 LLM 推断缺失参数
+    # 铁律：flag=false 时参数获取行为完全等价 r40 baseline
+    V4_LLM_PARAM_INFERENCE_ENABLED: bool = os.getenv(
+        "V4_LLM_PARAM_INFERENCE_ENABLED", "false"
+    ).lower() == "true"
+
+    # V4_HARDCODED_PARAMS_EXT_ENABLED: 控制完全不可覆盖项改造（Batch 3）
+    #   - false（默认）：硬编码参数走原 r40 路径（不可覆盖项保持原逻辑）
+    #   - true：启用硬编码参数扩展改造，允许配置化覆盖原不可覆盖项
+    # 铁律：flag=false 时硬编码参数行为完全等价 r40 baseline
+    V4_HARDCODED_PARAMS_EXT_ENABLED: bool = os.getenv(
+        "V4_HARDCODED_PARAMS_EXT_ENABLED", "false"
+    ).lower() == "true"
+
+    # V4_TIMEGRID_LLM_INFERENCE_ENABLED: 控制 _PATHWAY_TIMEGRID 与 DDE_DELAY LLM 推理（Batch 4）
+    #   - false（默认）：时间网格与 DDE 延迟走原 r40 路径（硬编码或模板默认值）
+    #   - true：启用 LLM 推理 _PATHWAY_TIMEGRID 与 DDE_DELAY 参数
+    # 铁律：flag=false 时时间网格与 DDE 延迟行为完全等价 r40 baseline
+    V4_TIMEGRID_LLM_INFERENCE_ENABLED: bool = os.getenv(
+        "V4_TIMEGRID_LLM_INFERENCE_ENABLED", "false"
+    ).lower() == "true"
+
     # RCA-17: for governed L5 benchmark cases, prefer parameters from the
     # declared BioModels SBML before the mixed retrieval pool. Default OFF.
     L5_GROUNDED_RAG_ENABLED: bool = os.getenv(
@@ -803,6 +842,27 @@ class Settings:
             "V4_DYNAMIC_ROUTING_ENABLED",
             self.V4_DYNAMIC_ROUTING_ENABLED,
         )
+
+    # --- v4 参数推理与 SBML 提取（Batch 1-4，独立 flag，无粗粒度聚合）---
+    # 这 4 个 flag 与上方 P1-P6 不同：每个 flag 独立控制一个迁移分支，
+    # 不属于任何粗粒度聚合（V4_SCIENTIFIC_LAYER / V4_VALIDATION / V4_HYPOTHESIS）。
+    # effective_* 方法直接返回属性值（属性已在类定义时从 env 读取），
+    # 与现有独立 flag（如 L5_GROUNDED_RAG_ENABLED）风格一致。
+    def effective_v4_initial_conc_from_sbml_enabled(self) -> bool:
+        """Batch 1: 是否启用从 SBML 提取初始浓度（关闭时等价 r40 baseline）。"""
+        return self.V4_INITIAL_CONC_FROM_SBML_ENABLED
+
+    def effective_v4_llm_param_inference_enabled(self) -> bool:
+        """Batch 2: 是否启用 LLM 参数推理分支（关闭时等价 r40 baseline）。"""
+        return self.V4_LLM_PARAM_INFERENCE_ENABLED
+
+    def effective_v4_hardcoded_params_ext_enabled(self) -> bool:
+        """Batch 3: 是否启用硬编码参数扩展改造（关闭时等价 r40 baseline）。"""
+        return self.V4_HARDCODED_PARAMS_EXT_ENABLED
+
+    def effective_v4_timegrid_llm_inference_enabled(self) -> bool:
+        """Batch 4: 是否启用 _PATHWAY_TIMEGRID 与 DDE_DELAY LLM 推理（关闭时等价 r40 baseline）。"""
+        return self.V4_TIMEGRID_LLM_INFERENCE_ENABLED
 
     # --- Scientific Alignment Loop 辅助方法 ---
     def is_scientific_alignment_enabled(self) -> bool:

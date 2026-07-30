@@ -21,12 +21,15 @@ TARGET = "{{ target }}"
 EC50 = {{ ec50 }}
 EMAX = {{ emax }}
 GAMMA = {{ gamma }}
+# [Batch 3] 原 0.5*(1-effect)-0.05*target 硬编码改为可覆盖（Flag OFF 时 default 等价 r40）
+K_PROD = {{ k_prod | default(0.5) }}
+K_DEG = {{ k_deg | default(0.05) }}
 
 def _ode(t, y):
     drug_conc, target = y
     effect = EMAX * (drug_conc ** GAMMA) / (EC50 ** GAMMA + drug_conc ** GAMMA + 1e-12)
     d_drug = -K10 * drug_conc
-    d_target = 0.5 * (1.0 - effect) - 0.05 * target
+    d_target = K_PROD * (1.0 - effect) - K_DEG * target
     return [d_drug, d_target]
 
 sol = solve_ivp(

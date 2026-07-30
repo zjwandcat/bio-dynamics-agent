@@ -22,6 +22,8 @@ KD = {{ kd }}
 N_HILL = {{ n_hill }}
 DEGRADATION = {{ degradation }}
 PROD_RATE = {{ production }}
+# [Batch 3] 原 -0.1 * inhibitor 硬编码改为可覆盖（Flag OFF 时 default=0.1 等价 r40）
+K_CLEARANCE = {{ k_clearance | default(0.1) }}
 
 # ====== ODE 系统 ======
 def _ode(t, y):
@@ -29,7 +31,7 @@ def _ode(t, y):
     # 抑制分数 inhibition ∈ [0,1]：0=无药（无抑制），1=高浓度（全抑制）
     # 与 PKPD 模板及 NODE2_PKPD_SECTION 约定一致（Task G 统一抑制项约定）
     inhibition = inhibitor ** N_HILL / (KD ** N_HILL + inhibitor ** N_HILL + 1e-12)
-    d_inhibitor = -0.1 * inhibitor
+    d_inhibitor = -K_CLEARANCE * inhibitor
     # 强制耦合：抑制降低靶点生成率（Task G）
     d_target = PROD_RATE * (1.0 - inhibition) - DEGRADATION * target
     return [d_inhibitor, d_target]

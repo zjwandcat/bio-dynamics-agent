@@ -242,6 +242,86 @@ RAG_DECISION_PROMPT = """你是一个生物数学建模助手。当前我们需�
 }}
 """
 
+# =============================================================================
+# [Batch 2 / LLM_PARAM_INFERENCE_PLAN.md §4.4] 通路级别动力学参数 LLM 推理 Prompt
+# =============================================================================
+# 用途：当 SBML 提取与 RAG 检索均未命中通路级别参数（phos_k_cat / act_k_cat 等）
+#       或命中值明显不合理（如导致 C5 峰时过早/过晚）时，由 LLM 基于通路生物学
+#       时间尺度推理合理默认值，写入 state["llm_inferred_params"]["pathway_kinetics"]。
+#
+# 严格禁止：
+# 1. 不得创造科学事实 — 推理必须基于已有证据（RAG/SBML/教科书）
+# 2. source 必须标注 "Inferred"，confidence 必须 ≤ 0.4
+# 3. evidence_sources 必须非空（PMID/BIOMD/教科书引用）
+# 4. 推理值必须在生物学合理范围内（见 Rules 各通路时间尺度）
+# 5. 不得覆盖 SBML/RAG 已决策的 species 级参数，仅推理通路级别 default
+# =============================================================================
+PARAM_INFERENCE_PROMPT = """你是一名系统生物学建模专家。当前需要为 ODE 仿真的通路级别动力学参数推理合理默认值。
+
+# 当前建模上下文
+- 通路类别 (pathway_class): {pathway_class}
+- 主要物种 (species): {species}
+- 相互作用边 (edges): {edges}
+- RAG 检索候选 (rag_candidates): {rag_candidates}
+- RAG 未命中参数 (rag_missed): {rag_missed}
+- 通路上下文 (pathway_context): {pathway_context}
+
+# 推理规则 (按通路生物学时间尺度)
+1. phos_k_cat (磷酸化 k_cat):
+   - EGFR_RTK: 1-5min 达峰 → phos_k_cat ∈ [0.3, 1.0]
+   - MAPK_ERK: 5-15min 达峰 → phos_k_cat ∈ [0.2, 0.6]
+   - PI3K_AKT_MTOR: 10-30min 达峰 → phos_k_cat ∈ [0.15, 0.5]
+   - P53/APOPTOSIS: 30-120min 达峰 → phos_k_cat ∈ [0.1, 0.3]
+   - JAK_STAT/NF_KB: 10-60min 达峰 → phos_k_cat ∈ [0.2, 0.5]
+   - WNT/TGF_BETA: 30-120min 达峰 → phos_k_cat ∈ [0.1, 0.3]
+   - CELL_CYCLE: 600-960min 达峰 → phos_k_cat ∈ [0.02, 0.08]
+
+2. act_k_cat (激活 k_cat): 通常为 phos_k_cat 的 0.5-0.7 倍
+3. gtp_k_cat (GTP 交换 k_cat): 通常比 phos_k_cat 快 1.5-3 倍
+4. trans_k (转录 k_cat): 30-120min 延迟，通常 ≤ 0.15 (CELL_CYCLE ≤ 0.005)
+5. dephos_k (去磷酸化 k_cat): 通常为 phos_k_cat 的 0.3-0.5 倍
+
+# 严格禁止
+- 不得创造科学事实，只能基于通路生物学时间尺度推理
+- source 必须为 "Inferred"，confidence 必须 ≤ 0.4
+- evidence_sources 必须非空（PMID/BIOMD/教科书引用，如 PMID:10608906 / BIOMD0000000205 / Alberts Molecular Biology of the Cell）
+- 推理值必须在上述 Rules 范围内
+
+# 输出格式 (严格输出 JSON)
+{{
+  "inferred_params": {{
+    "phos_k_cat": {{
+      "value": 0.5,
+      "reasoning": "MAPK_ERK 通路 5-15min 达峰，phos_k_cat=0.5 使 ERK 在 8-12min 达峰",
+      "evidence_sources": ["BIOMD0000000205", "PMID:10608906"]
+    }},
+    "act_k_cat": {{
+      "value": 0.2,
+      "reasoning": "激活 k_cat 通常为 phos_k_cat 的 0.4 倍",
+      "evidence_sources": ["Alberts Molecular Biology of the Cell"]
+    }},
+    "gtp_k_cat": {{
+      "value": 1.0,
+      "reasoning": "GTP 交换比磷酸化快 2 倍",
+      "evidence_sources": ["BIOMD0000000205"]
+    }},
+    "trans_k": {{
+      "value": 0.2,
+      "reasoning": "转录延迟 30-120min",
+      "evidence_sources": ["PMID:10608906"]
+    }},
+    "dephos_k": {{
+      "value": 0.3,
+      "reasoning": "去磷酸化通常为磷酸化的 0.6 倍",
+      "evidence_sources": ["BIOMD0000000205"]
+    }}
+  }},
+  "confidence": 0.4,
+  "evidence_sources": ["BIOMD0000000205", "PMID:10608906", "Alberts Molecular Biology of the Cell"],
+  "reasoning_summary": "基于 MAPK_ERK 通路 5-15min 达峰的生物学时间尺度推理..."
+}}
+"""
+
 SBML_PARSER_PROMPT = """你是一个系统生物学专家。用户提出了一个建模需求，我们在 BioModels 数据库中找到了一个可能相关的已有标准模型（SBML格式的伪代码/提取文本）。
 # 用户建模需求:
 {user_query}

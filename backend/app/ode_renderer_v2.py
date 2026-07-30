@@ -132,6 +132,7 @@ class ODERendererV2:
         params: dict[str, dict[str, float]] | None = None,
         t_end: float | None = None,
         n_eval: int = 200,
+        llm_inferred_params: dict[str, Any] | None = None,
     ) -> str:
         """渲染 v4 ODE 代码。
 
@@ -144,6 +145,10 @@ class ODERendererV2:
             params: 动力学参数 {species_name: {param_key: value}}
             t_end: 仿真总时长（分钟，None 时从 pathway_graph.temporal 提取）
             n_eval: 输出时间点数
+            llm_inferred_params: Batch 2 LLM 推理的通路级别参数
+                （结构：{"pathway_kinetics": {param_type: {value, source, ...}}}）
+                传给模板的 LLM_INFERRED_PARAMS 变量，供 _pk() 三层查询使用。
+                None 或空 dict 时模板回退到 _PATHWAY_KINETICS 硬编码字典。
 
         Returns:
             str: 可执行 ODE Python 代码
@@ -224,6 +229,9 @@ class ODERendererV2:
             dde_delay_minutes=dde_delay,
             requires_dde=requires_dde,
             pathway_class=pathway_class,
+            # [Batch 2 / LLM_PARAM_INFERENCE_PLAN.md §5.2 改动 5]
+            # 传递 LLM 推理的通路级别参数到模板（None → 空 dict，模板回退到 _PATHWAY_KINETICS）
+            llm_inferred_params=llm_inferred_params or {},
             # [RCA-20 修复 B/C] Feature Flag 通过 Jinja2 上下文传入，
             # 避免在模板内 import os（沙箱安全策略禁止 import os）
             v4_get_param_clamp_enabled=os.environ.get(

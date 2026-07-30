@@ -48,6 +48,10 @@ N_EVAL = {{ n_eval }}
 Y0 = {{ y0 }}
 EDGES = {{ edges_json }}
 PARAMS = {{ params_json }}
+# [Batch 2 / LLM_PARAM_INFERENCE_PLAN.md §5.2] LLM 推理的通路级别参数
+# 结构: {"pathway_kinetics": {param_type: {value, source, confidence, origin, evidence_sources, reasoning}}}
+# None/空 dict 时 _pk() 回退到 _PATHWAY_KINETICS 硬编码字典
+LLM_INFERRED_PARAMS = {{ llm_inferred_params | default({}) }}
 DDE_DELAY = {{ dde_delay_minutes }}
 REQUIRES_DDE = {{ requires_dde | default(false) }}
 PATHWAY_CLASS = "{{ pathway_class | default('') }}"
@@ -105,10 +109,14 @@ _PATHWAY_KINETICS = {
     "EGFR_RTK":       {"phos_k_cat": 0.6, "act_k_cat": 0.3, "gtp_k_cat": 1.5, "trans_k": 0.3, "dephos_k": 0.5},
     # MAPK 级联：5-15min 达峰（中速磷酸化）
     # [S1.1 二次校准] phos_k_cat 0.8→0.5: ERK 2.0min→期望 8-15min
+    # [Batch 5 回退] phos_k_cat=0.25 导致 ppERK 自催化过早达峰（5.22→1.6min）+ 11.X1 回归（fold=59.1>50），回退硬编码 0.5
+    # [Batch 7 回退] dephos_k 0.3→0.5 反向效果: ppERK 峰时 2.41→2.01min（反而更早），结构耦合非单调响应，回退硬编码 0.3
     "MAPK_ERK":       {"phos_k_cat": 0.5, "act_k_cat": 0.2, "gtp_k_cat": 1.0, "trans_k": 0.2, "dephos_k": 0.3},
     # PI3K-AKT-mTOR：10-30min 达峰（中慢速）
     # [S1.1 回退] phos_k_cat 0.7→0.5: 0.7 导致 3.P1 pAKT peak_time 过晚，恢复 r40 值
-    "PI3K_AKT_MTOR":  {"phos_k_cat": 0.5, "act_k_cat": 0.15, "gtp_k_cat": 0.8, "trans_k": 0.15, "dephos_k": 0.2},
+    # [Batch 5] phos_k_cat 0.5→0.15: PIP3 0.4→0.80min（方向对，未达 [1,3]）
+    # [Batch 6] phos_k_cat 0.15→0.08: PIP3 0.80min→期望 ~1.6min（进入 [1,3] 窗口）
+    "PI3K_AKT_MTOR":  {"phos_k_cat": 0.08, "act_k_cat": 0.15, "gtp_k_cat": 0.8, "trans_k": 0.15, "dephos_k": 0.2},
     # p53 信号：30-120min 达峰（转录延迟）
     "P53":            {"phos_k_cat": 0.3, "act_k_cat": 0.1, "gtp_k_cat": 0.5, "trans_k": 0.1, "dephos_k": 0.15},
     # 凋亡级联：60-180min
@@ -123,6 +131,8 @@ _PATHWAY_KINETICS = {
     # Wnt：30-120min
     "WNT":            {"phos_k_cat": 0.3, "act_k_cat": 0.1, "gtp_k_cat": 0.5, "trans_k": 0.1, "dephos_k": 0.15},
     # TGF-β：30-120min
+    # [Batch 5 回退] phos_k_cat=0.8 未改善 pSmad2 peak_time（71.44min vs 68min baseline），回退硬编码 0.3
+    # [Batch 7 回退] act_k_cat 0.1→0.3 完全无效: pSmad2 峰时 71.44min 不变（多因素耦合，act_k_cat 不影响 pSmad2 峰时），回退硬编码 0.1
     "TGF_BETA":       {"phos_k_cat": 0.3, "act_k_cat": 0.1, "gtp_k_cat": 0.5, "trans_k": 0.1, "dephos_k": 0.15},
 }
 # 默认使用 MAPK_ERK 的参数（中速，适用于大多数信号通路）
@@ -133,11 +143,29 @@ _pathway_kin = _PATHWAY_KINETICS.get(
 
 
 def _pk(param_type):
-    """返回通路特异性的动力学参数默认值。
+    """返回通路特异性的动力学参数默认值（三层查询）。
 
-    [RCA-38 P1 修复] 替代硬编码的 _get_param default 值，
-    按 PATHWAY_CLASS 选择生物学合理的时间尺度参数。
+    [Batch 2 / LLM_PARAM_INFERENCE_PLAN.md §5.2 改动 4] 优先级链：
+      1. LLM_INFERRED_PARAMS.pathway_kinetics[param_type].value
+         （LLM 推理值，confidence ≤ 0.4，source="Inferred"）
+      2. _PATHWAY_KINETICS[PATHWAY_CLASS][param_type]
+         （硬编码字典，r40 baseline 兜底）
+      3. 0.1（最后 default）
+
+    Flag OFF 时 LLM_INFERRED_PARAMS = {} → 自动回退到 _PATHWAY_KINETICS（等价 r40）。
+    Flag ON 且 LLM 推理成功时覆盖硬编码字典，消除过拟合。
     """
+    # 1. LLM 推理值（Batch 2）
+    if isinstance(LLM_INFERRED_PARAMS, dict):
+        _b2_pk_dict = LLM_INFERRED_PARAMS.get("pathway_kinetics", {})
+        if isinstance(_b2_pk_dict, dict):
+            _b2_entry = _b2_pk_dict.get(param_type)
+            if isinstance(_b2_entry, dict) and "value" in _b2_entry:
+                try:
+                    return float(_b2_entry["value"])
+                except (TypeError, ValueError):
+                    pass  # value 无效，回退
+    # 2. 硬编码字典 fallback（r40 baseline）
     return _pathway_kin.get(param_type, 0.1)
 
 

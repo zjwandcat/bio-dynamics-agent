@@ -12,6 +12,10 @@ plt.rcParams["axes.unicode_minus"] = False
 from scipy.integrate import solve_ivp
 
 DRUGS = {{ drugs_json }}
+# [Batch 3 / LLM_PARAM_INFERENCE_PLAN.md §5.3] 原 0.5*(1-inhibition)-0.05*target 硬编码改为可覆盖
+#   Flag OFF 时 default 等价 r40（与 PKPD_OneCompartment.j2 改造保持一致）
+K_PROD = {{ k_prod | default(0.5) }}
+K_DEG = {{ k_deg | default(0.05) }}
 T_END = {{ t_end }}
 N_EVAL = {{ n_eval }}
 Y0 = {{ y0 }}
@@ -26,7 +30,7 @@ def _simulate(doses):
         for d, dose in zip(DRUGS, doses):
             inhibition += d["emax"] * (dose ** d["gamma"]) / (d["ec50"] ** d["gamma"] + dose ** d["gamma"] + 1e-12)
         inhibition = min(inhibition, 1.0)
-        return [0.5 * (1.0 - inhibition) - 0.05 * target]
+        return [K_PROD * (1.0 - inhibition) - K_DEG * target]
     sol = solve_ivp(
         _ode, (0.0, T_END), Y0,
         method="LSODA", t_eval=np.linspace(0.0, T_END, N_EVAL), vectorized=False,

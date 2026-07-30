@@ -20,11 +20,13 @@ KD = {{ kd }}
 N_HILL = {{ n_hill }}
 DEGRADATION = {{ degradation }}
 PROD_RATE = {{ production }}
+# [Batch 3] 原 -0.1 * activator 硬编码改为可覆盖（Flag OFF 时 default=0.1 等价 r40）
+K_CLEARANCE = {{ k_clearance | default(0.1) }}
 
 def _ode(t, y):
     activator, target = y
     activation = activator ** N_HILL / (KD ** N_HILL + activator ** N_HILL + 1e-12)
-    d_activator = -0.1 * activator
+    d_activator = -K_CLEARANCE * activator
     d_target = PROD_RATE * activation - DEGRADATION * target
     return [d_activator, d_target]
 
